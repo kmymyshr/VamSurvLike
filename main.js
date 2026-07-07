@@ -45,6 +45,9 @@ const enemyTypeNames = [
   'サービス停止・重大障害対応'
 ];
 
+// 敵の見た目（仮のプレースホルダー：著作権フリーの絵文字アイコンを種類ごとに割り当てる）
+const enemyTypeIcons = ['📞', '🛠️', '📝', '📐', '🐛', '🚨', '🗄️', '💥', '🔥', '☠️'];
+
 // 後ろの強い敵ほど出現率が低くなるよう、等比数列で重みを付ける
 const rarityRatio = 0.6; // 0～1の値。小さいほど強い敵が出にくい
 const typeWeights = enemyTypeNames.map((_, i) => Math.pow(rarityRatio, i));
@@ -73,6 +76,7 @@ function setEnemyStats(e, typeIndex) {
   const idx = typeof typeIndex === 'number' ? typeIndex : chooseEnemyTypeIndex();
   e.type = idx + 1;
   e.text = enemyTypeNames[idx];
+  e.icon = enemyTypeIcons[idx];
   e.font = '28px sans-serif';
   // 強い種類ほどHPを高くする
   e.hp = Math.ceil(1 + idx * 0.6 + Math.random() * 1.0); // 全体的なHPは低め
@@ -926,60 +930,24 @@ function updateMousePosition(event) {
   );
 }
 
-// ===== タッチ操作：プレイ画面（キャンバス）全体＝照準・攻撃 =====
-// 移動は画面外の専用スティック（#moveJoystick）が担当するため、キャンバス上のタッチはすべて照準として扱う
-const activeAimTouches = new Set();
+// タッチでの移動・照準は画面外の専用スティック（#moveJoystick / #aimJoystick）が担当するため、
+// キャンバス上のポインタ操作はマウスのときだけ従来通り扱う（タップはメニュー用のclickイベントで別途処理する）
 const touchMoveVector = { x: 0, y: 0 }; // 画面外の移動スティックの入力方向（-1〜1）
 
-function handleTouchStart(event, point) {
-  activeAimTouches.add(event.pointerId);
-  mousePosition.x = point.x;
-  mousePosition.y = point.y;
-  mouseFireHeld = true;
-}
-
-function handleTouchMove(event, point) {
-  if (!activeAimTouches.has(event.pointerId)) return;
-  mousePosition.x = point.x;
-  mousePosition.y = point.y;
-}
-
-function handleTouchEnd(event) {
-  activeAimTouches.delete(event.pointerId);
-  if (activeAimTouches.size === 0) mouseFireHeld = false;
-}
-
 canvas.addEventListener('pointermove', (event) => {
-  if (event.pointerType === 'mouse') {
-    updateMousePosition(event);
-  } else {
-    handleTouchMove(event, getCanvasPoint(event));
-  }
+  if (event.pointerType === 'mouse') updateMousePosition(event);
 });
 canvas.addEventListener('pointerdown', (event) => {
-  if (event.pointerType === 'mouse') {
-    if (event.button !== 0) return;
-    updateMousePosition(event);
-    mouseFireHeld = true;
-    canvas.setPointerCapture(event.pointerId);
-  } else {
-    canvas.setPointerCapture(event.pointerId);
-    handleTouchStart(event, getCanvasPoint(event));
-  }
+  if (event.pointerType !== 'mouse' || event.button !== 0) return;
+  updateMousePosition(event);
+  mouseFireHeld = true;
+  canvas.setPointerCapture(event.pointerId);
 });
 canvas.addEventListener('pointerup', (event) => {
-  if (event.pointerType === 'mouse') {
-    if (event.button === 0) mouseFireHeld = false;
-  } else {
-    handleTouchEnd(event);
-  }
+  if (event.pointerType === 'mouse' && event.button === 0) mouseFireHeld = false;
 });
 canvas.addEventListener('pointercancel', (event) => {
-  if (event.pointerType === 'mouse') {
-    mouseFireHeld = false;
-  } else {
-    handleTouchEnd(event);
-  }
+  if (event.pointerType === 'mouse') mouseFireHeld = false;
 });
 canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 
@@ -1021,6 +989,46 @@ function releaseMoveJoystick(event) {
 }
 moveJoystickEl.addEventListener('pointerup', releaseMoveJoystick);
 moveJoystickEl.addEventListener('pointercancel', releaseMoveJoystick);
+
+// ===== 画面外の照準・攻撃スティック（#aimJoystick） =====
+// 倒した方向へ自機の向きを変え、触れている間は自動的に攻撃し続ける
+const aimJoystickEl = document.getElementById('aimJoystick');
+const aimJoystickKnobEl = document.getElementById('aimJoystickKnob');
+const aimJoystickMaxRadius = 40; // CSS上のピクセル単位でのドラッグ可能半径
+const aimJoystickDeadZone = 6; // これより小さい動きは向きの変更に反映しない（微細なブレ対策）
+let aimJoystickPointerId = null;
+let aimJoystickOrigin = { x: 0, y: 0 };
+
+function setAimJoystickVector(dx, dy) {
+  const dist = Math.hypot(dx, dy);
+  const clampedDist = Math.min(dist, aimJoystickMaxRadius);
+  const nx = dist > 0 ? dx / dist : 0;
+  const ny = dist > 0 ? dy / dist : 0;
+  aimJoystickKnobEl.style.transform = `translate(${nx * clampedDist}px, ${ny * clampedDist}px)`;
+  if (dist > aimJoystickDeadZone) {
+    player.angle = Math.atan2(dy, dx);
+  }
+}
+
+aimJoystickEl.addEventListener('pointerdown', (event) => {
+  aimJoystickPointerId = event.pointerId;
+  aimJoystickOrigin = { x: event.clientX, y: event.clientY };
+  aimJoystickEl.setPointerCapture(event.pointerId);
+  mouseFireHeld = true;
+  event.preventDefault();
+});
+aimJoystickEl.addEventListener('pointermove', (event) => {
+  if (event.pointerId !== aimJoystickPointerId) return;
+  setAimJoystickVector(event.clientX - aimJoystickOrigin.x, event.clientY - aimJoystickOrigin.y);
+});
+function releaseAimJoystick(event) {
+  if (event.pointerId !== aimJoystickPointerId) return;
+  aimJoystickPointerId = null;
+  mouseFireHeld = false;
+  aimJoystickKnobEl.style.transform = 'translate(0px, 0px)';
+}
+aimJoystickEl.addEventListener('pointerup', releaseAimJoystick);
+aimJoystickEl.addEventListener('pointercancel', releaseAimJoystick);
 
 // ===== メニュー選択のタップ／クリック対応 =====
 // draw()が毎フレーム、現在表示中のメニューに応じて再構築する
@@ -1227,10 +1235,13 @@ function update() {
     }
 
     // 攻撃モードに関係なく、自機は常にマウスカーソルの方向を向く
-    player.angle = Math.atan2(
-      mousePosition.y - player.y,
-      mousePosition.x - player.x
-    );
+    // （画面外の照準スティックを操作中は、そちらで設定した向きを優先する）
+    if (aimJoystickPointerId === null) {
+      player.angle = Math.atan2(
+        mousePosition.y - player.y,
+        mousePosition.x - player.x
+      );
+    }
 
     // 手動時は左クリック中だけ、自動時は常にカーソル方向へ攻撃する
     const fatigueRatio = Math.max(0, Math.min(1, fatigue / maxFatigue));
@@ -1505,6 +1516,34 @@ function drawEndScreenButtons(baseY) {
   ctx.textAlign = 'left';
 }
 
+// ===== 背景（仮のプレースホルダー） =====
+// 著作権フリーの絵文字アイコンを薄く散らして、オフィス風の背景を演出する
+const backgroundGradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+backgroundGradient.addColorStop(0, '#12161f');
+backgroundGradient.addColorStop(1, '#05060a');
+const backgroundIconChoices = ['🏢', '📎', '☕', '📄', '💻', '🗂️'];
+const backgroundIcons = Array.from({ length: 16 }, () => ({
+  x: Math.random() * canvas.width,
+  y: Math.random() * canvas.height,
+  icon: backgroundIconChoices[Math.floor(Math.random() * backgroundIconChoices.length)],
+  size: 26 + Math.random() * 22,
+  alpha: 0.05 + Math.random() * 0.06
+}));
+
+function drawBackground() {
+  ctx.fillStyle = backgroundGradient;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const bg of backgroundIcons) {
+    ctx.globalAlpha = bg.alpha;
+    ctx.font = `${bg.size}px "Segoe UI Emoji", sans-serif`;
+    ctx.fillText(bg.icon, bg.x, bg.y);
+  }
+  ctx.restore();
+}
+
 // ===== ゲーム画面の描画 =====
 // 毎フレーム、現在のゲーム状態をCanvasへ描く
 function draw() {
@@ -1531,12 +1570,12 @@ function draw() {
     ctx.font = '16px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('P = 一時停止 / 再開　F = 自動攻撃切替', canvas.width / 2, canvas.height / 2 + 92);
-    ctx.fillText('WASD・画面外のスティック = 移動　マウス・ドラッグ = 照準', canvas.width / 2, canvas.height / 2 + 118);
+    ctx.fillText('WASD・左スティック = 移動　マウス・ドラッグ / 右スティック = 照準・攻撃', canvas.width / 2, canvas.height / 2 + 118);
     ctx.textAlign = 'left';
     return;
   }
 
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawBackground();
   if (invincible) {
     const blink = Math.floor(gameClockMs / 100) % 2 === 0;
     ctx.globalAlpha = blink ? 0.4 : 0.8;
@@ -1695,23 +1734,27 @@ function draw() {
     ctx.fillStyle = 'rgba(160, 160, 160, 0.28)';
     ctx.fill();
 
-    ctx.font = en.font;
-    ctx.fillStyle = en.color;
+    // 敵の見た目（仮のプレースホルダー：著作権フリーの絵文字アイコン）
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+    ctx.font = '30px "Segoe UI Emoji", sans-serif';
+    ctx.fillText(en.icon || '❓', en.x, en.y - 14);
+
+    ctx.font = en.font;
+    ctx.fillStyle = en.color;
     if (en.text) {
-      ctx.fillText(en.text, en.x, en.y);
+      ctx.fillText(en.text, en.x, en.y + 14);
       // 敵の名前の下に残りHP（残工数）を表示する
       const fm = (en.font || '').match(/(\d+)px/);
       const fSize = fm ? parseInt(fm[1], 10) : 28;
       ctx.font = '14px sans-serif';
       ctx.fillStyle = 'white';
       ctx.textAlign = 'center';
-      ctx.fillText('残工数: ' + (en.hp || 0), en.x, en.y + fSize / 1.2);
+      ctx.fillText('残工数: ' + (en.hp || 0), en.x, en.y + 14 + fSize / 1.2);
       // 納期の残り秒数を表示し、5秒以下になったら赤色で警告する
       const deadlineSeconds = Math.max(0, en.deadlineMs / 1000);
       ctx.fillStyle = deadlineSeconds <= 5 ? '#ff5252' : '#ffeb3b';
-      ctx.fillText(`納期: ${deadlineSeconds.toFixed(1)}秒`, en.x, en.y + fSize / 1.2 + 17);
+      ctx.fillText(`納期: ${deadlineSeconds.toFixed(1)}秒`, en.x, en.y + 14 + fSize / 1.2 + 17);
       ctx.textAlign = 'left';
     }
   }

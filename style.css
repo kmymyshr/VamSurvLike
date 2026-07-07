@@ -45,10 +45,10 @@ canvas {
   touch-action: manipulation;
 }
 
-/* プレイ画面（キャンバス）の外、画面左下に固定表示する移動スティック */
-#moveJoystick {
+/* プレイ画面（キャンバス）の外、画面左下・右下に固定表示する移動／照準スティック（共通の見た目） */
+#moveJoystick,
+#aimJoystick {
   position: fixed;
-  left: max(16px, env(safe-area-inset-left));
   bottom: max(16px, env(safe-area-inset-bottom));
   width: 116px;
   height: 116px;
@@ -59,7 +59,17 @@ canvas {
   z-index: 20;
 }
 
-#moveJoystickKnob {
+#moveJoystick {
+  left: max(16px, env(safe-area-inset-left));
+}
+
+#aimJoystick {
+  right: max(16px, env(safe-area-inset-right));
+  border-color: rgba(255, 138, 101, 0.55); /* 照準側は色味を変えて役割を区別する */
+}
+
+#moveJoystickKnob,
+#aimJoystickKnob {
   position: absolute;
   left: 50%;
   top: 50%;
@@ -72,6 +82,10 @@ canvas {
   border: 1px solid rgba(255, 255, 255, 0.6);
   touch-action: none;
   pointer-events: none; /* ノブ自体は入力を奪わず、常にベース側で判定する */
+}
+
+#aimJoystickKnob {
+  background: rgba(255, 138, 101, 0.55);
 }
 
 /* 縦持ち（ポートレート）のときだけ、横向きを促すオーバーレイを表示する */
