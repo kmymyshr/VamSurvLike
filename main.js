@@ -85,6 +85,8 @@ const enemies = [];
 const maxEnemies = 3;
 const spawnInterval = 3200; // 敵を生成する間隔（ミリ秒）
 const enemyCollisionRadius = 32;
+const minDeadlineMs = 5000; // 納期の最短時間（5秒）
+const maxDeadlineMs = 30000; // 納期の最長時間（30秒）
 let lastSpawn = 0;
 
 function spawnEnemy(typeIndex) {
@@ -103,6 +105,8 @@ function spawnEnemy(typeIndex) {
   const e = { x: p.x, y: p.y, radius: enemyCollisionRadius };
   setEnemyStats(e, typeIndex);
   e.touched = false;
+  // 敵ごとに5～30秒のランダムな納期を設定する
+  e.deadlineMs = minDeadlineMs + Math.random() * (maxDeadlineMs - minDeadlineMs);
   enemies.push(e);
   return e;
 }
@@ -117,6 +121,11 @@ let lastFire = 0;
 let score = 0;
 let gameOver = false;
 let startScreen = true;
+
+// ===== 納期切れの爆発エフェクト =====
+const explosionEffectDuration = 500; // フラッシュと揺れの継続時間（ミリ秒）
+let explosionFlashTimer = 0;
+let explosionShakeTimer = 0;
 
 // ===== 脳疲労システム =====
 const maxFatigue = 100;
@@ -260,6 +269,31 @@ function getAllowedMaxTypeIndexByRank() {
   const maxIdx = Math.floor((rank / 10) * (enemyTypeNames.length - 1));
   return Math.max(0, Math.min(enemyTypeNames.length - 1, maxIdx));
 }
+
+// 納期が0になった敵を爆発させ、接触時の3倍のSANダメージを与える
+function explodeEnemy(enemyIndex) {
+  const enemy = enemies[enemyIndex];
+  if (!enemy) return;
+
+  const skillMitigation = Math.max(0.5, 1 - skillLevel * 0.04);
+  const explosionDamage = Math.ceil(
+    (enemy.type || 1) * contactSanMultiplier * skillMitigation * 3
+  );
+
+  san = Math.max(0, san - explosionDamage);
+  enemies.splice(enemyIndex, 1);
+  explosionFlashTimer = explosionEffectDuration;
+  explosionShakeTimer = explosionEffectDuration;
+  showMessage(`納期切れ！ SAN -${explosionDamage}`, 1200, '#ff5252', '28px sans-serif');
+
+  if (san <= 0) {
+    gameOver = true;
+    sendScore(score);
+  } else {
+    spawnEnemy();
+  }
+}
+
 // ===== キーボード入力 =====
 // 押されているキーを true / false で記録する
 const keys = {};
@@ -327,10 +361,23 @@ document.addEventListener("keyup", (event) => {
 // ===== ゲーム状態の更新 =====
 // 毎フレーム、移動・攻撃・時刻・衝突などを計算する
 function update() {
-  if (gameOver) return;
   const now = Date.now();
   const dt = (now - lastUpdate) / 1000;
   lastUpdate = now;
+
+  // 爆発後の短い時間、Canvas全体をランダムに揺らす
+  explosionFlashTimer = Math.max(0, explosionFlashTimer - dt * 1000);
+  explosionShakeTimer = Math.max(0, explosionShakeTimer - dt * 1000);
+  if (explosionShakeTimer > 0) {
+    const shakeX = (Math.random() - 0.5) * 16;
+    const shakeY = (Math.random() - 0.5) * 16;
+    canvas.style.transform = `translate(${shakeX}px, ${shakeY}px)`;
+  } else {
+    canvas.style.transform = '';
+  }
+
+  // スタート前とゲーム終了後は、敵や納期の更新を止める
+  if (gameOver || startScreen) return;
 
   // 一時メッセージの残り表示時間を減らし、期限切れなら削除する
   for (let mi = messages.length - 1; mi >= 0; mi--) {
@@ -386,6 +433,15 @@ function update() {
   if (now - lastSpawn >= spawnInterval && enemies.length < maxEnemies) {
     spawnEnemy();
     lastSpawn = now;
+  }
+
+  // 各敵の納期をカウントダウンし、0になった敵を爆発させる
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    enemies[i].deadlineMs -= dt * 1000;
+    if (enemies[i].deadlineMs <= 0) {
+      explodeEnemy(i);
+      if (gameOver) return;
+    }
   }
 
   if (stunned) {
@@ -702,6 +758,10 @@ function draw() {
       ctx.fillStyle = 'white';
       ctx.textAlign = 'center';
       ctx.fillText('残工数: ' + (en.hp || 0), en.x, en.y + fSize / 1.2);
+      // 納期の残り秒数を表示し、5秒以下になったら赤色で警告する
+      const deadlineSeconds = Math.max(0, en.deadlineMs / 1000);
+      ctx.fillStyle = deadlineSeconds <= 5 ? '#ff5252' : '#ffeb3b';
+      ctx.fillText(`納期: ${deadlineSeconds.toFixed(1)}秒`, en.x, en.y + fSize / 1.2 + 17);
       ctx.textAlign = 'left';
     }
   }
@@ -749,6 +809,13 @@ function draw() {
     ctx.font = '20px sans-serif';
     ctx.fillText('続けますか？ Y = 続ける / N = 終了', canvas.width / 2, canvas.height / 2 + 8);
     ctx.textAlign = 'left';
+  }
+
+  // 爆発直後は画面全体へ白い半透明レイヤーを重ねてフラッシュさせる
+  if (explosionFlashTimer > 0) {
+    const flashAlpha = 0.75 * (explosionFlashTimer / explosionEffectDuration);
+    ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
 }
 // ===== メインループ =====
