@@ -117,7 +117,7 @@ for (let i = 0; i < 2; i++) spawnEnemy();
 // ===== 弾・スコア・ゲーム状態 =====
 // プレイヤーが発射した弾を保存する配列
 const bullets = [];
-const baseFireRate = 700; // 基本の発射間隔（ミリ秒）
+const baseFireRate = 350; // 基本の発射間隔（従来の半分、ミリ秒）
 let lastFire = 0;
 let score = 0;
 let gameOver = false;
@@ -130,9 +130,9 @@ let explosionShakeTimer = 0;
 
 // ===== 脳疲労システム =====
 const maxFatigue = 100;
-let fatigue = maxFatigue;
+let fatigue = 0; // 0が元気な状態、100が疲労の限界
 let stunned = false;
-const stunDuration = 3000; // 疲労が0になったときの行動不能時間（ミリ秒）
+const stunDuration = 3000; // 疲労が100になったときの行動不能時間（ミリ秒）
 let stunTimer = 0;
 let invincible = false;
 const invincibleDuration = 1200; // 敵との接触後に無敵になる時間（ミリ秒）
@@ -146,7 +146,7 @@ const mousePosition = { x: player.x + 100, y: player.y };
 
 // 1秒ごと、または1発ごとに変化する疲労関連の値
 const movingDrainPerSec = 6; // 移動時の1秒あたりの疲労量（現在は未使用）
-const firingDrainPerShot = 18; // 1発撃つごとに増える疲労量
+const firingFatiguePerShot = 18; // 1発撃つごとに増える疲労量
 const idleRecoveryPerSec = 12; // 待機時の1秒あたりの回復量
 const stunRecoveryPerSec = 12; // 行動不能中の1秒あたりの回復量
 const fireRateMultiplier = 1.5; // 疲労が多いほど発射間隔を延ばす倍率
@@ -155,7 +155,7 @@ const baseBulletDamage = 2; // 疲労がないときの基本攻撃力
 // ===== 回復アイテム（チョコレート） =====
 const chocolateLifetimeMs = 10000; // 出現してから消えるまでの時間（10秒）
 const chocolateBlinkMs = 3000; // 消える3秒前から点滅する
-const chocolateRecoveryRatio = 0.3; // 最大脳疲労の30%を回復する
+const chocolateRecoveryRatio = 0.3; // 最大値の30%ぶん脳疲労を減らす
 const chocolateRadius = 22;
 let chocolate = null;
 let chocolateSpawnTimerMs = getRandomChocolateSpawnDelay();
@@ -190,7 +190,7 @@ let noonModeEndTime = 0;
 const dayFatigueRecover = 30;
 const daySanRecover = 10;
 // 昼に「継続」を選んだ場合の消耗量
-const noonFatigueDrainPerSec = 4; // 継続中の1秒あたりの疲労消耗量
+const noonFatigueIncreasePerSec = 4; // 継続中の1秒あたりの疲労増加量
 const noonSanDrainPerSec = 2;
 
 // ===== SAN（精神力）システム =====
@@ -310,7 +310,7 @@ function explodeEnemy(enemyIndex) {
   enemies.splice(enemyIndex, 1);
   explosionFlashTimer = explosionEffectDuration;
   explosionShakeTimer = explosionEffectDuration;
-  showMessage(`納期切れ！ SAN -${explosionDamage}`, 1200, '#ff5252', '28px sans-serif');
+  showMessage(`納期経過！ SAN -${explosionDamage}`, 1200, '#ff5252', '28px sans-serif');
 
   if (san <= 0) {
     gameOver = true;
@@ -329,13 +329,13 @@ document.addEventListener("keydown", (event) => {
     // Rキーで休憩、Cキーで継続する
     if (event.key === 'r') {
       // 休憩：疲労とSANを約30%回復し、13時まで進める
-      fatigue = Math.min(maxFatigue, fatigue + Math.floor(maxFatigue * 0.3));
+      fatigue = Math.max(0, fatigue - Math.floor(maxFatigue * 0.3));
       san = Math.min(maxSan, san + Math.floor(maxSan * 0.3));
       currentHour = 13;
       lastHourTime = Date.now();
       noonChoice = false;
     } else if (event.key === 'c') {
-      // 継続：敵は1時間停止するが、疲労とSANが減り続ける
+      // 継続：敵は1時間停止するが、脳疲労が増えてSANが減り続ける
       noonChoice = false;
       noonContinueMode = true;
       noonModeEndTime = Date.now() + hourMs;
@@ -349,7 +349,7 @@ document.addEventListener("keydown", (event) => {
       // 継続：少し回復して翌日を開始する
       // カレンダーの日付を1日進める
       currentDate.setDate(currentDate.getDate() + 1);
-      fatigue = Math.min(maxFatigue, fatigue + dayFatigueRecover);
+      fatigue = Math.max(0, fatigue - dayFatigueRecover);
       san = Math.min(maxSan, san + daySanRecover);
       dayEnded = false;
       dayStartTime = Date.now();
@@ -446,8 +446,8 @@ function update() {
   // ゲーム内時刻を進める
   // 昼に「継続」を選んだ時間を処理する
   if (noonContinueMode) {
-    // 継続中は疲労とSANを少しずつ減らす
-    fatigue -= noonFatigueDrainPerSec * dt;
+    // 継続中は脳疲労を増やし、SANを少しずつ減らす
+    fatigue += noonFatigueIncreasePerSec * dt;
     if (autoFireEnabled) {
       san -= noonSanDrainPerSec * dt;
     }
@@ -507,8 +507,9 @@ function update() {
 
     if (distanceToChocolate <= player.radius + chocolate.radius) {
       const recoveryAmount = Math.ceil(maxFatigue * chocolateRecoveryRatio);
-      fatigue = Math.min(maxFatigue, fatigue + recoveryAmount);
-      showMessage(`チョコレート取得！ 脳疲労 +${recoveryAmount}`, 1500, '#ffcc80');
+      const reducedFatigue = Math.min(fatigue, recoveryAmount);
+      fatigue -= reducedFatigue;
+      showMessage(`チョコレート取得！ 脳疲労 -${Math.ceil(reducedFatigue)}`, 1500, '#ffcc80');
       chocolate = null;
       chocolateSpawnTimerMs = getRandomChocolateSpawnDelay();
     } else if (chocolate.remainingMs <= 0) {
@@ -525,7 +526,7 @@ function update() {
   if (stunned) {
     // 行動不能中は移動・攻撃できないが、疲労が回復する
     stunTimer -= dt * 1000;
-    fatigue = Math.min(maxFatigue, fatigue + stunRecoveryPerSec * dt);
+    fatigue = Math.max(0, fatigue - stunRecoveryPerSec * dt);
     if (stunTimer <= 0) {
       stunned = false;
     }
@@ -551,9 +552,9 @@ function update() {
     // 疲労を回復する。移動中は待機中より回復量が少ない
     updateSkillEffects();
     if (moving) {
-      fatigue = Math.min(maxFatigue, fatigue + (idleRecoveryPerSec * 0.35) * dt);
+      fatigue = Math.max(0, fatigue - (idleRecoveryPerSec * 0.35) * dt);
     } else {
-      fatigue = Math.min(maxFatigue, fatigue + idleRecoveryPerSec * dt);
+      fatigue = Math.max(0, fatigue - idleRecoveryPerSec * dt);
     }
 
     // 攻撃モードに関係なく、自機は常にマウスカーソルの方向を向く
@@ -564,20 +565,21 @@ function update() {
 
     // 手動時は左クリック中だけ、自動時は常にカーソル方向へ攻撃する
     const fatigueRatio = Math.max(0, Math.min(1, fatigue / maxFatigue));
-    const currentFireRate = baseFireRate * (1 + (1 - fatigueRatio) * fireRateMultiplier);
+    const conditionRatio = 1 - fatigueRatio;
+    const currentFireRate = baseFireRate * (1 + fatigueRatio * fireRateMultiplier);
     const wantsToFire = autoFireEnabled || mouseFireHeld;
     if (wantsToFire && !stunned) {
       if (now - lastFire >= currentFireRate) {
         updateSkillEffects();
         const firingDrainMultiplier = Math.max(0.8, 1 - skillLevel * 0.05);
-        const projectedDrain = firingDrainPerShot * firingDrainMultiplier;
-        if (fatigue - projectedDrain > 0) {
+        const projectedFatigue = firingFatiguePerShot * firingDrainMultiplier;
+        if (fatigue < maxFatigue) {
           lastFire = now;
           const shotAngle = player.angle;
 
           const speed = 6;
           const damageBonus = 1 + skillLevel * 0.08;
-          const damage = Math.max(1, Math.round(baseBulletDamage * fatigueRatio * damageBonus));
+          const damage = Math.max(1, Math.round(baseBulletDamage * conditionRatio * damageBonus));
           bullets.push({
             x: player.x + Math.cos(shotAngle) * player.radius,
             y: player.y + Math.sin(shotAngle) * player.radius,
@@ -587,9 +589,9 @@ function update() {
             damage
           });
           // 発射時に疲労を増やす。スキルレベルが高いほど消耗を軽減する
-          fatigue -= projectedDrain;
-          if (fatigue <= 0) {
-            fatigue = 0;
+          fatigue += projectedFatigue;
+          if (fatigue >= maxFatigue) {
+            fatigue = maxFatigue;
             stunned = true;
             stunTimer = stunDuration;
             // 疲労が限界に達したら行動不能にし、SANも減らす
@@ -676,8 +678,8 @@ function update() {
           invincible = true;
           invincibleTimer = invincibleDuration;
           // 最初の接触時、敵にも弾1発相当のダメージを与える
-          const contactFatigueRatio = Math.max(0, Math.min(1, fatigue / maxFatigue));
-          const contactDamage = Math.max(1, Math.round(baseBulletDamage * contactFatigueRatio * (1 + skillLevel * 0.08)));
+          const contactConditionRatio = 1 - Math.max(0, Math.min(1, fatigue / maxFatigue));
+          const contactDamage = Math.max(1, Math.round(baseBulletDamage * contactConditionRatio * (1 + skillLevel * 0.08)));
           en.hp = (en.hp || 1) - contactDamage;
           if (en.hp <= 0) {
             // 接触で倒した場合も、弾で倒した場合と同じ報酬を与える
@@ -797,7 +799,7 @@ function draw() {
   ctx.fillStyle = 'gray';
   ctx.fillRect(gx, gy, gaugeW, gaugeH);
   const frac = Math.max(0, Math.min(1, fatigue / maxFatigue));
-  ctx.fillStyle = frac > 0.5 ? '#66bb6a' : (frac > 0.2 ? '#ffa726' : '#ef5350');
+  ctx.fillStyle = frac < 0.5 ? '#66bb6a' : (frac < 0.8 ? '#ffa726' : '#ef5350');
   ctx.fillRect(gx, gy, gaugeW * frac, gaugeH);
   ctx.fillStyle = 'white';
   ctx.font = '12px sans-serif';
@@ -903,7 +905,7 @@ function draw() {
     ctx.fillText('12:00 休憩しますか？', canvas.width / 2, canvas.height / 2 - 40);
     ctx.font = '20px sans-serif';
     ctx.fillText('R = 休憩 (13:00 へ移動, 脳疲労/SAN 約30%回復)', canvas.width / 2, canvas.height / 2 + 8);
-    ctx.fillText('C = 継続 (敵停止、脳疲労/SAN が継続的に減少)', canvas.width / 2, canvas.height / 2 + 40);
+    ctx.fillText('C = 継続 (敵停止、脳疲労は増加、SANは減少)', canvas.width / 2, canvas.height / 2 + 40);
     ctx.textAlign = 'left';
   }
   // 一日が終了したら、翌日へ進むか終了するかの選択画面を表示する
