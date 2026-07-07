@@ -323,7 +323,7 @@ const partnerInvincibleDuration = 1200;
 const partnerLossSanPenalty = 20; // 同僚が力尽きたとき、プレイヤーが受けるSANダメージ
 const partnerRelationshipMax = 100;
 const partnerRelationshipInitial = 50;
-const partnerRelationshipSafeFireThreshold = 90;
+const partnerRelationshipSafeFireThreshold = 50;
 const partnerRelationshipDamagePerHit = 15;
 const partnerRelationshipRetaliationThreshold = 40;
 const partnerRelationshipWeekendRecovery = 30;
@@ -517,7 +517,7 @@ function updatePartner(dt) {
       const damage = Math.max(1, Math.round(
         baseBulletDamage * specialSkillEffects.partnerDamageMultiplier * (1 + skillLevel * 0.08)
       ));
-      // 関係性が90以上なら、現在の自分位置へ通る弾道は撃たずに見送る。
+      // 関係性が50以上なら、現在の自分位置へ通る弾道は撃たずに見送る。
       const shouldAvoidShot = partner.relationship >= partnerRelationshipSafeFireThreshold &&
         wouldPartnerShotHitCurrentPlayer(angle);
       if (shouldAvoidShot) {
@@ -2052,19 +2052,34 @@ function drawBackground() {
   ctx.restore();
 }
 
-// HUD用プロフィール区画。選択した絵文字を仮の顔イラストとして使う。
-function drawHudProfilePanel(x, y, width, height, title, icon, accentColor, statLines, inactive = false, dangerLevel = 0) {
+// 2つの16進カラーを割合に応じて混ぜ、関係性の連続的な色変化に使う。
+function mixHexColors(fromColor, toColor, ratio) {
+  const t = Math.max(0, Math.min(1, ratio));
+  const from = parseInt(fromColor.slice(1), 16);
+  const to = parseInt(toColor.slice(1), 16);
+  const fromRgb = [(from >> 16) & 255, (from >> 8) & 255, from & 255];
+  const toRgb = [(to >> 16) & 255, (to >> 8) & 255, to & 255];
+  const mixed = fromRgb.map((value, index) =>
+    Math.round(value + (toRgb[index] - value) * t));
+  return `rgb(${mixed[0]}, ${mixed[1]}, ${mixed[2]})`;
+}
+
+// HUD用プロフィール区画。選択した絵文字を仮の顔イラストとして使う。function drawHudProfilePanel(x, y, width, height, title, icon, accentColor, statLines, inactive = false, dangerLevel = 0) {
   ctx.save();
-  ctx.fillStyle = 'rgba(7, 12, 22, 0.82)';
+  ctx.fillStyle = 'rgba(7, 12, 22, 0.34)';
   ctx.fillRect(x, y, width, height);
 
   const portraitCenterX = x + width / 2;
   const portraitCenterY = y + 39;
+  const clampedDangerLevel = Math.max(0, Math.min(1, dangerLevel));
+  const portraitFrameColor = inactive
+    ? '#757575'
+    : mixHexColors(accentColor, '#ff2338', clampedDangerLevel);
   ctx.beginPath();
   ctx.arc(portraitCenterX, portraitCenterY, 30, 0, Math.PI * 2);
-  ctx.fillStyle = inactive ? 'rgba(90, 90, 90, 0.55)' : 'rgba(255, 255, 255, 0.12)';
+  ctx.fillStyle = inactive ? 'rgba(90, 90, 90, 0.4)' : 'rgba(255, 255, 255, 0.07)';
   ctx.fill();
-  ctx.strokeStyle = inactive ? '#757575' : accentColor;
+  ctx.strokeStyle = portraitFrameColor;
   ctx.lineWidth = 2;
   ctx.stroke();
 
@@ -2076,17 +2091,6 @@ function drawHudProfilePanel(x, y, width, height, title, icon, accentColor, stat
   ctx.fillText(icon || '—', portraitCenterX, portraitCenterY + 1);
   ctx.globalAlpha = 1;
 
-  // 関係性が悪いほど、同僚の顔全体へ強い赤みを重ねる。
-  const clampedDangerLevel = Math.max(0, Math.min(1, dangerLevel));
-  if (!inactive && clampedDangerLevel > 0) {
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(portraitCenterX, portraitCenterY, 29, 0, Math.PI * 2);
-    ctx.clip();
-    ctx.fillStyle = `rgba(255, 35, 45, ${clampedDangerLevel * 0.5})`;
-    ctx.fillRect(portraitCenterX - 30, portraitCenterY - 30, 60, 60);
-    ctx.restore();
-  }
 
   ctx.font = 'bold 14px sans-serif';
   ctx.fillStyle = inactive ? '#9e9e9e' : accentColor;
