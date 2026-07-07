@@ -2064,7 +2064,8 @@ function mixHexColors(fromColor, toColor, ratio) {
   return `rgb(${mixed[0]}, ${mixed[1]}, ${mixed[2]})`;
 }
 
-// HUD用プロフィール区画。選択した絵文字を仮の顔イラストとして使う。function drawHudProfilePanel(x, y, width, height, title, icon, accentColor, statLines, inactive = false, dangerLevel = 0) {
+// HUD用プロフィール区画。選択した絵文字を仮の顔イラストとして使う。
+function drawHudProfilePanel(x, y, width, height, title, icon, accentColor, statLines, inactive = false, dangerLevel = 0) {
   ctx.save();
   ctx.fillStyle = 'rgba(7, 12, 22, 0.34)';
   ctx.fillRect(x, y, width, height);
