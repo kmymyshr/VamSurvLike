@@ -508,29 +508,16 @@ function update() {
       fatigue = Math.min(maxFatigue, fatigue + idleRecoveryPerSec * dt);
     }
 
-    // 手動時はマウス、自動時は最も近い敵の方向へ自機を向ける
-    if (!autoFireEnabled) {
-      player.angle = Math.atan2(
-        mousePosition.y - player.y,
-        mousePosition.x - player.x
-      );
-    } else if (enemies.length > 0) {
-      let facingTarget = enemies[0];
-      let facingDistance = Math.hypot(facingTarget.x - player.x, facingTarget.y - player.y);
-      for (const enemy of enemies) {
-        const distance = Math.hypot(enemy.x - player.x, enemy.y - player.y);
-        if (distance < facingDistance) {
-          facingTarget = enemy;
-          facingDistance = distance;
-        }
-      }
-      player.angle = Math.atan2(facingTarget.y - player.y, facingTarget.x - player.x);
-    }
+    // 攻撃モードに関係なく、自機は常にマウスカーソルの方向を向く
+    player.angle = Math.atan2(
+      mousePosition.y - player.y,
+      mousePosition.x - player.x
+    );
 
-    // 手動時はクリック方向、自動時は最も近い敵へ向けて攻撃する
+    // 手動時は左クリック中だけ、自動時は常にカーソル方向へ攻撃する
     const fatigueRatio = Math.max(0, Math.min(1, fatigue / maxFatigue));
     const currentFireRate = baseFireRate * (1 + (1 - fatigueRatio) * fireRateMultiplier);
-    const wantsToFire = autoFireEnabled ? enemies.length > 0 : mouseFireHeld;
+    const wantsToFire = autoFireEnabled || mouseFireHeld;
     if (wantsToFire && !stunned) {
       if (now - lastFire >= currentFireRate) {
         updateSkillEffects();
@@ -538,22 +525,7 @@ function update() {
         const projectedDrain = firingDrainPerShot * firingDrainMultiplier;
         if (fatigue - projectedDrain > 0) {
           lastFire = now;
-          let shotAngle = player.angle;
-
-          if (autoFireEnabled) {
-            // 自動攻撃では、全ての敵から最も近い敵を選ぶ
-            let nearest = enemies[0];
-            let nearestDistance = Math.hypot(nearest.x - player.x, nearest.y - player.y);
-            for (const enemy of enemies) {
-              const distance = Math.hypot(enemy.x - player.x, enemy.y - player.y);
-              if (distance < nearestDistance) {
-                nearest = enemy;
-                nearestDistance = distance;
-              }
-            }
-            shotAngle = Math.atan2(nearest.y - player.y, nearest.x - player.x);
-            player.angle = shotAngle;
-          }
+          const shotAngle = player.angle;
 
           const speed = 6;
           const damageBonus = 1 + skillLevel * 0.08;
