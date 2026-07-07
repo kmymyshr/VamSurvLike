@@ -926,59 +926,27 @@ function updateMousePosition(event) {
   );
 }
 
-// ===== タッチ操作：画面左半分＝仮想移動スティック、右半分＝照準・攻撃 =====
-// pointerIdごとに役割（'move' | 'aim'）と状態を保持する（複数指の同時操作に対応）
-const activeTouchPointers = new Map();
-const touchMoveVector = { x: 0, y: 0 }; // 左スティックの入力方向（-1〜1）
-const touchStickMaxRadius = 70;
+// ===== タッチ操作：プレイ画面（キャンバス）全体＝照準・攻撃 =====
+// 移動は画面外の専用スティック（#moveJoystick）が担当するため、キャンバス上のタッチはすべて照準として扱う
+const activeAimTouches = new Set();
+const touchMoveVector = { x: 0, y: 0 }; // 画面外の移動スティックの入力方向（-1〜1）
 
 function handleTouchStart(event, point) {
-  if (point.x < canvas.width / 2) {
-    activeTouchPointers.set(event.pointerId, {
-      role: 'move', originX: point.x, originY: point.y, stickX: point.x, stickY: point.y
-    });
-    touchMoveVector.x = 0;
-    touchMoveVector.y = 0;
-  } else {
-    activeTouchPointers.set(event.pointerId, { role: 'aim' });
-    mousePosition.x = point.x;
-    mousePosition.y = point.y;
-    mouseFireHeld = true;
-  }
+  activeAimTouches.add(event.pointerId);
+  mousePosition.x = point.x;
+  mousePosition.y = point.y;
+  mouseFireHeld = true;
 }
 
 function handleTouchMove(event, point) {
-  const info = activeTouchPointers.get(event.pointerId);
-  if (!info) return;
-  if (info.role === 'move') {
-    let dx = point.x - info.originX;
-    let dy = point.y - info.originY;
-    const dist = Math.hypot(dx, dy);
-    if (dist > touchStickMaxRadius) {
-      dx = (dx / dist) * touchStickMaxRadius;
-      dy = (dy / dist) * touchStickMaxRadius;
-    }
-    info.stickX = info.originX + dx;
-    info.stickY = info.originY + dy;
-    touchMoveVector.x = dx / touchStickMaxRadius;
-    touchMoveVector.y = dy / touchStickMaxRadius;
-  } else {
-    mousePosition.x = point.x;
-    mousePosition.y = point.y;
-  }
+  if (!activeAimTouches.has(event.pointerId)) return;
+  mousePosition.x = point.x;
+  mousePosition.y = point.y;
 }
 
 function handleTouchEnd(event) {
-  const info = activeTouchPointers.get(event.pointerId);
-  activeTouchPointers.delete(event.pointerId);
-  if (!info) return;
-  if (info.role === 'move') {
-    touchMoveVector.x = 0;
-    touchMoveVector.y = 0;
-  } else {
-    const stillAiming = [...activeTouchPointers.values()].some(v => v.role === 'aim');
-    if (!stillAiming) mouseFireHeld = false;
-  }
+  activeAimTouches.delete(event.pointerId);
+  if (activeAimTouches.size === 0) mouseFireHeld = false;
 }
 
 canvas.addEventListener('pointermove', (event) => {
@@ -1014,6 +982,45 @@ canvas.addEventListener('pointercancel', (event) => {
   }
 });
 canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+
+// ===== 画面外の移動スティック（#moveJoystick） =====
+// プレイ画面（キャンバス）の外に固定表示し、ドラッグ量を touchMoveVector に反映する
+const moveJoystickEl = document.getElementById('moveJoystick');
+const moveJoystickKnobEl = document.getElementById('moveJoystickKnob');
+const moveJoystickMaxRadius = 40; // CSS上のピクセル単位でのドラッグ可能半径
+let moveJoystickPointerId = null;
+let moveJoystickOrigin = { x: 0, y: 0 };
+
+function setMoveJoystickVector(dx, dy) {
+  const dist = Math.hypot(dx, dy);
+  if (dist > moveJoystickMaxRadius) {
+    dx = (dx / dist) * moveJoystickMaxRadius;
+    dy = (dy / dist) * moveJoystickMaxRadius;
+  }
+  touchMoveVector.x = dx / moveJoystickMaxRadius;
+  touchMoveVector.y = dy / moveJoystickMaxRadius;
+  moveJoystickKnobEl.style.transform = `translate(${dx}px, ${dy}px)`;
+}
+
+moveJoystickEl.addEventListener('pointerdown', (event) => {
+  moveJoystickPointerId = event.pointerId;
+  moveJoystickOrigin = { x: event.clientX, y: event.clientY };
+  moveJoystickEl.setPointerCapture(event.pointerId);
+  event.preventDefault();
+});
+moveJoystickEl.addEventListener('pointermove', (event) => {
+  if (event.pointerId !== moveJoystickPointerId) return;
+  setMoveJoystickVector(event.clientX - moveJoystickOrigin.x, event.clientY - moveJoystickOrigin.y);
+});
+function releaseMoveJoystick(event) {
+  if (event.pointerId !== moveJoystickPointerId) return;
+  moveJoystickPointerId = null;
+  touchMoveVector.x = 0;
+  touchMoveVector.y = 0;
+  moveJoystickKnobEl.style.transform = 'translate(0px, 0px)';
+}
+moveJoystickEl.addEventListener('pointerup', releaseMoveJoystick);
+moveJoystickEl.addEventListener('pointercancel', releaseMoveJoystick);
 
 // ===== メニュー選択のタップ／クリック対応 =====
 // draw()が毎フレーム、現在表示中のメニューに応じて再構築する
@@ -1466,6 +1473,38 @@ function update() {
   }
   // 疲労値の制限と各種当たり判定は上の処理で完了
 }
+// タップ／クリックしやすいよう、枠付きで塗りつぶした矩形ボタンとしてラベルを描画し、
+// 同じ矩形を uiButtons に登録する（マウスクリック・タップの両方で action が呼ばれる）
+function drawUiButton(x, y, w, h, label, action, options = {}) {
+  ctx.save();
+  ctx.fillStyle = options.fillStyle || 'rgba(103, 58, 183, 0.55)';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = options.strokeStyle || '#ce93d8';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, w, h);
+  ctx.fillStyle = options.textColor || 'white';
+  ctx.font = options.font || 'bold 20px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, x + w / 2, y + h / 2);
+  ctx.restore();
+  uiButtons.push({ x, y, w, h, action });
+}
+
+// ゲーム終了画面（Game Over / Game Clear）共通の「もう一度プレイする」「終了する」ボタン
+function drawEndScreenButtons(baseY) {
+  const btnW = 300, btnH = 48;
+  const btnX = canvas.width / 2 - btnW / 2;
+  drawUiButton(btnX, baseY, btnW, btnH, 'もう一度プレイする', () => location.reload());
+  drawUiButton(btnX, baseY + 60, btnW, btnH, '終了する', () => { window.close(); },
+    { fillStyle: 'rgba(84, 30, 30, 0.6)', strokeStyle: '#ef9a9a' });
+  ctx.fillStyle = '#b0bec5';
+  ctx.font = '13px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('※ブラウザの設定によっては閉じられない場合があります（その場合はタブを閉じてください）', canvas.width / 2, baseY + 130);
+  ctx.textAlign = 'left';
+}
+
 // ===== ゲーム画面の描画 =====
 // 毎フレーム、現在のゲーム状態をCanvasへ描く
 function draw() {
@@ -1478,22 +1517,22 @@ function draw() {
     ctx.fillStyle = 'white';
     ctx.font = '48px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('Survivors風ゲーム', canvas.width / 2, canvas.height / 2 - 40);
-    ctx.font = '20px sans-serif';
-    ctx.fillText('1 or Enter / タップ = 通常開始', canvas.width / 2, canvas.height / 2 + 18);
-    ctx.fillText('2 or タップ = 3倍加速モード', canvas.width / 2, canvas.height / 2 + 48);
-    ctx.fillText('P = 一時停止 / 再開', canvas.width / 2, canvas.height / 2 + 78);
-    ctx.fillText('WASD/タッチ = 移動 / マウス・ドラッグ = 照準 / F = 自動攻撃切替', canvas.width / 2, canvas.height / 2 + 108);
+    ctx.fillText('Survivors風ゲーム', canvas.width / 2, canvas.height / 2 - 130);
     ctx.textAlign = 'left';
-    const btnW = 400, btnH = 32;
-    uiButtons.push({
-      x: canvas.width / 2 - btnW / 2, y: canvas.height / 2 + 18 - 24, w: btnW, h: btnH,
-      action: () => startGame(1, '最初の特殊スキルを選択')
-    });
-    uiButtons.push({
-      x: canvas.width / 2 - btnW / 2, y: canvas.height / 2 + 48 - 24, w: btnW, h: btnH,
-      action: () => startGame(3, '3倍加速モード：最初の特殊スキルを選択')
-    });
+
+    const btnW = 340, btnH = 54;
+    const btnX = canvas.width / 2 - btnW / 2;
+    drawUiButton(btnX, canvas.height / 2 - 60, btnW, btnH, '通常開始 (1 / Enter)',
+      () => startGame(1, '最初の特殊スキルを選択'));
+    drawUiButton(btnX, canvas.height / 2 + 4, btnW, btnH, '3倍加速モード (2)',
+      () => startGame(3, '3倍加速モード：最初の特殊スキルを選択'));
+
+    ctx.fillStyle = '#cfd8dc';
+    ctx.font = '16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('P = 一時停止 / 再開　F = 自動攻撃切替', canvas.width / 2, canvas.height / 2 + 92);
+    ctx.fillText('WASD・画面外のスティック = 移動　マウス・ドラッグ = 照準', canvas.width / 2, canvas.height / 2 + 118);
+    ctx.textAlign = 'left';
     return;
   }
 
@@ -1591,15 +1630,15 @@ function draw() {
 
   // 画面右上、日付表示の下に寿命ゲージを表示する（じわじわとしか減らないので目立たせすぎない色にする）
   const lifespanFrac = Math.max(0, Math.min(1, lifespan / maxLifespan));
-  const lifeGaugeW = 100, lifeGaugeH = 8, lifeGx = canvas.width - lifeGaugeW - 12, lifeGy = 34;
+  const lifeGaugeW = 160, lifeGaugeH = 14, lifeGx = canvas.width - lifeGaugeW - 12, lifeGy = 46;
   ctx.fillStyle = 'gray';
   ctx.fillRect(lifeGx, lifeGy, lifeGaugeW, lifeGaugeH);
   ctx.fillStyle = lifespanFrac < 0.3 ? '#ef5350' : '#ba68c8';
   ctx.fillRect(lifeGx, lifeGy, lifeGaugeW * lifespanFrac, lifeGaugeH);
   ctx.fillStyle = 'white';
-  ctx.font = '12px sans-serif';
+  ctx.font = '18px sans-serif';
   ctx.textAlign = 'right';
-  ctx.fillText('寿命: ' + Math.ceil(lifespan), lifeGx + lifeGaugeW, lifeGy + lifeGaugeH + 14);
+  ctx.fillText('寿命: ' + Math.ceil(lifespan), lifeGx + lifeGaugeW, lifeGy + lifeGaugeH + 20);
   ctx.textAlign = 'left';
 
   // 現在の攻撃モードと行動不能状態を表示する
@@ -1643,11 +1682,11 @@ function draw() {
   // 画面右上に日付・時刻・曜日を表示する
   const yName = weekdayNames[currentDate.getDay()];
   const holidayFlag = isHoliday(currentDate) || yName === '土' || yName === '日';
-  ctx.font = '16px sans-serif';
+  ctx.font = 'bold 22px sans-serif';
   ctx.fillStyle = holidayFlag ? '#ffeb3b' : 'white';
   const hourStr = String(currentHour).padStart(2,'0') + ':00';
   const dateStr = `DAY${dayNumber} ${currentDate.getFullYear()}/${String(currentDate.getMonth()+1).padStart(2,'0')}/${String(currentDate.getDate()).padStart(2,'0')} ${hourStr} (${yName})`;
-  ctx.fillText(dateStr, canvas.width - 12 - ctx.measureText(dateStr).width, 24);
+  ctx.fillText(dateStr, canvas.width - 12 - ctx.measureText(dateStr).width, 28);
   // 全ての敵を描画する
   for (const en of enemies) {
     // 当たり判定の円を先に描き、敵の文字が常に手前になるようにする
@@ -1678,21 +1717,6 @@ function draw() {
   }
   ctx.textAlign = 'left';
 
-  // タッチ操作中のみ、仮想移動スティックを描画する
-  for (const info of activeTouchPointers.values()) {
-    if (info.role !== 'move') continue;
-    ctx.save();
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
-    ctx.beginPath();
-    ctx.arc(info.originX, info.originY, touchStickMaxRadius, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
-    ctx.beginPath();
-    ctx.arc(info.stickX, info.stickY, touchStickMaxRadius * 0.45, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
-
   if (isPaused && !gameOver && !gameClear) {
     ctx.fillStyle = 'rgba(0,0,0,0.65)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1711,11 +1735,12 @@ function draw() {
     ctx.fillStyle = '#8df5c5';
     ctx.font = '52px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('GAME CLEAR', canvas.width / 2, canvas.height / 2 - 28);
+    ctx.fillText('GAME CLEAR', canvas.width / 2, canvas.height / 2 - 100);
     ctx.font = '24px sans-serif';
     ctx.fillStyle = 'white';
-    ctx.fillText('Final Score: ' + score, canvas.width / 2, canvas.height / 2 + 24);
+    ctx.fillText('Final Score: ' + score, canvas.width / 2, canvas.height / 2 - 56);
     ctx.textAlign = 'left';
+    drawEndScreenButtons(canvas.height / 2 - 10);
   }
 
   if (gameOver) {
@@ -1724,10 +1749,11 @@ function draw() {
     ctx.fillStyle = 'white';
     ctx.font = '48px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('Game Over', canvas.width / 2, canvas.height / 2 - 20);
+    ctx.fillText('Game Over', canvas.width / 2, canvas.height / 2 - 92);
     ctx.font = '24px sans-serif';
-    ctx.fillText('Final Score: ' + score, canvas.width / 2, canvas.height / 2 + 24);
+    ctx.fillText('Final Score: ' + score, canvas.width / 2, canvas.height / 2 - 48);
     ctx.textAlign = 'left';
+    drawEndScreenButtons(canvas.height / 2 - 10);
   }
   // 週間ノルマ未達成：休日出勤するかどうかの選択画面
   if (weekendWorkChoice && !gameOver && !gameClear) {
@@ -1736,22 +1762,16 @@ function draw() {
     ctx.fillStyle = '#ff8a65';
     ctx.font = '28px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('今週のノルマを達成できませんでした…', canvas.width / 2, canvas.height / 2 - 60);
-    ctx.fillText('土日祝日も働きますか？', canvas.width / 2, canvas.height / 2 - 24);
-    ctx.font = '20px sans-serif';
-    ctx.fillStyle = 'white';
-    ctx.fillText('Y / タップ = 出勤する（土日ともに稼働）', canvas.width / 2, canvas.height / 2 + 16);
-    ctx.fillText('N / タップ = 休む（評価がさらに下がる）', canvas.width / 2, canvas.height / 2 + 48);
+    ctx.fillText('今週のノルマを達成できませんでした…', canvas.width / 2, canvas.height / 2 - 80);
+    ctx.fillText('土日祝日も働きますか？', canvas.width / 2, canvas.height / 2 - 44);
     ctx.textAlign = 'left';
-    const btnW = 420, btnH = 32;
-    uiButtons.push({
-      x: canvas.width / 2 - btnW / 2, y: canvas.height / 2 + 16 - 24, w: btnW, h: btnH,
-      action: () => handleWeekendWorkChoice('work')
-    });
-    uiButtons.push({
-      x: canvas.width / 2 - btnW / 2, y: canvas.height / 2 + 48 - 24, w: btnW, h: btnH,
-      action: () => handleWeekendWorkChoice('rest')
-    });
+
+    const btnW = 340, btnH = 50;
+    const btnX = canvas.width / 2 - btnW / 2;
+    drawUiButton(btnX, canvas.height / 2 - 4, btnW, btnH, '出勤する (Y)',
+      () => handleWeekendWorkChoice('work'));
+    drawUiButton(btnX, canvas.height / 2 + 54, btnW, btnH, '休む (N)',
+      () => handleWeekendWorkChoice('rest'), { fillStyle: 'rgba(84, 60, 30, 0.6)', strokeStyle: '#ffb74d' });
   }
   // 週末の過ごし方の選択画面（週間ノルマ達成後の休日、または休日出勤を断った場合）
   if (restActivityChoice && !gameOver && !gameClear) {
@@ -1762,29 +1782,24 @@ function draw() {
     ctx.textAlign = 'center';
     const extraOffset = (restActivityChoiceHeader.length - 1) * 34;
     restActivityChoiceHeader.forEach((line, i) => {
-      ctx.fillText(line, canvas.width / 2, canvas.height / 2 - 60 - extraOffset + i * 34);
-    });
-    ctx.font = '20px sans-serif';
-    const optionBaseY = canvas.height / 2 - 10 + extraOffset;
-    const optionLabels = [
-      '1 / タップ = アイテム購入 (SAN +15 / 脳疲労 -20)',
-      '2 / タップ = 休息 (脳疲労が全回復 / SAN +25)',
-      '3 / タップ = スキル選択・勉強 (特殊スキルを1つ選ぶ)'
-    ];
-    optionLabels.forEach((label, i) => {
-      ctx.fillText(label, canvas.width / 2, optionBaseY + i * 32);
+      ctx.fillText(line, canvas.width / 2, canvas.height / 2 - 90 - extraOffset + i * 34);
     });
     ctx.textAlign = 'left';
-    const btnW = 460, btnH = 30;
-    [1, 2, 3].forEach((choiceIndex, i) => {
-      const y = optionBaseY + i * 32;
-      uiButtons.push({
-        x: canvas.width / 2 - btnW / 2, y: y - 22, w: btnW, h: btnH,
-        action: () => {
-          restActivityChoice = false;
-          applyRestActivity(choiceIndex);
-          if (choiceIndex !== 3) finishRestDayAndAdvanceToMonday();
-        }
+
+    const btnW = 460, btnH = 44;
+    const btnX = canvas.width / 2 - btnW / 2;
+    const optionBaseY = canvas.height / 2 - 30 + extraOffset;
+    const optionLabels = [
+      'アイテム購入 (SAN +15 / 脳疲労 -20)',
+      '休息 (脳疲労が全回復 / SAN +25)',
+      'スキル選択・勉強 (特殊スキルを1つ選ぶ)'
+    ];
+    optionLabels.forEach((label, i) => {
+      const choiceIndex = i + 1;
+      drawUiButton(btnX, optionBaseY + i * 52, btnW, btnH, `${choiceIndex}. ${label}`, () => {
+        restActivityChoice = false;
+        applyRestActivity(choiceIndex);
+        if (choiceIndex !== 3) finishRestDayAndAdvanceToMonday();
       });
     });
   }

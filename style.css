@@ -45,6 +45,35 @@ canvas {
   touch-action: manipulation;
 }
 
+/* プレイ画面（キャンバス）の外、画面左下に固定表示する移動スティック */
+#moveJoystick {
+  position: fixed;
+  left: max(16px, env(safe-area-inset-left));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  width: 116px;
+  height: 116px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.10);
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  touch-action: none;
+  z-index: 20;
+}
+
+#moveJoystickKnob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 52px;
+  height: 52px;
+  margin-left: -26px;
+  margin-top: -26px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  touch-action: none;
+  pointer-events: none; /* ノブ自体は入力を奪わず、常にベース側で判定する */
+}
+
 /* 縦持ち（ポートレート）のときだけ、横向きを促すオーバーレイを表示する */
 #rotateOverlay {
   display: none;
