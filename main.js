@@ -672,6 +672,20 @@ function jumpToNextMondayAndResetWeek() {
   lastUpdate = Date.now();
 }
 
+// 週の終わりを迎えたときの、週末の過ごし方選択画面の見出し文。状況に応じて呼び分ける
+let restActivityChoiceHeader = ['休日はどう過ごしますか？'];
+const weekCompleteFlavorTexts = [
+  '一週間が終わった！ようやく休日だ…',
+  '長い一週間だった…やっと休日だ。',
+  '今週も乗り切った！さて、休日は何をしよう。'
+];
+
+// 週末の過ごし方選択（休日の過ごし方3択）を開く
+function openRestActivityChoice(headerLines) {
+  restActivityChoiceHeader = headerLines;
+  restActivityChoice = true;
+}
+
 // 週の最終稼働日（金曜相当）の終業処理。ノルマ達成の可否で分岐する
 function resolveWeekEnd() {
   const achieved = weeklyKills >= weeklyKillQuota || weeklyScoreGained >= weeklyScoreQuota;
@@ -679,7 +693,8 @@ function resolveWeekEnd() {
     const bonus = 10 + rank * 3;
     score += bonus;
     showMessage(`週間ノルマ達成！ Score +${bonus}`, 4000, '#69f0ae', '28px sans-serif');
-    startDayTransition(jumpToNextMondayAndResetWeek);
+    const flavor = weekCompleteFlavorTexts[Math.floor(Math.random() * weekCompleteFlavorTexts.length)];
+    openRestActivityChoice([flavor, '休日をどう過ごしますか？']);
   } else {
     const scorePenalty = Math.ceil(score * weeklyFailScorePenaltyRatio);
     const sanPenalty = Math.ceil(maxSan * weeklyFailSanPenaltyRatio);
@@ -819,7 +834,7 @@ function handleWeekendWorkChoice(choice) {
     const extraPenalty = Math.ceil(score * restEvaluationPenaltyRatio);
     score = Math.max(0, score - extraPenalty);
     showMessage(`評価ダウン… Score -${extraPenalty}`, 3000, '#ff8a65', '22px sans-serif');
-    restActivityChoice = true;
+    openRestActivityChoice(['休日はどう過ごしますか？']);
   }
 }
 
@@ -1738,22 +1753,31 @@ function draw() {
       action: () => handleWeekendWorkChoice('rest')
     });
   }
-  // 休日出勤を断った場合：休日の過ごし方の選択画面
+  // 週末の過ごし方の選択画面（週間ノルマ達成後の休日、または休日出勤を断った場合）
   if (restActivityChoice && !gameOver && !gameClear) {
     ctx.fillStyle = 'rgba(0,0,0,0.7)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = 'white';
-    ctx.font = '28px sans-serif';
+    ctx.font = '26px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('休日はどう過ごしますか？', canvas.width / 2, canvas.height / 2 - 60);
+    const extraOffset = (restActivityChoiceHeader.length - 1) * 34;
+    restActivityChoiceHeader.forEach((line, i) => {
+      ctx.fillText(line, canvas.width / 2, canvas.height / 2 - 60 - extraOffset + i * 34);
+    });
     ctx.font = '20px sans-serif';
-    ctx.fillText('1 / タップ = アイテム購入 (SAN +15 / 脳疲労 -20)', canvas.width / 2, canvas.height / 2 - 10);
-    ctx.fillText('2 / タップ = 休息 (脳疲労が全回復 / SAN +25)', canvas.width / 2, canvas.height / 2 + 22);
-    ctx.fillText('3 / タップ = スキル選択・勉強 (特殊スキルを1つ選ぶ)', canvas.width / 2, canvas.height / 2 + 54);
+    const optionBaseY = canvas.height / 2 - 10 + extraOffset;
+    const optionLabels = [
+      '1 / タップ = アイテム購入 (SAN +15 / 脳疲労 -20)',
+      '2 / タップ = 休息 (脳疲労が全回復 / SAN +25)',
+      '3 / タップ = スキル選択・勉強 (特殊スキルを1つ選ぶ)'
+    ];
+    optionLabels.forEach((label, i) => {
+      ctx.fillText(label, canvas.width / 2, optionBaseY + i * 32);
+    });
     ctx.textAlign = 'left';
     const btnW = 460, btnH = 30;
     [1, 2, 3].forEach((choiceIndex, i) => {
-      const y = canvas.height / 2 - 10 + i * 32;
+      const y = optionBaseY + i * 32;
       uiButtons.push({
         x: canvas.width / 2 - btnW / 2, y: y - 22, w: btnW, h: btnH,
         action: () => {
