@@ -52,6 +52,8 @@ const totalWeight = typeWeights.reduce((a, b) => a + b, 0);
 
 // 敵の初期生成より前に参照できるよう、ランクをここで宣言する
 let rank = 1;
+// getAllowedMaxTypeIndexByRankがゲーム開始前のウェーブ生成時にも参照するため、ここで宣言する
+let weeklyQuotaAchievedEarly = false; // 週の途中でノルマを達成済みか
 
 function chooseEnemyTypeIndex() {
   // 現在のランクに応じて、出現可能な敵の上限を決める
@@ -83,13 +85,13 @@ function setEnemyStats(e, typeIndex) {
 
 // ===== 敵の生成と管理 =====
 const enemies = [];
-const maxEnemies = 3;
-const spawnInterval = 3200; // 敵を生成する間隔（ミリ秒）
+const maxEnemies = 3; // 1ウェーブで同時に出現する敵（仕事）の数
+const waveCooldownDelayMs = 900; // ウェーブを全滅させてから次のウェーブが出るまでの間
 const enemyCollisionRadius = 32;
 const minDeadlineMs = 5000; // 納期の最短時間（5秒）
 const maxDeadlineMs = 30000; // 納期の最長時間（30秒）
 let specialDeadlineMultiplier = 1;
-let lastSpawn = 0;
+let waveCooldownMs = 0; // 次のウェーブ出現までの残り時間
 
 function spawnEnemy(typeIndex) {
   // 既存の敵やプレイヤーと重ならない位置を探す
@@ -115,8 +117,13 @@ function spawnEnemy(typeIndex) {
   return e;
 }
 
-// ゲーム開始時の敵を2体生成する
-for (let i = 0; i < 2; i++) spawnEnemy();
+// 現在の仕事（敵）を全て片付けるまで、次のウェーブは出現しない
+function spawnWave() {
+  for (let i = 0; i < maxEnemies; i++) spawnEnemy();
+}
+
+// ゲーム開始時の最初のウェーブを生成する
+spawnWave();
 // ===== 弾・スコア・ゲーム状態 =====
 // プレイヤーが発射した弾を保存する配列
 const bullets = [];
@@ -189,7 +196,6 @@ const dayEndHour = 18;
 let dayStartTime = Date.now();
 let lastHourTime = dayStartTime;
 let currentHour = dayStartHour;
-let dayEnded = false;
 let noonChoice = false; // 12時の選択待ちかどうか
 let noonContinueMode = false; // trueの間は、指定時刻まで敵が停止する
 let noonModeEndTime = 0;
@@ -199,6 +205,20 @@ const daySanRecover = 10;
 // 昼に「継続」を選んだ場合の消耗量
 const noonFatigueIncreasePerSec = 4; // 継続中の1秒あたりの疲労増加量
 const noonSanDrainPerSec = 2;
+
+// ===== DAYカウンターと週次ノルマシステム =====
+let dayNumber = 1; // 実際に稼働した日数（1始まり）
+let weeklyKillQuota = 0; // 今週の撃破ノルマ
+let weeklyScoreQuota = 0; // 今週のスコア獲得ノルマ
+let weeklyKills = 0; // 今週の撃破数
+let weeklyScoreGained = 0; // 今週のスコア獲得量（減点は含まない）
+let weekendWorkChoice = false; // 「休日出勤しますか」の選択待ち
+let restActivityChoice = false; // 「休日の過ごし方」3択の選択待ち
+let restStudyPending = false; // 休日の「勉強」からスキル選択を開いた後の後続処理待ち
+// ノルマ未達成時のペナルティ・達成時のボーナスの割合
+const weeklyFailScorePenaltyRatio = 0.25; // Scoreの25%を失う
+const weeklyFailSanPenaltyRatio = 0.35; // maxSanの35%ぶんSANを失う
+const restEvaluationPenaltyRatio = 0.10; // 休日出勤を断った場合、さらにScoreの10%を失う
 
 // ===== SAN（精神力）システム =====
 const maxSan = 100;
@@ -231,6 +251,46 @@ function isHoliday(d) {
   const mm = String(d.getMonth() + 1).padStart(2,'0');
   const dd = String(d.getDate()).padStart(2,'0');
   return holidayMMDD.has(`${mm}-${dd}`);
+}
+
+// その週の最終稼働日（金曜、金曜が祝日ならその前日）かどうかを判定する
+function isWeekEndDay(date) {
+  const dow = date.getDay();
+  if (dow === 5) return !isHoliday(date);
+  if (dow === 4) {
+    const friday = new Date(date);
+    friday.setDate(friday.getDate() + 1);
+    return isHoliday(friday);
+  }
+  return false;
+}
+
+// 指定日より後の直近の月曜日を返す（土日祝日をまとめて飛ばすために使う）
+function nextMonday(date) {
+  const d = new Date(date);
+  do {
+    d.setDate(d.getDate() + 1);
+  } while (d.getDay() !== 1);
+  return d;
+}
+
+// ランクに応じて今週のノルマを再設定する
+function resetWeeklyQuotaForNewWeek() {
+  weeklyKillQuota = 6 + (rank - 1) * 2;
+  weeklyScoreQuota = 25 + (rank - 1) * 12;
+  weeklyKills = 0;
+  weeklyScoreGained = 0;
+  weeklyQuotaAchievedEarly = false;
+}
+
+// 週の途中でノルマを達成したかどうかをキル時にチェックする
+function checkEarlyQuotaAchievement() {
+  if (weeklyQuotaAchievedEarly) return;
+  if (isWeekEndDay(currentDate)) return; // 最終日はresolveWeekEndで判定するため、ここでは扱わない
+  if (weeklyKills >= weeklyKillQuota || weeklyScoreGained >= weeklyScoreQuota) {
+    weeklyQuotaAchievedEarly = true;
+    showMessage('今週のノルマ達成！残りは易しい仕事だけになります', 3500, '#69f0ae', '22px sans-serif');
+  }
 }
 
 function sendScore(finalScore) {
@@ -270,18 +330,30 @@ let skillLevel = 0;
 const speedDayIncreaseFactor = 0.6; // 終業時には最大60%速くなる
 
 // ===== 特殊スキルシステム =====
-const specialSkillEffects = {
-  multiTaskLevel: 0,
-  tripleShotLevel: 0,
-  moveSpeedMultiplier: 1,
-  firingFatigueMultiplier: 1,
-  fireRateMultiplier: 1,
-  damageMultiplier: 1,
-  chocolateRecoveryMultiplier: 1,
-  sanDamageMultiplier: 1,
-  bulletSpeedMultiplier: 1,
-  stunDurationMultiplier: 1
-};
+// スキル効果は「レベルマップから毎回再計算」できるよう、初期値を関数で持つ
+function getDefaultSpecialSkillEffects() {
+  return {
+    multiTaskLevel: 0,
+    tripleShotLevel: 0,
+    moveSpeedMultiplier: 1,
+    firingFatigueMultiplier: 1,
+    fireRateMultiplier: 1,
+    damageMultiplier: 1,
+    chocolateRecoveryMultiplier: 1,
+    sanDamageMultiplier: 1,
+    bulletSpeedMultiplier: 1,
+    stunDurationMultiplier: 1,
+    expGainMultiplier: 1,
+    scoreGainMultiplier: 1,
+    idleRecoveryMultiplier: 1,
+    contactScorePenaltyMultiplier: 1,
+    supportFireChance: 0,
+    bulletScatterChance: 0,
+    enemyApproachSpeedMultiplier: 1,
+    bulletBounceCount: 0
+  };
+}
+const specialSkillEffects = getDefaultSpecialSkillEffects();
 
 const specialSkills = [
   { id: 'dual-shot', name: 'マルチタスク', description: 'レベルごとに同時発射する弾が1発増える' },
@@ -294,17 +366,43 @@ const specialSkills = [
   { id: 'deadline-master', name: '納期管理', description: '敵の納期が50%長くなる' },
   { id: 'mental-guard', name: 'メンタルガード', description: '受けるSANダメージを25%軽減する' },
   { id: 'high-speed-bullet', name: '処理速度', description: '弾の速度が40%上がる' },
-  { id: 'short-sleeper', name: 'ショートスリーパー', description: 'stun時間を半分にする' }
+  { id: 'short-sleeper', name: 'ショートスリーパー', description: 'stun時間を半分にする' },
+  { id: 'through-power', name: 'スルー力', description: '受けるSANダメージ-15%。ただし気にしない分EXP獲得-10%' },
+  { id: 'listening', name: '傾聴力', description: '人の話をよく聞き学びが早い。EXP獲得+15%' },
+  { id: 'proactiveness', name: '主体性', description: '自分から動くので発射間隔-7%・移動速度+8%' },
+  { id: 'problem-solving', name: '問題解決力', description: '攻撃力+20%' },
+  { id: 'logical-thinking', name: '論理的思考力', description: '筋道立てて評価されやすい。攻撃力+10%・獲得スコア+10%' },
+  { id: 'priority-judgement', name: '優先順位判断力', description: '重要な仕事から片付け、獲得スコア+20%' },
+  { id: 'learning-power', name: '学習力', description: 'EXP獲得+30%' },
+  { id: 'stress-tolerance', name: 'ストレス耐性', description: '受けるSANダメージ-20%' },
+  { id: 'business-manner', name: 'ビジネスマナー', description: '印象が良く、敵接触時のスコア減点-30%' },
+  { id: 'negotiation', name: '交渉力', description: '敵の納期+15%' },
+  { id: 'self-centered', name: '自己中心性', description: '攻撃力+15%だが、敵の反感を買いSANダメージ+15%' },
+  { id: 'negative-thinking', name: '否定的思考', description: '素直に喜べず、チョコレートの回復量-30%' },
+  { id: 'passivity', name: '消極性', description: '動きが鈍くなり発射間隔+15%・移動速度-10%' },
+  { id: 'default-mode-network', name: 'デフォルトモードネットワーク', description: 'ぼーっとしている間に回復、待機時の脳疲労回復+40%' },
+  { id: 'five-w-one-h', name: '５W１H', description: '説明が明確で仕事がスムーズ。敵の納期+10%・EXP獲得+10%' },
+  { id: 'rising-ambition', name: '上昇志向', description: 'EXP獲得+25%だが、頑張りすぎて射撃疲労+15%' },
+  { id: 'optimistic', name: '楽観的', description: '受けるSANダメージ-15%' },
+  { id: 'pessimistic', name: '悲観的', description: '受けるSANダメージ+20%だが、慎重な見積りで敵の納期+10%' },
+  { id: 'chocolate-addiction', name: 'チョコレート依存症', description: 'チョコレートの回復量+80%だが、待機時の回復-20%' },
+  { id: 'communication', name: 'コミュニケーション力', description: 'レベルごとに15%の確率で援護射撃が発生する' },
+  { id: 'report-shortage', name: '報連相不足', description: '情報共有不足で敵の納期-15%' },
+  { id: 'inattentive', name: '注意力散漫', description: 'レベルごとに20%の確率で弾がランダムにそれる' },
+  { id: 'silo-tendency', name: '属人化傾向', description: '自分にしかできない仕事が集中し、敵の接近速度+15%' },
+  { id: 'perfectionism', name: '完璧主義', description: '質は高いが時間がかかる。攻撃力+25%だが発射間隔+15%' },
+  { id: 'network-specialist', name: 'ネットワークスペシャリスト', description: '弾が画面端でレベルごとに1回多く跳ね返る' }
 ];
 
-// スキルIDと取得レベルを対応させて保存する
+// スキルIDと取得レベルを対応させて保存する（これが唯一の正となる状態）
 const specialSkillLevels = new Map();
 let specialSkillChoices = [];
 let specialSkillSelectionActive = false;
 let specialSkillSelectionTitle = '';
 let pendingSpecialSkillSelections = 0;
 
-function applySpecialSkill(skillId) {
+// 1レベルぶんの効果を specialSkillEffects / specialDeadlineMultiplier に加える（副作用なしの純粋な差分適用）
+function applySkillEffectDelta(skillId) {
   switch (skillId) {
     case 'dual-shot': specialSkillEffects.multiTaskLevel++; break;
     case 'speed-up': specialSkillEffects.moveSpeedMultiplier *= 1.5; break;
@@ -313,13 +411,76 @@ function applySpecialSkill(skillId) {
     case 'power-shot': specialSkillEffects.damageMultiplier *= 1.5; break;
     case 'triple-shot': specialSkillEffects.tripleShotLevel++; break;
     case 'chocolate-lover': specialSkillEffects.chocolateRecoveryMultiplier *= 1.5; break;
-    case 'deadline-master':
-      specialDeadlineMultiplier *= 1.5;
-      enemies.forEach(enemy => { enemy.deadlineMs *= 1.5; });
-      break;
+    case 'deadline-master': specialDeadlineMultiplier *= 1.5; break;
     case 'mental-guard': specialSkillEffects.sanDamageMultiplier *= 0.75; break;
     case 'high-speed-bullet': specialSkillEffects.bulletSpeedMultiplier *= 1.4; break;
     case 'short-sleeper': specialSkillEffects.stunDurationMultiplier *= 0.5; break;
+
+    case 'through-power':
+      specialSkillEffects.sanDamageMultiplier *= 0.85;
+      specialSkillEffects.expGainMultiplier *= 0.9;
+      break;
+    case 'listening': specialSkillEffects.expGainMultiplier *= 1.15; break;
+    case 'proactiveness':
+      specialSkillEffects.fireRateMultiplier *= 0.93;
+      specialSkillEffects.moveSpeedMultiplier *= 1.08;
+      break;
+    case 'problem-solving': specialSkillEffects.damageMultiplier *= 1.2; break;
+    case 'logical-thinking':
+      specialSkillEffects.damageMultiplier *= 1.1;
+      specialSkillEffects.scoreGainMultiplier *= 1.1;
+      break;
+    case 'priority-judgement': specialSkillEffects.scoreGainMultiplier *= 1.2; break;
+    case 'learning-power': specialSkillEffects.expGainMultiplier *= 1.3; break;
+    case 'stress-tolerance': specialSkillEffects.sanDamageMultiplier *= 0.8; break;
+    case 'business-manner': specialSkillEffects.contactScorePenaltyMultiplier *= 0.7; break;
+    case 'negotiation': specialDeadlineMultiplier *= 1.15; break;
+    case 'self-centered':
+      specialSkillEffects.damageMultiplier *= 1.15;
+      specialSkillEffects.sanDamageMultiplier *= 1.15;
+      break;
+    case 'negative-thinking': specialSkillEffects.chocolateRecoveryMultiplier *= 0.7; break;
+    case 'passivity':
+      specialSkillEffects.fireRateMultiplier *= 1.15;
+      specialSkillEffects.moveSpeedMultiplier *= 0.9;
+      break;
+    case 'default-mode-network': specialSkillEffects.idleRecoveryMultiplier *= 1.4; break;
+    case 'five-w-one-h':
+      specialDeadlineMultiplier *= 1.1;
+      specialSkillEffects.expGainMultiplier *= 1.1;
+      break;
+    case 'rising-ambition':
+      specialSkillEffects.expGainMultiplier *= 1.25;
+      specialSkillEffects.firingFatigueMultiplier *= 1.15;
+      break;
+    case 'optimistic': specialSkillEffects.sanDamageMultiplier *= 0.85; break;
+    case 'pessimistic':
+      specialSkillEffects.sanDamageMultiplier *= 1.2;
+      specialDeadlineMultiplier *= 1.1;
+      break;
+    case 'chocolate-addiction':
+      specialSkillEffects.chocolateRecoveryMultiplier *= 1.8;
+      specialSkillEffects.idleRecoveryMultiplier *= 0.8;
+      break;
+    case 'communication': specialSkillEffects.supportFireChance += 0.15; break;
+    case 'report-shortage': specialDeadlineMultiplier *= 0.85; break;
+    case 'inattentive': specialSkillEffects.bulletScatterChance += 0.2; break;
+    case 'silo-tendency': specialSkillEffects.enemyApproachSpeedMultiplier *= 1.15; break;
+    case 'perfectionism':
+      specialSkillEffects.damageMultiplier *= 1.25;
+      specialSkillEffects.fireRateMultiplier *= 1.15;
+      break;
+    case 'network-specialist': specialSkillEffects.bulletBounceCount += 1; break;
+  }
+}
+
+// specialSkillLevels（レベルマップ）を唯一の正として、効果をゼロから再計算する
+// スキル忘却イベントなどで習得レベルが変わった際に呼び出す
+function recomputeSpecialSkillEffects() {
+  Object.assign(specialSkillEffects, getDefaultSpecialSkillEffects());
+  specialDeadlineMultiplier = 1;
+  for (const [skillId, level] of specialSkillLevels.entries()) {
+    for (let i = 0; i < level; i++) applySkillEffectDelta(skillId);
   }
 }
 
@@ -343,7 +504,11 @@ function chooseSpecialSkill(choiceIndex) {
 
   const newSkillLevel = (specialSkillLevels.get(skill.id) || 0) + 1;
   specialSkillLevels.set(skill.id, newSkillLevel);
-  applySpecialSkill(skill.id);
+  applySkillEffectDelta(skill.id);
+  if (skill.id === 'deadline-master') {
+    // 取得した瞬間、今抱えている仕事の納期にも即座に反映する
+    enemies.forEach(enemy => { enemy.deadlineMs *= 1.5; });
+  }
   showMessage(
     `特殊スキル「${skill.name}」Lv.${newSkillLevel}！`,
     2500,
@@ -356,6 +521,13 @@ function chooseSpecialSkill(choiceIndex) {
   if (pendingSpecialSkillSelections > 0) {
     pendingSpecialSkillSelections--;
     openSpecialSkillSelection('レベルアップ：特殊スキルを選択');
+    return;
+  }
+
+  // 休日の「勉強」から呼ばれていた場合、ここでランダムイベント＋週明けへの進行を続ける
+  if (restStudyPending) {
+    restStudyPending = false;
+    finishRestDayAndAdvanceToMonday();
   }
 }
 
@@ -395,13 +567,136 @@ function checkRankUp() {
 function rankUpAtDayEnd() {
   const promoted = checkRankUp();
   if (promoted) {
-    // 一日の終了時に選択するまで、昇格メッセージを表示し続ける
-    persistentPromotion = {
-      text: '昇進しました！ ' + rank + ' ' + rankNames[rank-1],
-      color: '#ffeb3b',
-      font: '32px sans-serif'
-    };
+    showMessage('昇進しました！ ' + rank + ' ' + rankNames[rank-1], 4500, '#ffeb3b', '32px sans-serif');
   }
+}
+
+// ===== 日次進行・週次ノルマ判定・休日フロー =====
+
+// 通常の平日（または休日出勤中の土日）の終業処理。続行確認なしで自動的に翌日へ進む
+function autoAdvanceDay() {
+  const isWeekendWork = currentDate.getDay() === 0 || currentDate.getDay() === 6;
+  currentDate.setDate(currentDate.getDate() + 1);
+  fatigue = Math.max(0, fatigue - dayFatigueRecover);
+  san = Math.min(maxSan, san + daySanRecover);
+  dayStartTime = gameClockMs;
+  lastHourTime = gameClockMs;
+  currentHour = dayStartHour;
+  stunned = false;
+  dayNumber++;
+  showMessage(`DAY ${dayNumber - 1} 終了${isWeekendWork ? '（休日出勤）' : ''}`, 2200, '#90caf9', '26px sans-serif');
+  if (currentDate.getDay() === 1) {
+    resetWeeklyQuotaForNewWeek();
+  }
+  lastUpdate = Date.now();
+}
+
+// 週の最終稼働日（金曜相当）の終業処理。ノルマ達成の可否で分岐する
+function resolveWeekEnd() {
+  const achieved = weeklyKills >= weeklyKillQuota || weeklyScoreGained >= weeklyScoreQuota;
+  if (achieved) {
+    const bonus = 10 + rank * 3;
+    score += bonus;
+    showMessage(`週間ノルマ達成！ Score +${bonus}`, 4000, '#69f0ae', '28px sans-serif');
+    currentDate = nextMonday(currentDate);
+    dayStartTime = gameClockMs;
+    lastHourTime = gameClockMs;
+    currentHour = dayStartHour;
+    stunned = false;
+    dayNumber++;
+    resetWeeklyQuotaForNewWeek();
+    lastUpdate = Date.now();
+  } else {
+    const scorePenalty = Math.ceil(score * weeklyFailScorePenaltyRatio);
+    const sanPenalty = Math.ceil(maxSan * weeklyFailSanPenaltyRatio);
+    score = Math.max(0, score - scorePenalty);
+    san = Math.max(0, san - sanPenalty);
+    showMessage(`週間ノルマ未達成… Score -${scorePenalty} / SAN -${sanPenalty}`, 4000, '#ff5252', '26px sans-serif');
+    if (san <= 0) {
+      san = 0;
+      gameOver = true;
+      sendScore(score);
+      return;
+    }
+    weekendWorkChoice = true;
+  }
+}
+
+// 休日の過ごし方（1:アイテム購入 2:休息 3:勉強）を適用する
+function applyRestActivity(choiceIndex) {
+  if (choiceIndex === 1) {
+    san = Math.min(maxSan, san + 15);
+    fatigue = Math.max(0, fatigue - 20);
+    showMessage('買い物でリフレッシュ！ SAN +15 / 脳疲労 -20', 2500, '#ffcc80');
+  } else if (choiceIndex === 2) {
+    fatigue = 0;
+    san = Math.min(maxSan, san + 25);
+    showMessage('しっかり休息した！ 脳疲労が全回復 / SAN +25', 2500, '#80deea');
+  } else if (choiceIndex === 3) {
+    restStudyPending = true;
+    openSpecialSkillSelection('休日の勉強：特殊スキルを選択');
+  }
+}
+
+// SAN増減・スキル習得・スキル忘却などのランダムイベントを1つ抽選して適用する
+const restRandomEvents = [
+  { text: '友人とカフェで気分転換。SAN +10', weight: 3, apply: () => { san = Math.min(maxSan, san + 10); } },
+  { text: '前日の疲れが抜けず、少し憂うつ。SAN -8', weight: 2, apply: () => { san = Math.max(0, san - 8); } },
+  { text: '資格の勉強がはかどり、ふと閃きを得た！特殊スキルを1つ習得', weight: 2, apply: () => grantRandomSkillLevel() },
+  { text: '燃え尽き気味で、覚えていたスキルを一つ忘れてしまった…', weight: 1, apply: () => forgetRandomSkill() },
+  { text: '趣味に没頭してリフレッシュ。SAN +15', weight: 2, apply: () => { san = Math.min(maxSan, san + 15); } },
+  { text: '休日出勤の夢を見てうなされた。SAN -12', weight: 1, apply: () => { san = Math.max(0, san - 12); } },
+  { text: '何もせずボーッとしていたら、あっという間に休日が終わった。', weight: 3, apply: () => {} }
+];
+function triggerRandomRestEvent() {
+  const total = restRandomEvents.reduce((a, ev) => a + ev.weight, 0);
+  let r = Math.random() * total;
+  for (const ev of restRandomEvents) {
+    r -= ev.weight;
+    if (r <= 0) {
+      ev.apply();
+      showMessage(ev.text, 3000, '#ce93d8', '20px sans-serif');
+      break;
+    }
+  }
+  if (san <= 0) {
+    san = 0;
+    gameOver = true;
+    sendScore(score);
+  }
+}
+
+function grantRandomSkillLevel() {
+  const skill = specialSkills[Math.floor(Math.random() * specialSkills.length)];
+  const newLevel = (specialSkillLevels.get(skill.id) || 0) + 1;
+  specialSkillLevels.set(skill.id, newLevel);
+  recomputeSpecialSkillEffects();
+}
+
+function forgetRandomSkill() {
+  const learned = [...specialSkillLevels.entries()].filter(([, lvl]) => lvl > 0);
+  if (learned.length === 0) return;
+  const [id, lvl] = learned[Math.floor(Math.random() * learned.length)];
+  if (lvl - 1 <= 0) {
+    specialSkillLevels.delete(id);
+  } else {
+    specialSkillLevels.set(id, lvl - 1);
+  }
+  recomputeSpecialSkillEffects();
+}
+
+// 休日の過ごし方＋ランダムイベントの後、月曜まで日付を進めてゲームを再開する
+function finishRestDayAndAdvanceToMonday() {
+  triggerRandomRestEvent();
+  if (gameOver) return;
+  currentDate = nextMonday(currentDate);
+  dayStartTime = gameClockMs;
+  lastHourTime = gameClockMs;
+  currentHour = dayStartHour;
+  stunned = false;
+  dayNumber++;
+  resetWeeklyQuotaForNewWeek();
+  lastUpdate = Date.now();
 }
 
 // ===== 画面上に表示する一時メッセージ =====
@@ -409,13 +704,14 @@ const messages = [];
 function showMessage(text, ttl = 2000, color = 'white', font = '20px sans-serif') {
   messages.push({ text, ttl, initialTtl: ttl, color, font });
 }
-// 一日の終了時に回答するまで表示する昇格メッセージ
-let persistentPromotion = null;
 
 function getAllowedMaxTypeIndexByRank() {
   // ランク1～10を敵番号0～9へ対応させる（低ランクでは弱い敵だけ出す）
   const maxIdx = Math.floor((rank / 10) * (enemyTypeNames.length - 1));
-  return Math.max(0, Math.min(enemyTypeNames.length - 1, maxIdx));
+  let capped = Math.max(0, Math.min(enemyTypeNames.length - 1, maxIdx));
+  // 週のノルマを早期達成した週は、残りの期間は易しい仕事のみにする
+  if (weeklyQuotaAchievedEarly) capped = Math.min(capped, 1);
+  return capped;
 }
 
 // 納期が0になった敵を爆発させ、接触時の3倍のSANダメージを与える
@@ -438,8 +734,8 @@ function explodeEnemy(enemyIndex) {
   if (san <= 0) {
     gameOver = true;
     sendScore(score);
-  } else {
-    spawnEnemy();
+  } else if (enemies.length === 0) {
+    waveCooldownMs = waveCooldownDelayMs;
   }
 }
 
@@ -478,25 +774,32 @@ document.addEventListener("keydown", (event) => {
     }
     return;
   }
-  // 一日が終了している場合は、翌日へ進むか終了するかを処理する
-  if (dayEnded) {
+  // 週間ノルマ未達成時：休日出勤するかどうかの選択
+  if (weekendWorkChoice) {
     if (event.key === 'y') {
-      // 継続：少し回復して翌日を開始する
-      // カレンダーの日付を1日進める
-      currentDate.setDate(currentDate.getDate() + 1);
-      fatigue = Math.max(0, fatigue - dayFatigueRecover);
-      san = Math.min(maxSan, san + daySanRecover);
-      dayEnded = false;
-      dayStartTime = gameClockMs;
-      lastHourTime = gameClockMs;
-      currentHour = dayStartHour;
-      lastUpdate = Date.now();
-      stunned = false;
-      // 翌日へ進むときに昇格メッセージを消す
-      persistentPromotion = null;
+      // 出勤：土日をまとめて通常の稼働日として続ける
+      weekendWorkChoice = false;
+      autoAdvanceDay();
     } else if (event.key === 'n') {
-      gameOver = true;
-      sendScore(score);
+      // 休む：評価がさらに下がり、休日の過ごし方を選ぶ
+      weekendWorkChoice = false;
+      const extraPenalty = Math.ceil(score * restEvaluationPenaltyRatio);
+      score = Math.max(0, score - extraPenalty);
+      showMessage(`評価ダウン… Score -${extraPenalty}`, 3000, '#ff8a65', '22px sans-serif');
+      restActivityChoice = true;
+    }
+    return;
+  }
+  // 休日の過ごし方（1:アイテム購入 2:休息 3:勉強）を選ぶ
+  if (restActivityChoice) {
+    const choiceIndex = Number(event.key);
+    if (choiceIndex >= 1 && choiceIndex <= 3) {
+      restActivityChoice = false;
+      applyRestActivity(choiceIndex);
+      // 「勉強」以外はその場でランダムイベント＋週明けへ進む（勉強はスキル選択完了後に進む）
+      if (choiceIndex !== 3) {
+        finishRestDayAndAdvanceToMonday();
+      }
     }
     return;
   }
@@ -509,6 +812,8 @@ document.addEventListener("keydown", (event) => {
       lastUpdate = Date.now();
       lastHourTime = 0;
       dayStartTime = 0;
+      dayNumber = 1;
+      resetWeeklyQuotaForNewWeek();
       openSpecialSkillSelection('最初の特殊スキルを選択');
     } else if (event.key === '2') {
       gameTimeScale = 3;
@@ -517,6 +822,8 @@ document.addEventListener("keydown", (event) => {
       lastUpdate = Date.now();
       lastHourTime = 0;
       dayStartTime = 0;
+      dayNumber = 1;
+      resetWeeklyQuotaForNewWeek();
       openSpecialSkillSelection('3倍加速モード：最初の特殊スキルを選択');
     }
     return;
@@ -598,11 +905,9 @@ function update() {
     messages[mi].ttl -= dt * 1000;
     if (messages[mi].ttl <= 0) messages.splice(mi, 1);
   }
-  // 一日の終了画面以外では昇格メッセージを消す
-  if (!dayEnded) persistentPromotion = null;
 
-  // 昼または一日の終了時の選択中は、ゲームの進行を止める
-  if (noonChoice || dayEnded) return;
+  // 昼・週末の休日出勤選択・休日の過ごし方選択中は、ゲームの進行を止める
+  if (noonChoice || weekendWorkChoice || restActivityChoice) return;
 
   // ゲーム内時刻を進める
   // 昼に「継続」を選んだ時間を処理する
@@ -622,7 +927,7 @@ function update() {
   }
 
   // 選択画面や昼の継続中でなければ、通常どおり時刻を進める
-  if (!dayEnded && !noonChoice && !noonContinueMode) {
+  if (!noonChoice && !noonContinueMode) {
     if (now - lastHourTime >= hourMs) {
       const passed = Math.floor((now - lastHourTime) / hourMs);
       lastHourTime += passed * hourMs;
@@ -641,17 +946,25 @@ function update() {
           sendScore(score);
           return;
         }
-        dayEnded = true;
         rankUpAtDayEnd();
+        // 週の最終稼働日なら週次ノルマを判定し、それ以外は自動的に翌日へ進む
+        if (isWeekEndDay(currentDate)) {
+          resolveWeekEnd();
+        } else {
+          autoAdvanceDay();
+        }
         return;
       }
     }
   }
 
-  // 上限数に達していなければ、一定間隔で敵を生成する
-  if (now - lastSpawn >= spawnInterval && enemies.length < maxEnemies) {
-    spawnEnemy();
-    lastSpawn = now;
+  // 全滅したら少し間を置いて次のウェーブ（仕事）を出す
+  if (enemies.length === 0) {
+    if (waveCooldownMs > 0) {
+      waveCooldownMs -= dt * 1000;
+    } else {
+      spawnWave();
+    }
   }
 
   // 各敵の納期をカウントダウンし、0になった敵を爆発させる
@@ -723,7 +1036,7 @@ function update() {
     if (moving) {
       fatigue = Math.max(0, fatigue - (idleRecoveryPerSec * 0.35) * dt);
     } else {
-      fatigue = Math.max(0, fatigue - idleRecoveryPerSec * dt);
+      fatigue = Math.max(0, fatigue - idleRecoveryPerSec * specialSkillEffects.idleRecoveryMultiplier * dt);
     }
 
     // 攻撃モードに関係なく、自機は常にマウスカーソルの方向を向く
@@ -773,14 +1086,36 @@ function update() {
           }
 
           for (const offsetDegrees of shotOffsets) {
-            const bulletAngle = shotAngle + offsetDegrees * Math.PI / 180;
+            // 注意力散漫スキルの確率に応じて、弾がランダムな角度にそれる
+            const scatterDegrees = Math.random() < specialSkillEffects.bulletScatterChance
+              ? (Math.random() - 0.5) * 50
+              : 0;
+            const bulletAngle = shotAngle + (offsetDegrees + scatterDegrees) * Math.PI / 180;
             bullets.push({
               x: player.x + Math.cos(bulletAngle) * player.radius,
               y: player.y + Math.sin(bulletAngle) * player.radius,
               vx: Math.cos(bulletAngle) * speed,
               vy: Math.sin(bulletAngle) * speed,
               radius: 4,
-              damage
+              damage,
+              bounces: specialSkillEffects.bulletBounceCount
+            });
+          }
+          // コミュニケーション力：一定確率で、最寄りの敵へ援護射撃が飛ぶ
+          if (enemies.length > 0 && Math.random() < specialSkillEffects.supportFireChance) {
+            const nearestEnemy = enemies.reduce((closest, candidate) => {
+              const d = Math.hypot(candidate.x - player.x, candidate.y - player.y);
+              return (!closest || d < closest.d) ? { en: candidate, d } : closest;
+            }, null).en;
+            const supportAngle = Math.atan2(nearestEnemy.y - player.y, nearestEnemy.x - player.x);
+            bullets.push({
+              x: player.x + Math.cos(supportAngle) * player.radius,
+              y: player.y + Math.sin(supportAngle) * player.radius,
+              vx: Math.cos(supportAngle) * speed,
+              vy: Math.sin(supportAngle) * speed,
+              radius: 4,
+              damage,
+              bounces: specialSkillEffects.bulletBounceCount
             });
           }
           // 発射時に疲労を増やす。スキルレベルが高いほど消耗を軽減する
@@ -814,8 +1149,9 @@ function update() {
       // 時刻が遅くなるほど敵の移動速度を上げる
       const dayProgress = Math.max(0, Math.min(1, (currentHour - dayStartHour) / (dayEndHour - dayStartHour)));
       const timeSpeedMultiplier = 1 + dayProgress * speedDayIncreaseFactor;
-      e.x += (dx / dist) * (e.speed * timeSpeedMultiplier);
-      e.y += (dy / dist) * (e.speed * timeSpeedMultiplier);
+      const totalSpeed = e.speed * timeSpeedMultiplier * specialSkillEffects.enemyApproachSpeedMultiplier;
+      e.x += (dx / dist) * totalSpeed;
+      e.y += (dy / dist) * totalSpeed;
     }
   }
 
@@ -824,11 +1160,29 @@ function update() {
     const b = bullets[i];
     b.x += b.vx;
     b.y += b.vy;
-    // 画面外へ出た弾を配列から削除する
-    if (b.x < -10 || b.x > canvas.width + 10 || b.y < -10 || b.y > canvas.height + 10) {
-      bullets.splice(i, 1);
-      continue;
+    // 画面端に達した弾は、跳ね返り回数が残っていれば反射し、なければ削除する
+    let removed = false;
+    if (b.x < 0 || b.x > canvas.width) {
+      if (b.bounces > 0) {
+        b.bounces--;
+        b.vx *= -1;
+        b.x = Math.max(0, Math.min(canvas.width, b.x));
+      } else {
+        bullets.splice(i, 1);
+        removed = true;
+      }
     }
+    if (!removed && (b.y < 0 || b.y > canvas.height)) {
+      if (b.bounces > 0) {
+        b.bounces--;
+        b.vy *= -1;
+        b.y = Math.max(0, Math.min(canvas.height, b.y));
+      } else {
+        bullets.splice(i, 1);
+        removed = true;
+      }
+    }
+    if (removed) continue;
     // 弾と各敵の円形当たり判定が重なっているか調べる
     for (let j = enemies.length - 1; j >= 0; j--) {
       const en = enemies[j];
@@ -843,13 +1197,16 @@ function update() {
         bullets.splice(i, 1);
         if (en.hp <= 0) {
             // 強い敵ほど多くのスコアを獲得する
-            const pts = Math.ceil(en.type * 3);
+            const pts = Math.ceil(en.type * 3 * specialSkillEffects.scoreGainMultiplier);
             score += pts;
             // 敵の種類に応じて経験値を獲得する
-            exp += en.type * 5;
+            exp += en.type * 5 * specialSkillEffects.expGainMultiplier;
             updateSkillEffects();
           enemies.splice(j, 1);
-          spawnEnemy();
+          weeklyKills++;
+          weeklyScoreGained += pts;
+          checkEarlyQuotaAchievement();
+          if (enemies.length === 0) waveCooldownMs = waveCooldownDelayMs;
         }
         break;
       }
@@ -862,60 +1219,60 @@ function update() {
   for (let j = enemies.length - 1; j >= 0; j--) {
     const en = enemies[j];
     const ed = Math.hypot(en.x - player.x, en.y - player.y);
-    if (ed <= en.radius + player.radius) {
-      if (!invincible) {
-        // 接触した敵の種類に応じてSANを減らす
-        updateSkillEffects();
-        const sanMultiplier = Math.max(0.5, 1 - skillLevel * 0.04);
-        if (!en.touching) {
-          // 接触した瞬間：SANダメージを与え、無敵時間を開始する
-          const sdamage = Math.ceil(
-            (en.type || 1) * contactSanMultiplier * sanMultiplier *
-            specialSkillEffects.sanDamageMultiplier
-          );
-          san -= sdamage;
-          en.touching = true;
-          invincible = true;
-          invincibleTimer = invincibleDuration;
-          // 最初の接触時、敵にも弾1発相当のダメージを与える
-          const contactConditionRatio = 1 - Math.max(0, Math.min(1, fatigue / maxFatigue));
-          const contactDamage = Math.max(1, Math.round(baseBulletDamage * contactConditionRatio * (1 + skillLevel * 0.08)));
-          en.hp = (en.hp || 1) - contactDamage;
-          if (en.hp <= 0) {
-            // 接触で倒した場合も、弾で倒した場合と同じ報酬を与える
-            const pts = Math.ceil(en.type * 3);
-            score += pts;
-            exp += en.type * 5;
-            updateSkillEffects();
-            enemies.splice(j, 1);
-            spawnEnemy();
-          }
-        } else {
-          // 接触し続けている間は、少しずつSANを減らす
-          const sustainedDrain = Math.max(
-            1,
-            (en.type || 1) * contactSanMultiplier * sanMultiplier * 0.18 * dt *
-            specialSkillEffects.sanDamageMultiplier
-          );
-          san -= sustainedDrain;
-        }
-        // 敵との接触によるスコア減点
-        const penalty = Math.ceil((en.type || 1) * 2);
-        score = Math.max(0, score - penalty);
-        // 残りHPが0以下になった敵だけを削除する
-        if (en.hp <= 0) {
-          enemies.splice(j, 1);
-          spawnEnemy();
-        }
-        if (san <= 0) {
-          san = 0;
-          gameOver = true;
-          sendScore(score);
-          break;
-        }
-      }
-    } else {
+    if (ed > en.radius + player.radius) {
       en.touching = false;
+      continue;
+    }
+    if (invincible) continue;
+
+    // 接触した敵の種類に応じてSANを減らす
+    updateSkillEffects();
+    const sanMultiplier = Math.max(0.5, 1 - skillLevel * 0.04);
+    let defeated = false;
+    if (!en.touching) {
+      // 接触した瞬間：SANダメージを与え、無敵時間を開始する
+      const sdamage = Math.ceil(
+        (en.type || 1) * contactSanMultiplier * sanMultiplier *
+        specialSkillEffects.sanDamageMultiplier
+      );
+      san -= sdamage;
+      en.touching = true;
+      invincible = true;
+      invincibleTimer = invincibleDuration;
+      // 最初の接触時、敵にも弾1発相当のダメージを与える
+      const contactConditionRatio = 1 - Math.max(0, Math.min(1, fatigue / maxFatigue));
+      const contactDamage = Math.max(1, Math.round(baseBulletDamage * contactConditionRatio * (1 + skillLevel * 0.08)));
+      en.hp = (en.hp || 1) - contactDamage;
+      if (en.hp <= 0) defeated = true;
+    } else {
+      // 接触し続けている間は、少しずつSANを減らす
+      const sustainedDrain = Math.max(
+        1,
+        (en.type || 1) * contactSanMultiplier * sanMultiplier * 0.18 * dt *
+        specialSkillEffects.sanDamageMultiplier
+      );
+      san -= sustainedDrain;
+    }
+    // 敵との接触によるスコア減点
+    const penalty = Math.ceil((en.type || 1) * 2 * specialSkillEffects.contactScorePenaltyMultiplier);
+    score = Math.max(0, score - penalty);
+    if (defeated) {
+      // 接触で倒した場合も、弾で倒した場合と同じ報酬を与える
+      const pts = Math.ceil(en.type * 3 * specialSkillEffects.scoreGainMultiplier);
+      score += pts;
+      exp += en.type * 5 * specialSkillEffects.expGainMultiplier;
+      updateSkillEffects();
+      enemies.splice(j, 1);
+      weeklyKills++;
+      weeklyScoreGained += pts;
+      checkEarlyQuotaAchievement();
+      if (enemies.length === 0) waveCooldownMs = waveCooldownDelayMs;
+    }
+    if (san <= 0) {
+      san = 0;
+      gameOver = true;
+      sendScore(score);
+      break;
     }
   }
   // 疲労値の制限と各種当たり判定は上の処理で完了
@@ -1044,10 +1401,14 @@ function draw() {
   ctx.font = '14px sans-serif';
   ctx.fillText('Rank: ' + rank + ' ' + rankNames[rank-1], 12, 72);
   ctx.fillText('Skill Lvl: ' + skillLevel + '  EXP: ' + exp, 12, 96);
-  // JavaScriptが動いていることを確認するためのデバッグ表示
-  ctx.font = '12px monospace';
-  ctx.fillStyle = 'white';
-  ctx.fillText('JS OK', 12, 120);
+  // 週間ノルマの進捗を表示する（早期達成なら色を変える）
+  ctx.font = '13px sans-serif';
+  ctx.fillStyle = weeklyQuotaAchievedEarly ? '#69f0ae' : '#b0bec5';
+  ctx.fillText(
+    `週ノルマ: 撃破 ${weeklyKills}/${weeklyKillQuota}  Score ${weeklyScoreGained}/${weeklyScoreQuota}` +
+    (weeklyQuotaAchievedEarly ? '（達成！）' : ''),
+    12, 118
+  );
   // 一時メッセージを画面上部の中央に表示する
   if (messages.length > 0) {
     ctx.textAlign = 'center';
@@ -1072,7 +1433,7 @@ function draw() {
   ctx.font = '16px sans-serif';
   ctx.fillStyle = holidayFlag ? '#ffeb3b' : 'white';
   const hourStr = String(currentHour).padStart(2,'0') + ':00';
-  const dateStr = `${currentDate.getFullYear()}/${String(currentDate.getMonth()+1).padStart(2,'0')}/${String(currentDate.getDate()).padStart(2,'0')} ${hourStr} (${yName})`;
+  const dateStr = `DAY${dayNumber} ${currentDate.getFullYear()}/${String(currentDate.getMonth()+1).padStart(2,'0')}/${String(currentDate.getDate()).padStart(2,'0')} ${hourStr} (${yName})`;
   ctx.fillText(dateStr, canvas.width - 12 - ctx.measureText(dateStr).width, 24);
   // 全ての敵を描画する
   for (const en of enemies) {
@@ -1153,23 +1514,32 @@ function draw() {
     ctx.fillText('C = 継続 (敵停止、脳疲労は増加、SANは減少)', canvas.width / 2, canvas.height / 2 + 40);
     ctx.textAlign = 'left';
   }
-  // 一日が終了したら、翌日へ進むか終了するかの選択画面を表示する
-  if (dayEnded && !gameOver && !gameClear) {
+  // 週間ノルマ未達成：休日出勤するかどうかの選択画面
+  if (weekendWorkChoice && !gameOver && !gameClear) {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#ff8a65';
+    ctx.font = '28px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('今週のノルマを達成できませんでした…', canvas.width / 2, canvas.height / 2 - 40);
+    ctx.font = '20px sans-serif';
+    ctx.fillStyle = 'white';
+    ctx.fillText('土日祝日も働きますか？', canvas.width / 2, canvas.height / 2);
+    ctx.fillText('Y = 出勤する (土日ともに稼働) / N = 休む (評価がさらに下がる)', canvas.width / 2, canvas.height / 2 + 32);
+    ctx.textAlign = 'left';
+  }
+  // 休日出勤を断った場合：休日の過ごし方の選択画面
+  if (restActivityChoice && !gameOver && !gameClear) {
     ctx.fillStyle = 'rgba(0,0,0,0.7)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = 'white';
     ctx.font = '28px sans-serif';
     ctx.textAlign = 'center';
-    // 昇格した場合は、選択画面に大きな昇格メッセージを表示する
-    if (persistentPromotion) {
-      ctx.font = persistentPromotion.font || '64px sans-serif';
-      ctx.fillStyle = persistentPromotion.color || '#ffeb3b';
-      ctx.fillText(persistentPromotion.text, canvas.width / 2, canvas.height / 2 - 100);
-      ctx.font = '28px sans-serif';
-    }
-    ctx.fillText('一日が終了しました', canvas.width / 2, canvas.height / 2 - 40);
+    ctx.fillText('休日はどう過ごしますか？', canvas.width / 2, canvas.height / 2 - 60);
     ctx.font = '20px sans-serif';
-    ctx.fillText('続けますか？ Y = 続ける / N = 終了', canvas.width / 2, canvas.height / 2 + 8);
+    ctx.fillText('1 = アイテム購入 (SAN +15 / 脳疲労 -20)', canvas.width / 2, canvas.height / 2 - 10);
+    ctx.fillText('2 = 休息 (脳疲労が全回復 / SAN +25)', canvas.width / 2, canvas.height / 2 + 22);
+    ctx.fillText('3 = スキル選択・勉強 (特殊スキルを1つ選ぶ)', canvas.width / 2, canvas.height / 2 + 54);
     ctx.textAlign = 'left';
   }
 
