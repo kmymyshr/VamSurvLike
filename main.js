@@ -253,19 +253,20 @@ const speedDayIncreaseFactor = 0.6; // 終業時には最大60%速くなる
 
 // ===== 特殊スキルシステム =====
 const specialSkillEffects = {
-  dualShot: false,
-  tripleShot: false,
+  multiTaskLevel: 0,
+  tripleShotLevel: 0,
   moveSpeedMultiplier: 1,
   firingFatigueMultiplier: 1,
   fireRateMultiplier: 1,
   damageMultiplier: 1,
   chocolateRecoveryMultiplier: 1,
   sanDamageMultiplier: 1,
-  bulletSpeedMultiplier: 1
+  bulletSpeedMultiplier: 1,
+  stunDurationMultiplier: 1
 };
 
 const specialSkills = [
-  { id: 'dual-shot', name: '二方向射撃', description: '30度違う二方向へ同時に発射する' },
+  { id: 'dual-shot', name: 'マルチタスク', description: 'レベルごとに同時発射する弾が1発増える' },
   { id: 'speed-up', name: '高速移動', description: '移動速度が1.5倍になる' },
   { id: 'fatigue-save', name: '省エネ射撃', description: '射撃による脳疲労を35%軽減する' },
   { id: 'rapid-fire', name: '高速連射', description: '発射間隔を25%短縮する' },
@@ -274,10 +275,12 @@ const specialSkills = [
   { id: 'chocolate-lover', name: 'チョコ好き', description: 'チョコレートの回復量が50%増える' },
   { id: 'deadline-master', name: '納期管理', description: '敵の納期が50%長くなる' },
   { id: 'mental-guard', name: 'メンタルガード', description: '受けるSANダメージを25%軽減する' },
-  { id: 'high-speed-bullet', name: '高速弾', description: '弾の速度が40%上がる' }
+  { id: 'high-speed-bullet', name: '処理速度', description: '弾の速度が40%上がる' },
+  { id: 'short-sleeper', name: 'ショートスリーパー', description: 'stun時間を半分にする' }
 ];
 
-const acquiredSpecialSkillIds = new Set();
+// スキルIDと取得レベルを対応させて保存する
+const specialSkillLevels = new Map();
 let specialSkillChoices = [];
 let specialSkillSelectionActive = false;
 let specialSkillSelectionTitle = '';
@@ -285,12 +288,12 @@ let pendingSpecialSkillSelections = 0;
 
 function applySpecialSkill(skillId) {
   switch (skillId) {
-    case 'dual-shot': specialSkillEffects.dualShot = true; break;
+    case 'dual-shot': specialSkillEffects.multiTaskLevel++; break;
     case 'speed-up': specialSkillEffects.moveSpeedMultiplier *= 1.5; break;
     case 'fatigue-save': specialSkillEffects.firingFatigueMultiplier *= 0.65; break;
     case 'rapid-fire': specialSkillEffects.fireRateMultiplier *= 0.75; break;
     case 'power-shot': specialSkillEffects.damageMultiplier *= 1.5; break;
-    case 'triple-shot': specialSkillEffects.tripleShot = true; break;
+    case 'triple-shot': specialSkillEffects.tripleShotLevel++; break;
     case 'chocolate-lover': specialSkillEffects.chocolateRecoveryMultiplier *= 1.5; break;
     case 'deadline-master':
       specialDeadlineMultiplier *= 1.5;
@@ -298,18 +301,13 @@ function applySpecialSkill(skillId) {
       break;
     case 'mental-guard': specialSkillEffects.sanDamageMultiplier *= 0.75; break;
     case 'high-speed-bullet': specialSkillEffects.bulletSpeedMultiplier *= 1.4; break;
+    case 'short-sleeper': specialSkillEffects.stunDurationMultiplier *= 0.5; break;
   }
 }
 
 function openSpecialSkillSelection(title) {
-  const availableSkills = specialSkills.filter(
-    skill => !acquiredSpecialSkillIds.has(skill.id)
-  );
-  if (availableSkills.length === 0) {
-    specialSkillSelectionActive = false;
-    pendingSpecialSkillSelections = 0;
-    return;
-  }
+  // 取得済みスキルも候補に含め、再取得するとレベルアップできる
+  const availableSkills = [...specialSkills];
 
   // Fisher-Yates法で候補をシャッフルし、先頭から3つ選ぶ
   for (let i = availableSkills.length - 1; i > 0; i--) {
@@ -325,9 +323,15 @@ function chooseSpecialSkill(choiceIndex) {
   const skill = specialSkillChoices[choiceIndex];
   if (!skill) return;
 
-  acquiredSpecialSkillIds.add(skill.id);
+  const newSkillLevel = (specialSkillLevels.get(skill.id) || 0) + 1;
+  specialSkillLevels.set(skill.id, newSkillLevel);
   applySpecialSkill(skill.id);
-  showMessage(`特殊スキル「${skill.name}」を取得！`, 2500, '#e1bee7', '26px sans-serif');
+  showMessage(
+    `特殊スキル「${skill.name}」Lv.${newSkillLevel}！`,
+    2500,
+    '#e1bee7',
+    '26px sans-serif'
+  );
   specialSkillSelectionActive = false;
   lastUpdate = Date.now();
 
@@ -699,12 +703,22 @@ function update() {
             baseBulletDamage * conditionRatio * damageBonus * specialSkillEffects.damageMultiplier
           ));
 
-          // 二方向・三方向スキルに応じて、同時発射する角度を決める
+          // マルチタスクと三方向射撃のレベルに応じて弾数と角度を増やす
           let shotOffsets = [0];
-          if (specialSkillEffects.tripleShot) {
-            shotOffsets = [-20, 0, 20];
-          } else if (specialSkillEffects.dualShot) {
-            shotOffsets = [-15, 15];
+          const multiTaskLevel = specialSkillEffects.multiTaskLevel;
+          const tripleShotLevel = specialSkillEffects.tripleShotLevel;
+          const shotCount = 1 + multiTaskLevel + tripleShotLevel * 2;
+          if (shotCount > 1) {
+            // 初回のマルチタスクは2発が30度違う方向へ飛ぶ
+            const totalSpreadDegrees = Math.max(
+              multiTaskLevel * 30,
+              tripleShotLevel * 40
+            );
+            const angleStep = totalSpreadDegrees / (shotCount - 1);
+            shotOffsets = Array.from(
+              { length: shotCount },
+              (_, index) => -totalSpreadDegrees / 2 + angleStep * index
+            );
           }
 
           for (const offsetDegrees of shotOffsets) {
@@ -723,7 +737,7 @@ function update() {
           if (fatigue >= maxFatigue) {
             fatigue = maxFatigue;
             stunned = true;
-            stunTimer = stunDuration;
+            stunTimer = stunDuration * specialSkillEffects.stunDurationMultiplier;
             // 疲労が限界に達したら行動不能にし、SANも減らす
             const sanMultiplier = Math.max(0.5, 1 - skillLevel * 0.04);
             san -= Math.ceil(
@@ -1096,6 +1110,7 @@ function draw() {
       const cardY = 115 + index * 125;
       const cardWidth = canvas.width - 180;
       const cardHeight = 95;
+      const currentSkillLevel = specialSkillLevels.get(skill.id) || 0;
 
       ctx.fillStyle = 'rgba(103, 58, 183, 0.45)';
       ctx.fillRect(cardX, cardY, cardWidth, cardHeight);
@@ -1106,7 +1121,11 @@ function draw() {
       ctx.textAlign = 'left';
       ctx.fillStyle = 'white';
       ctx.font = 'bold 22px sans-serif';
-      ctx.fillText(`${index + 1}. ${skill.name}`, cardX + 22, cardY + 34);
+      ctx.fillText(
+        `${index + 1}. ${skill.name}  Lv.${currentSkillLevel} → Lv.${currentSkillLevel + 1}`,
+        cardX + 22,
+        cardY + 34
+      );
       ctx.fillStyle = '#e0e0e0';
       ctx.font = '16px sans-serif';
       ctx.fillText(skill.description, cardX + 22, cardY + 68);
