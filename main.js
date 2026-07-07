@@ -142,6 +142,9 @@ let invincible = false;
 const invincibleDuration = 1200; // 敵との接触後に無敵になる時間（ミリ秒）
 let invincibleTimer = 0;
 let lastUpdate = Date.now();
+let gameClockMs = 0;
+let gameTimeScale = 1;
+let isPaused = false;
 
 // 手動攻撃と自動攻撃の状態
 let autoFireEnabled = false;
@@ -464,14 +467,14 @@ document.addEventListener("keydown", (event) => {
       fatigue = Math.max(0, fatigue - Math.floor(maxFatigue * 0.3));
       san = Math.min(maxSan, san + Math.floor(maxSan * 0.3));
       currentHour = 13;
-      lastHourTime = Date.now();
+      lastHourTime = gameClockMs;
       noonChoice = false;
     } else if (event.key === 'c') {
       // 継続：敵は1時間停止するが、脳疲労が増えてSANが減り続ける
       noonChoice = false;
       noonContinueMode = true;
-      noonModeEndTime = Date.now() + hourMs;
-      lastHourTime = Date.now();
+      noonModeEndTime = gameClockMs + hourMs;
+      lastHourTime = gameClockMs;
     }
     return;
   }
@@ -484,8 +487,8 @@ document.addEventListener("keydown", (event) => {
       fatigue = Math.max(0, fatigue - dayFatigueRecover);
       san = Math.min(maxSan, san + daySanRecover);
       dayEnded = false;
-      dayStartTime = Date.now();
-      lastHourTime = Date.now();
+      dayStartTime = gameClockMs;
+      lastHourTime = gameClockMs;
       currentHour = dayStartHour;
       lastUpdate = Date.now();
       stunned = false;
@@ -497,14 +500,35 @@ document.addEventListener("keydown", (event) => {
     }
     return;
   }
-  // スタート画面ではEnterキーでゲームを開始する
+  // スタート画面では通常開始か3倍加速開始を選ぶ
   if (startScreen) {
-    if (event.key === 'Enter') {
+    if (event.key === '1' || event.key === 'Enter') {
+      gameTimeScale = 1;
       startScreen = false;
+      gameClockMs = 0;
       lastUpdate = Date.now();
-      lastHourTime = Date.now();
+      lastHourTime = 0;
+      dayStartTime = 0;
       openSpecialSkillSelection('最初の特殊スキルを選択');
+    } else if (event.key === '2') {
+      gameTimeScale = 3;
+      startScreen = false;
+      gameClockMs = 0;
+      lastUpdate = Date.now();
+      lastHourTime = 0;
+      dayStartTime = 0;
+      openSpecialSkillSelection('3倍加速モード：最初の特殊スキルを選択');
     }
+    return;
+  }
+
+  if (gameOver || gameClear) {
+    return;
+  }
+
+  if (event.key === 'p') {
+    isPaused = !isPaused;
+      lastUpdate = Date.now();
     return;
   }
   // Fキーで自動攻撃のON/OFFを切り替える
@@ -547,9 +571,13 @@ canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 // ===== ゲーム状態の更新 =====
 // 毎フレーム、移動・攻撃・時刻・衝突などを計算する
 function update() {
-  const now = Date.now();
-  const dt = (now - lastUpdate) / 1000;
-  lastUpdate = now;
+  const now = gameClockMs + ((Date.now() - lastUpdate) * gameTimeScale);
+  const dt = (now - gameClockMs) / 1000;
+    lastUpdate = Date.now();
+  if (isPaused) {
+    return;
+  }
+  gameClockMs = now;
 
   // 爆発後の短い時間、Canvas全体をランダムに揺らす
   explosionFlashTimer = Math.max(0, explosionFlashTimer - dt * 1000);
@@ -904,16 +932,17 @@ function draw() {
     ctx.textAlign = 'center';
     ctx.fillText('Survivors風ゲーム', canvas.width / 2, canvas.height / 2 - 40);
     ctx.font = '20px sans-serif';
-    ctx.fillText('Enterキーでスタート', canvas.width / 2, canvas.height / 2 + 20);
-    ctx.fillText('WASDで移動、マウスで照準、左クリックで攻撃', canvas.width / 2, canvas.height / 2 + 60);
-    ctx.fillText('Fキーで手動攻撃／自動攻撃を切り替え', canvas.width / 2, canvas.height / 2 + 90);
+    ctx.fillText('1 or Enter = 通常開始', canvas.width / 2, canvas.height / 2 + 18);
+    ctx.fillText('2 = 3倍加速モード', canvas.width / 2, canvas.height / 2 + 48);
+    ctx.fillText('P = 一時停止 / 再開', canvas.width / 2, canvas.height / 2 + 78);
+    ctx.fillText('WASD = 移動 / マウス = 照準 / F = 自動攻撃切替', canvas.width / 2, canvas.height / 2 + 108);
     ctx.textAlign = 'left';
     return;
   }
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   if (invincible) {
-    const blink = Math.floor(Date.now() / 100) % 2 === 0;
+    const blink = Math.floor(gameClockMs / 100) % 2 === 0;
     ctx.globalAlpha = blink ? 0.4 : 0.8;
   } else {
     ctx.globalAlpha = 1;
@@ -935,8 +964,8 @@ function draw() {
   ctx.stroke();
 
   // stun中は、自機の上で眠っている「💤 Zzz」を点滅・上下移動させる
-  if (stunned && Math.floor(Date.now() / 300) % 2 === 0) {
-    const sleepFloatY = Math.sin(Date.now() / 180) * 4;
+  if (stunned && Math.floor(gameClockMs / 300) % 2 === 0) {
+    const sleepFloatY = Math.sin(gameClockMs / 180) * 4;
     ctx.save();
     ctx.font = 'bold 22px "Segoe UI Emoji", sans-serif';
     ctx.textAlign = 'center';
@@ -1074,6 +1103,18 @@ function draw() {
     }
   }
   ctx.textAlign = 'left';
+
+  if (isPaused && !gameOver && !gameClear) {
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'white';
+    ctx.font = '52px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('PAUSED', canvas.width / 2, canvas.height / 2 - 28);
+    ctx.font = '20px sans-serif';
+    ctx.fillText('Pキーで再開', canvas.width / 2, canvas.height / 2 + 18);
+    ctx.textAlign = 'left';
+  }
 
   if (gameClear) {
     ctx.fillStyle = 'rgba(0,0,0,0.7)';
