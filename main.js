@@ -124,6 +124,7 @@ const baseFireRate = 350; // 基本の発射間隔（従来の半分、ミリ秒
 let lastFire = 0;
 let score = 0;
 let gameOver = false;
+let gameClear = false;
 let startScreen = true;
 
 // ===== 納期切れの爆発エフェクト =====
@@ -179,7 +180,7 @@ function spawnChocolate() {
 }
 
 // ===== ゲーム内の時刻・一日進行システム =====
-const hourMs = 20000; // 現実の20秒をゲーム内の1時間として扱う
+const hourMs = 10000; // 現実の10秒をゲーム内の1時間として扱う
 const dayStartHour = 9;
 const dayEndHour = 18;
 let dayStartTime = Date.now();
@@ -205,7 +206,21 @@ const stunSanPenalty = 8;
 const contactSanMultiplier = 4; // 接触時のSAN減少量 = 敵の種類 × この倍率
 
 // ===== カレンダーと祝日 =====
-let currentDate = new Date();
+function getRandomGameStartDate() {
+  const year = 3000 + Math.floor(Math.random() * 1000);
+  const month = Math.floor(Math.random() * 12);
+  return new Date(year, month, 1);
+}
+
+function getLastDayOfMonth(date) {
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+}
+
+function isLastDayOfMonth(date) {
+  return date.getDate() === getLastDayOfMonth(date);
+}
+
+let currentDate = getRandomGameStartDate();
 const weekdayNames = ['日','月','火','水','木','金','土'];
 // 日付が毎年変わらない祝日を「月-日」で登録する
 const holidayMMDD = new Set(['01-01','02-11','04-29','05-03','05-04','05-05','11-03','11-23']);
@@ -439,6 +454,9 @@ document.addEventListener("keydown", (event) => {
   }
 
   // 昼の選択画面を表示している場合
+  if (gameOver || gameClear) {
+    return;
+  }
   if (noonChoice) {
     // Rキーで休憩、Cキーで継続する
     if (event.key === 'r') {
@@ -545,7 +563,7 @@ function update() {
   }
 
   // スタート前とゲーム終了後は、敵や納期の更新を止める
-  if (gameOver || startScreen || specialSkillSelectionActive) return;
+  if (gameOver || gameClear || startScreen || specialSkillSelectionActive) return;
 
   // 一時メッセージの残り表示時間を減らし、期限切れなら削除する
   for (let mi = messages.length - 1; mi >= 0; mi--) {
@@ -590,6 +608,11 @@ function update() {
       }
       // 終業時刻になったら一日を終了する
       if (currentHour >= dayEndHour) {
+        if (isLastDayOfMonth(currentDate)) {
+          gameClear = true;
+          sendScore(score);
+          return;
+        }
         dayEnded = true;
         rankUpAtDayEnd();
         return;
@@ -1052,6 +1075,19 @@ function draw() {
   }
   ctx.textAlign = 'left';
 
+  if (gameClear) {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#8df5c5';
+    ctx.font = '52px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('GAME CLEAR', canvas.width / 2, canvas.height / 2 - 28);
+    ctx.font = '24px sans-serif';
+    ctx.fillStyle = 'white';
+    ctx.fillText('Final Score: ' + score, canvas.width / 2, canvas.height / 2 + 24);
+    ctx.textAlign = 'left';
+  }
+
   if (gameOver) {
     ctx.fillStyle = 'rgba(0,0,0,0.6)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1077,7 +1113,7 @@ function draw() {
     ctx.textAlign = 'left';
   }
   // 一日が終了したら、翌日へ進むか終了するかの選択画面を表示する
-  if (dayEnded && !gameOver) {
+  if (dayEnded && !gameOver && !gameClear) {
     ctx.fillStyle = 'rgba(0,0,0,0.7)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = 'white';
