@@ -325,7 +325,11 @@ const partner = {
   wanderTarget: { x: 0, y: 0 },
   fireTimer: 0,
   highFatigueTimerMs: 0,
-  lowSanTimerMs: 0
+  lowSanTimerMs: 0,
+  // 賢さ（0〜1、初期はランダム）：高いほど的が正確で、疲労時に無駄撃ちを避けやすい
+  intelligence: 0.5,
+  // 性格・向こう見ずさ（0〜1、初期はランダム）：高いほど疲労していても構わず撃ちたがる
+  recklessness: 0.5
 };
 let partnerEverLost = false; // 一度でも力尽きたらtrue（トゥルーエンド条件に使う）
 
@@ -346,12 +350,41 @@ function initPartner() {
   partner.fireTimer = partnerBaseFireRate;
   partner.highFatigueTimerMs = 0;
   partner.lowSanTimerMs = 0;
+  partner.intelligence = Math.random();
+  partner.recklessness = Math.random();
 }
 
 // パートナーのSANにダメージを与える（プレイヤーのdamageSanとは独立。パートナーの生死のみに影響する）
 function damagePartnerSan(amount) {
   if (amount <= 0 || !partner.active) return;
   partner.san = Math.max(0, partner.san - amount * specialSkillEffects.partnerSanDamageMultiplier);
+}
+
+// 週末の特殊イベント（後日実装予定）から、パートナーの賢さ・性格を恒久的に変化させるためのフック
+function adjustPartnerTraits(intelligenceDelta, recklessnessDelta) {
+  partner.intelligence = Math.max(0, Math.min(1, partner.intelligence + intelligenceDelta));
+  partner.recklessness = Math.max(0, Math.min(1, partner.recklessness + recklessnessDelta));
+}
+
+// 自機が持つ特殊スキルに応じて、パートナーの実効的な賢さを求める（基礎値はintelligenceのまま変えない）
+function getPartnerEffectiveIntelligence() {
+  let bonus = 0;
+  bonus += (specialSkillLevels.get('learning-power') || 0) * 0.05;
+  bonus += (specialSkillLevels.get('listening') || 0) * 0.04;
+  bonus += (specialSkillLevels.get('logical-thinking') || 0) * 0.04;
+  bonus -= (specialSkillLevels.get('self-centered') || 0) * 0.05;
+  bonus -= (specialSkillLevels.get('inattentive') || 0) * 0.06;
+  return Math.max(0, Math.min(1, partner.intelligence + bonus));
+}
+
+// 自機が持つ特殊スキルに応じて、パートナーの実効的な性格（向こう見ずさ）を求める
+function getPartnerEffectiveRecklessness() {
+  let bonus = 0;
+  bonus += (specialSkillLevels.get('proactiveness') || 0) * 0.05;
+  bonus += (specialSkillLevels.get('rising-ambition') || 0) * 0.05;
+  bonus -= (specialSkillLevels.get('stress-tolerance') || 0) * 0.05;
+  bonus -= (specialSkillLevels.get('passivity') || 0) * 0.05;
+  return Math.max(0, Math.min(1, partner.recklessness + bonus));
 }
 
 // パートナーの追従・ランダム移動・自律攻撃・被弾・寿命減少・退場判定をまとめて処理する
@@ -389,28 +422,45 @@ function updatePartner(dt) {
   partner.y = Math.max(partner.radius, Math.min(canvas.height - partner.radius, partner.y));
 
   // 自律攻撃：最も近い敵へ向けて、既存の弾配列にそのまま追加する
+  // 賢さ・性格・脳疲労に応じて、無駄撃ちを避けたり、狙いが不正確になったりする
   partner.fireTimer -= dt * 1000;
   if (partner.fireTimer <= 0 && enemies.length > 0 && partner.fatigue < maxFatigue) {
-    const nearestEnemy = enemies.reduce((closest, candidate) => {
-      const d = Math.hypot(candidate.x - partner.x, candidate.y - partner.y);
-      return (!closest || d < closest.d) ? { en: candidate, d } : closest;
-    }, null).en;
-    const angle = Math.atan2(nearestEnemy.y - partner.y, nearestEnemy.x - partner.x);
-    const bulletSpeed = 6;
-    const damage = Math.max(1, Math.round(
-      baseBulletDamage * specialSkillEffects.partnerDamageMultiplier * (1 + skillLevel * 0.08)
-    ));
-    bullets.push({
-      x: partner.x + Math.cos(angle) * partner.radius,
-      y: partner.y + Math.sin(angle) * partner.radius,
-      vx: Math.cos(angle) * bulletSpeed,
-      vy: Math.sin(angle) * bulletSpeed,
-      radius: 4,
-      damage,
-      bounces: 0
-    });
-    partner.fatigue = Math.min(maxFatigue, partner.fatigue + partnerFiringFatiguePerShot);
-    partner.fireTimer = partnerBaseFireRate;
+    const intelligence = getPartnerEffectiveIntelligence();
+    const recklessness = getPartnerEffectiveRecklessness();
+    const fatigueRatio = partner.fatigue / maxFatigue;
+
+    // 疲労が半分を超えたあたりから、賢く・慎重な性格ほど無駄撃ちを避けて様子を見る
+    const holdFireChance = Math.max(0, fatigueRatio - 0.5) * 2 * (intelligence * 0.7 + (1 - recklessness) * 0.3);
+    if (Math.random() < holdFireChance) {
+      partner.fireTimer = 200; // 少し待って再度チャンスを窺う（このターンは撃たない）
+    } else {
+      const nearestEnemy = enemies.reduce((closest, candidate) => {
+        const d = Math.hypot(candidate.x - partner.x, candidate.y - partner.y);
+        return (!closest || d < closest.d) ? { en: candidate, d } : closest;
+      }, null).en;
+      // 賢さが高く、疲労が少なく、慎重な性格ほど命中精度（狙いの正確さ）が上がる
+      const accuracy = Math.max(0.15, Math.min(1,
+        0.35 + intelligence * 0.5 - fatigueRatio * 0.25 - recklessness * 0.1
+      ));
+      const scatterDegrees = (1 - accuracy) * 35 * (Math.random() - 0.5) * 2;
+      const angle = Math.atan2(nearestEnemy.y - partner.y, nearestEnemy.x - partner.x) +
+        scatterDegrees * Math.PI / 180;
+      const bulletSpeed = 6;
+      const damage = Math.max(1, Math.round(
+        baseBulletDamage * specialSkillEffects.partnerDamageMultiplier * (1 + skillLevel * 0.08)
+      ));
+      bullets.push({
+        x: partner.x + Math.cos(angle) * partner.radius,
+        y: partner.y + Math.sin(angle) * partner.radius,
+        vx: Math.cos(angle) * bulletSpeed,
+        vy: Math.sin(angle) * bulletSpeed,
+        radius: 4,
+        damage,
+        bounces: 0
+      });
+      partner.fatigue = Math.min(maxFatigue, partner.fatigue + partnerFiringFatiguePerShot);
+      partner.fireTimer = partnerBaseFireRate;
+    }
   }
 
   // 無敵時間の減少
