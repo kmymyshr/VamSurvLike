@@ -82,6 +82,7 @@ function setEnemyStats(e, typeIndex) {
 const enemies = [];
 const maxEnemies = 3;
 const spawnInterval = 3200; // ms (reduced frequency)
+const enemyCollisionRadius = 32;
 let lastSpawn = 0;
 
 function spawnEnemy(typeIndex) {
@@ -94,19 +95,10 @@ function spawnEnemy(typeIndex) {
     // small random shift toward inside so they don't all stack exactly on edge
     p.x += (Math.random() - 0.5) * 40;
     p.y += (Math.random() - 0.5) * 40;
-    // approximate enemy radius by measuring text width using a temporary dummy canvas
-    let tempRadius = 20;
-    if (enemyTypeNames[typeIndex] || enemyTypeNames[chooseEnemyTypeIndex()]) {
-      ctx.font = '28px sans-serif';
-      const text = enemyTypeNames[typeIndex] || '敵';
-      const metrics = ctx.measureText(text);
-      const textWidth = metrics.width || 0;
-      tempRadius = Math.max(20, textWidth / 2 + 10);
-    }
-    const tooClose = enemies.some(en => Math.hypot(en.x - p.x, en.y - p.y) < (en.radius + tempRadius + 20)) || Math.hypot(player.x - p.x, player.y - p.y) < 150;
+    const tooClose = enemies.some(en => Math.hypot(en.x - p.x, en.y - p.y) < (en.radius + enemyCollisionRadius + 20)) || Math.hypot(player.x - p.x, player.y - p.y) < 150;
     if (!tooClose) break;
   } while (attempts < 18);
-  const e = { x: p.x, y: p.y, radius: 20 };
+  const e = { x: p.x, y: p.y, radius: enemyCollisionRadius };
   setEnemyStats(e, typeIndex);
   e.touched = false;
   enemies.push(e);
@@ -474,16 +466,8 @@ function update() {
     }
   }
 
-  // move each enemy toward player and update their radii
+  // move each enemy toward player; collision radius stays fixed
   for (const e of enemies) {
-    // update radius based on text
-    ctx.font = e.font;
-    const metrics = ctx.measureText(e.text || '');
-    const textWidth = metrics.width || 0;
-    const fontSizeMatch = (e.font || '').match(/(\d+)px/);
-    const fontSize = fontSizeMatch ? parseInt(fontSizeMatch[1], 10) : 24;
-    e.radius = Math.max(textWidth, fontSize) / 2;
-
     if (!noonContinueMode) {
       const dx = player.x - e.x;
       const dy = player.y - e.y;
@@ -690,6 +674,12 @@ function draw() {
   ctx.fillText(dateStr, canvas.width - 12 - ctx.measureText(dateStr).width, 24);
   // draw all enemies
   for (const en of enemies) {
+    // Draw the collision area first so the enemy text always remains on top.
+    ctx.beginPath();
+    ctx.arc(en.x, en.y, en.radius, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(160, 160, 160, 0.28)';
+    ctx.fill();
+
     ctx.font = en.font;
     ctx.fillStyle = en.color;
     ctx.textAlign = 'center';
@@ -704,10 +694,6 @@ function draw() {
       ctx.textAlign = 'center';
       ctx.fillText('残工数: ' + (en.hp || 0), en.x, en.y + fSize / 1.2);
       ctx.textAlign = 'left';
-    } else {
-      ctx.beginPath();
-      ctx.arc(en.x, en.y, en.radius, 0, Math.PI * 2);
-      ctx.fill();
     }
   }
   ctx.textAlign = 'left';
