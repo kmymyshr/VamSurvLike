@@ -132,7 +132,7 @@ let explosionShakeTimer = 0;
 const maxFatigue = 100;
 let fatigue = 0; // 0が元気な状態、100が疲労の限界
 let stunned = false;
-const stunDuration = 3000; // 疲労が100になったときの行動不能時間（ミリ秒）
+const stunDuration = 2200; // 疲労が100になったときの行動不能時間（ミリ秒）
 let stunTimer = 0;
 let invincible = false;
 const invincibleDuration = 1200; // 敵との接触後に無敵になる時間（ミリ秒）
@@ -146,9 +146,9 @@ const mousePosition = { x: player.x + 100, y: player.y };
 
 // 1秒ごと、または1発ごとに変化する疲労関連の値
 const movingDrainPerSec = 6; // 移動時の1秒あたりの疲労量（現在は未使用）
-const firingFatiguePerShot = 18; // 1発撃つごとに増える疲労量
+const firingFatiguePerShot = 10; // 1発撃つごとに増える疲労量（stunになりにくいよう軽減）
 const idleRecoveryPerSec = 12; // 待機時の1秒あたりの回復量
-const stunRecoveryPerSec = 12; // 行動不能中の1秒あたりの回復量
+const stunRecoveryPerSec = 18; // 行動不能中は通常より早く疲労を回復する
 const fireRateMultiplier = 1.5; // 疲労が多いほど発射間隔を延ばす倍率
 const baseBulletDamage = 2; // 疲労がないときの基本攻撃力
 
@@ -757,6 +757,21 @@ function draw() {
   ctx.strokeStyle = '#4dd0e1';
   ctx.lineWidth = 3;
   ctx.stroke();
+
+  // stun中は、自機の上で眠っている「💤 Zzz」を点滅・上下移動させる
+  if (stunned && Math.floor(Date.now() / 300) % 2 === 0) {
+    const sleepFloatY = Math.sin(Date.now() / 180) * 4;
+    ctx.save();
+    ctx.font = 'bold 22px "Segoe UI Emoji", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = '#b3e5fc';
+    ctx.shadowColor = '#0288d1';
+    ctx.shadowBlur = 6;
+    ctx.fillText('💤 Zzz', player.x, player.y - player.radius - 10 + sleepFloatY);
+    ctx.restore();
+  }
+
   // プレイヤーが発射した弾を描く
   ctx.fillStyle = 'white';
   for (const b of bullets) {
