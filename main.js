@@ -151,7 +151,7 @@ let startScreen = false;
 let setupStep = 'player-icon';
 
 // ===== エンディング =====
-// 'true' | 'normal' | 'bad-san' | 'bad-lifespan' のいずれか。gameOver / gameClear になる瞬間に確定する
+// 'true' | 'normal' | 'bad-san' | 'bad-lifespan' | 'bad-partner-shot' のいずれか。gameOver / gameClear になる瞬間に確定する
 let endingType = null;
 // 週末ごとの特殊イベントで正しい選択をし続けているか（詳細な内容は別途実装予定。誤った選択で false になる）
 let allSpecialEventChoicesCorrect = true;
@@ -258,8 +258,10 @@ const stunSanPenalty = 8;
 const stunLifespanPenaltyMin = 2;
 const stunLifespanPenaltyMax = 3;
 const contactSanMultiplier = 4; // 接触時のSAN減少量 = 敵の種類 × この倍率
-const friendlyFireSanDamage = 5;
-const friendlyFireLifespanDamage = 2;
+const playerFriendlyFireSanDamage = 1; // パートナー弾を自機が受けた際のダメージ
+const playerFriendlyFireLifespanDamage = 1;
+const partnerFriendlyFireSanDamage = 5; // 自機の弾をパートナーが受けた際のダメージ
+const partnerFriendlyFireLifespanDamage = 2;
 const friendlyFireInvincibleDuration = 900;
 let friendlyFireInvincibleTimer = 0;
 
@@ -288,15 +290,15 @@ function damageSan(amount) {
 
 // SAN・寿命のいずれかが尽きたらゲームオーバーにする（二重にScore送信しないようgameOverで一度だけ発火）
 // どちらが尽きたかでバッドエンドの種類を分ける
-function checkVitalsGameOver() {
+function checkVitalsGameOver(deathEndingType = null) {
   if (gameOver) return;
   if (san <= 0) {
     gameOver = true;
-    endingType = 'bad-san';
+    endingType = deathEndingType || 'bad-san';
     sendScore(score);
   } else if (lifespan <= 0) {
     gameOver = true;
-    endingType = 'bad-lifespan';
+    endingType = deathEndingType || 'bad-lifespan';
     sendScore(score);
   }
 }
@@ -372,17 +374,17 @@ function damagePartnerSan(amount) {
 // 味方の弾はSANと寿命を直接削る。連続被弾は専用の短い無敵時間で抑える。
 function damagePlayerByFriendlyFire() {
   if (specialSkillEffects.preventFriendlyFire || friendlyFireInvincibleTimer > 0) return false;
-  san = Math.max(0, san - friendlyFireSanDamage * specialSkillEffects.sanDamageMultiplier);
-  lifespan = Math.max(0, lifespan - friendlyFireLifespanDamage);
+  san = Math.max(0, san - playerFriendlyFireSanDamage * specialSkillEffects.sanDamageMultiplier);
+  lifespan = Math.max(0, lifespan - playerFriendlyFireLifespanDamage);
   friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
-  checkVitalsGameOver();
+  checkVitalsGameOver('bad-partner-shot');
   return true;
 }
 
 function damagePartnerByFriendlyFire() {
   if (!partner.active || specialSkillEffects.preventFriendlyFire || partner.friendlyFireInvincibleTimer > 0) return false;
-  partner.san = Math.max(0, partner.san - friendlyFireSanDamage * specialSkillEffects.partnerSanDamageMultiplier);
-  partner.lifespan = Math.max(0, partner.lifespan - friendlyFireLifespanDamage);
+  partner.san = Math.max(0, partner.san - partnerFriendlyFireSanDamage * specialSkillEffects.partnerSanDamageMultiplier);
+  partner.lifespan = Math.max(0, partner.lifespan - partnerFriendlyFireLifespanDamage);
   partner.friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
   return true;
 }
@@ -1935,6 +1937,16 @@ const endingConfig = {
       '（仮）気づかぬうちに蓄積した消耗が、静かに寿命を削りきった。',
       '働きすぎは、命を削る。'
     ]
+  },
+  'bad-partner-shot': {
+    icon: '💔',
+    label: 'BAD END',
+    labelColor: '#ef9a9a',
+    bgColor: 'rgba(35, 5, 12, 0.92)',
+    description: [
+      'パートナーの一撃が、最後の引き金になってしまった。',
+      '関係性を、どこかで誤ってしまったのだろうか。'
+    ]
   }
 };
 
@@ -2084,16 +2096,18 @@ function draw() {
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
   ctx.globalAlpha = 1;
-  // 自機の正面方向を水色の照準線で示す
+  // 自機の正面方向を、機体を中心とした円軌道上の照準点で示す
+  const aimDotOrbitRadius = player.radius + 18;
+  const aimDotX = player.x + Math.cos(player.angle) * aimDotOrbitRadius;
+  const aimDotY = player.y + Math.sin(player.angle) * aimDotOrbitRadius;
+  ctx.save();
   ctx.beginPath();
-  ctx.moveTo(player.x, player.y);
-  ctx.lineTo(
-    player.x + Math.cos(player.angle) * (player.radius + 18),
-    player.y + Math.sin(player.angle) * (player.radius + 18)
-  );
-  ctx.strokeStyle = '#4dd0e1';
-  ctx.lineWidth = 3;
-  ctx.stroke();
+  ctx.arc(aimDotX, aimDotY, 5, 0, Math.PI * 2);
+  ctx.fillStyle = '#4dd0e1';
+  ctx.shadowColor = '#80deea';
+  ctx.shadowBlur = 8;
+  ctx.fill();
+  ctx.restore();
 
   // stun中は、自機の上で眠っている「💤 Zzz」を点滅・上下移動させる
   if (stunned && Math.floor(gameClockMs / 300) % 2 === 0) {
