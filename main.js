@@ -7,7 +7,7 @@ const player = {
   y: 300,
   radius: 15,
   speed: 4,
-  angle: 0 // 自機が向いている角度（ラジアン）
+  angle: 0 // 自分が向いている角度（ラジアン）
 };
 // 画面外のランダムな位置を決め、座標を { x, y } で返す
 function spawnEnemyOffscreen() {
@@ -165,8 +165,10 @@ function isTrueEndEligible() {
 
 // ===== 納期切れの爆発エフェクト =====
 const explosionEffectDuration = 500; // フラッシュと揺れの継続時間（ミリ秒）
+const friendlyFireHitEffectDuration = 300;
 let explosionFlashTimer = 0;
 let explosionShakeTimer = 0;
+let friendlyFireHitFlashTimer = 0;
 
 // ===== 脳疲労システム =====
 const maxFatigue = 100;
@@ -258,9 +260,9 @@ const stunSanPenalty = 8;
 const stunLifespanPenaltyMin = 2;
 const stunLifespanPenaltyMax = 3;
 const contactSanMultiplier = 4; // 接触時のSAN減少量 = 敵の種類 × この倍率
-const playerFriendlyFireSanDamage = 1; // パートナー弾を自機が受けた際のダメージ
-const playerFriendlyFireLifespanDamage = 1;
-const partnerFriendlyFireSanDamage = 5; // 自機の弾をパートナーが受けた際のダメージ
+const playerFriendlyFireSanDamage = 2; // 同僚弾を自分が受けた際のダメージ
+const playerFriendlyFireLifespanDamage = 2;
+const partnerFriendlyFireSanDamage = 5; // 自分の弾を同僚が受けた際のダメージ
 const partnerFriendlyFireLifespanDamage = 2;
 const friendlyFireInvincibleDuration = 900;
 let friendlyFireInvincibleTimer = 0;
@@ -303,14 +305,14 @@ function checkVitalsGameOver(deathEndingType = null) {
   }
 }
 
-// ===== 自機・パートナー機のアイコン選択 =====
+// ===== 自分・同僚のアイコン選択 =====
 // 絵・画像は仮のプレースホルダー（著作権フリーの絵文字）として扱う
 const playerIconChoices = ['🧑‍💻', '🧑‍💼', '🥷', '🤖', '🦸', '🧙'];
 const partnerIconChoices = ['🐱', '🐶', '🐧', '🦉', '👾', '🧚'];
 let selectedPlayerIcon = playerIconChoices[0];
-let selectedPartnerIcon = partnerIconChoices[0]; // nullの場合は「パートナーなし」
+let selectedPartnerIcon = partnerIconChoices[0]; // nullの場合は「同僚なし」
 
-// ===== パートナー機 =====
+// ===== 同僚 =====
 const partnerMoveSpeed = 3.2;
 const partnerFollowOffsetX = -55;
 const partnerFollowOffsetY = 40;
@@ -318,10 +320,16 @@ const partnerBaseFireRate = 700; // 自律攻撃の間隔（ミリ秒）
 const partnerFiringFatiguePerShot = 8;
 const partnerContactSanMultiplier = 3; // 接触時のSANダメージ = 敵の種類 × この倍率（プレイヤーよりやや軽め）
 const partnerInvincibleDuration = 1200;
-const partnerLossSanPenalty = 20; // パートナーが力尽きたとき、プレイヤーが受けるSANダメージ
+const partnerLossSanPenalty = 20; // 同僚が力尽きたとき、プレイヤーが受けるSANダメージ
+const partnerRelationshipMax = 100;
+const partnerRelationshipInitial = 50;
+const partnerRelationshipSafeFireThreshold = 90;
+const partnerRelationshipDamagePerHit = 15;
+const partnerRelationshipRetaliationThreshold = 40;
+const partnerRelationshipWeekendRecovery = 30;
 
 const partner = {
-  active: false, // 「パートナーなし」を選んだ場合や、力尽きた後はfalseのまま
+  active: false, // 「同僚なし」を選んだ場合や、力尽きた後はfalseのまま
   x: 0, y: 0, angle: 0,
   radius: 13,
   icon: '',
@@ -337,6 +345,7 @@ const partner = {
   highFatigueTimerMs: 0,
   lowSanTimerMs: 0,
   friendlyFireInvincibleTimer: 0,
+  relationship: partnerRelationshipInitial, // 非表示。0～100で、低いほど自分へ反撃しやすい
   // 賢さ（0〜1、初期はランダム）：高いほど的が正確で、疲労時に無駄撃ちを避けやすい
   intelligence: 0.5,
   // 性格・向こう見ずさ（0〜1、初期はランダム）：高いほど疲労していても構わず撃ちたがる
@@ -344,7 +353,7 @@ const partner = {
 };
 let partnerEverLost = false; // 一度でも力尽きたらtrue（トゥルーエンド条件に使う）
 
-// ゲーム開始時にパートナーの状態を初期化する
+// ゲーム開始時に同僚の状態を初期化する
 function initPartner() {
   partner.active = selectedPartnerIcon !== null;
   partner.icon = selectedPartnerIcon || '';
@@ -362,11 +371,12 @@ function initPartner() {
   partner.highFatigueTimerMs = 0;
   partner.lowSanTimerMs = 0;
   partner.friendlyFireInvincibleTimer = 0;
+  partner.relationship = partnerRelationshipInitial;
   partner.intelligence = Math.random();
   partner.recklessness = Math.random();
 }
 
-// パートナーのSANにダメージを与える（プレイヤーのdamageSanとは独立。パートナーの生死のみに影響する）
+// 同僚のSANにダメージを与える（プレイヤーのdamageSanとは独立。同僚の生死のみに影響する）
 function damagePartnerSan(amount) {
   if (amount <= 0 || !partner.active) return;
   partner.san = Math.max(0, partner.san - amount * specialSkillEffects.partnerSanDamageMultiplier);
@@ -377,6 +387,8 @@ function damagePlayerByFriendlyFire() {
   san = Math.max(0, san - playerFriendlyFireSanDamage * specialSkillEffects.sanDamageMultiplier);
   lifespan = Math.max(0, lifespan - playerFriendlyFireLifespanDamage);
   friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
+  friendlyFireHitFlashTimer = friendlyFireHitEffectDuration;
+  explosionShakeTimer = Math.max(explosionShakeTimer, friendlyFireHitEffectDuration);
   checkVitalsGameOver('bad-partner-shot');
   return true;
 }
@@ -386,16 +398,18 @@ function damagePartnerByFriendlyFire() {
   partner.san = Math.max(0, partner.san - partnerFriendlyFireSanDamage * specialSkillEffects.partnerSanDamageMultiplier);
   partner.lifespan = Math.max(0, partner.lifespan - partnerFriendlyFireLifespanDamage);
   partner.friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
+  partner.relationship = Math.max(0,
+    partner.relationship - partnerRelationshipDamagePerHit);
   return true;
 }
 
-// 週末の特殊イベント（後日実装予定）から、パートナーの賢さ・性格を恒久的に変化させるためのフック
+// 週末の特殊イベント（後日実装予定）から、同僚の賢さ・性格を恒久的に変化させるためのフック
 function adjustPartnerTraits(intelligenceDelta, recklessnessDelta) {
   partner.intelligence = Math.max(0, Math.min(1, partner.intelligence + intelligenceDelta));
   partner.recklessness = Math.max(0, Math.min(1, partner.recklessness + recklessnessDelta));
 }
 
-// 自機が持つ特殊スキルに応じて、パートナーの実効的な賢さを求める（基礎値はintelligenceのまま変えない）
+// 自分が持つ特殊スキルに応じて、同僚の実効的な賢さを求める（基礎値はintelligenceのまま変えない）
 function getPartnerEffectiveIntelligence() {
   let bonus = 0;
   bonus += (specialSkillLevels.get('learning-power') || 0) * 0.05;
@@ -406,7 +420,7 @@ function getPartnerEffectiveIntelligence() {
   return Math.max(0, Math.min(1, partner.intelligence + bonus));
 }
 
-// 自機が持つ特殊スキルに応じて、パートナーの実効的な性格（向こう見ずさ）を求める
+// 自分が持つ特殊スキルに応じて、同僚の実効的な性格（向こう見ずさ）を求める
 function getPartnerEffectiveRecklessness() {
   let bonus = 0;
   bonus += (specialSkillLevels.get('proactiveness') || 0) * 0.05;
@@ -416,7 +430,20 @@ function getPartnerEffectiveRecklessness() {
   return Math.max(0, Math.min(1, partner.recklessness + bonus));
 }
 
-// パートナーの追従・ランダム移動・自律攻撃・被弾・寿命減少・退場判定をまとめて処理する
+// 発射時点の自分位置が、同僚弾の進行方向上にあるかを調べる。
+// 発射後に自分から弾道へ入った場合は対象外なので、関係良好でも被弾し得る。
+function wouldPartnerShotHitCurrentPlayer(angle, bulletRadius = 4) {
+  const dx = player.x - partner.x;
+  const dy = player.y - partner.y;
+  const directionX = Math.cos(angle);
+  const directionY = Math.sin(angle);
+  const forwardDistance = dx * directionX + dy * directionY;
+  if (forwardDistance <= 0) return false;
+  const perpendicularDistance = Math.abs(dx * directionY - dy * directionX);
+  return perpendicularDistance <= player.radius + bulletRadius + 4;
+}
+
+// 同僚の追従・ランダム移動・自律攻撃・被弾・寿命減少・退場判定をまとめて処理する
 function updatePartner(dt) {
   if (!partner.active) return;
 
@@ -470,29 +497,45 @@ function updatePartner(dt) {
         const d = Math.hypot(candidate.x - partner.x, candidate.y - partner.y);
         return (!closest || d < closest.d) ? { en: candidate, d } : closest;
       }, null).en;
+      // 関係性が閾値以下になると、悪化度に応じた確率で敵ではなく自分を狙う。
+      const relationshipHostility = Math.max(0,
+        (partnerRelationshipRetaliationThreshold - partner.relationship) /
+        partnerRelationshipRetaliationThreshold);
+      const retaliationChance = partner.relationship <= partnerRelationshipRetaliationThreshold
+        ? 0.2 + relationshipHostility * 0.3
+        : 0;
+      const retaliating = Math.random() < retaliationChance;
+      const target = retaliating ? player : nearestEnemy;
       // 賢さが高く、疲労が少なく、慎重な性格ほど命中精度（狙いの正確さ）が上がる
       const accuracy = Math.max(0.15, Math.min(1,
         0.35 + intelligence * 0.5 - fatigueRatio * 0.25 - recklessness * 0.1
       ));
       const scatterDegrees = (1 - accuracy) * 35 * (Math.random() - 0.5) * 2;
-      const angle = Math.atan2(nearestEnemy.y - partner.y, nearestEnemy.x - partner.x) +
+      const angle = Math.atan2(target.y - partner.y, target.x - partner.x) +
         scatterDegrees * Math.PI / 180;
       const bulletSpeed = 6;
       const damage = Math.max(1, Math.round(
         baseBulletDamage * specialSkillEffects.partnerDamageMultiplier * (1 + skillLevel * 0.08)
       ));
-      bullets.push({
-        x: partner.x + Math.cos(angle) * partner.radius,
-        y: partner.y + Math.sin(angle) * partner.radius,
-        vx: Math.cos(angle) * bulletSpeed,
-        vy: Math.sin(angle) * bulletSpeed,
-        radius: 4,
-        damage,
-        bounces: 0,
-        owner: 'partner'
-      });
-      partner.fatigue = Math.min(maxFatigue, partner.fatigue + partnerFiringFatiguePerShot);
-      partner.fireTimer = partnerBaseFireRate;
+      // 関係性が90以上なら、現在の自分位置へ通る弾道は撃たずに見送る。
+      const shouldAvoidShot = partner.relationship >= partnerRelationshipSafeFireThreshold &&
+        wouldPartnerShotHitCurrentPlayer(angle);
+      if (shouldAvoidShot) {
+        partner.fireTimer = 200;
+      } else {
+        bullets.push({
+          x: partner.x + Math.cos(angle) * partner.radius,
+          y: partner.y + Math.sin(angle) * partner.radius,
+          vx: Math.cos(angle) * bulletSpeed,
+          vy: Math.sin(angle) * bulletSpeed,
+          radius: 4,
+          damage,
+          bounces: 0,
+          owner: 'partner'
+        });
+        partner.fatigue = Math.min(maxFatigue, partner.fatigue + partnerFiringFatiguePerShot);
+        partner.fireTimer = partnerBaseFireRate;
+      }
     }
   }
 
@@ -539,7 +582,7 @@ function updatePartner(dt) {
   if (partner.san <= 0 || partner.lifespan <= 0) {
     partner.active = false;
     partnerEverLost = true;
-    showMessage('パートナーが力尽きてしまった…', 4000, '#ef9a9a', '24px sans-serif');
+    showMessage('同僚が力尽きてしまった…', 4000, '#ef9a9a', '24px sans-serif');
     damageSan(partnerLossSanPenalty);
   }
 }
@@ -704,16 +747,16 @@ const specialSkills = [
   { id: 'high-speed-bullet', name: '処理速度', description: '弾の速度が40%上がる' },
   { id: 'short-sleeper', name: 'ショートスリーパー', description: 'stun時間を半分にする' },
   { id: 'through-power', name: 'スルー力', description: '受けるSANダメージ-15%。ただし気にしない分EXP獲得-10%' },
-  { id: 'listening', name: '傾聴力', description: '人の話をよく聞き学びが早い。EXP獲得+15%。パートナーの寿命減少-10%' },
+  { id: 'listening', name: '傾聴力', description: '人の話をよく聞き学びが早い。EXP獲得+15%。同僚の寿命減少-10%' },
   { id: 'proactiveness', name: '主体性', description: '自分から動くので発射間隔-7%・移動速度+8%' },
   { id: 'problem-solving', name: '問題解決力', description: '攻撃力+20%' },
   { id: 'logical-thinking', name: '論理的思考力', description: '筋道立てて評価されやすい。攻撃力+10%・獲得スコア+10%' },
   { id: 'priority-judgement', name: '優先順位判断力', description: '重要な仕事から片付け、獲得スコア+20%' },
   { id: 'learning-power', name: '学習力', description: 'EXP獲得+30%' },
   { id: 'stress-tolerance', name: 'ストレス耐性', description: '受けるSANダメージ-20%' },
-  { id: 'business-manner', name: 'ビジネスマナー', description: '印象が良く、敵接触時のスコア減点-30%。パートナーの寿命減少-10%' },
+  { id: 'business-manner', name: 'ビジネスマナー', description: '印象が良く、敵接触時のスコア減点-30%。同僚の寿命減少-10%' },
   { id: 'negotiation', name: '交渉力', description: '敵の納期+15%' },
-  { id: 'self-centered', name: '自己中心性', description: '攻撃力+15%だが、敵の反感を買いSANダメージ+15%。パートナーを気にかけず、パートナーの被SANダメージ+20%' },
+  { id: 'self-centered', name: '自己中心性', description: '攻撃力+15%だが、敵の反感を買いSANダメージ+15%。同僚を気にかけず、同僚の被SANダメージ+20%' },
   { id: 'negative-thinking', name: '否定的思考', description: '素直に喜べず、チョコレートの回復量-30%' },
   { id: 'passivity', name: '消極性', description: '動きが鈍くなり発射間隔+15%・移動速度-10%' },
   { id: 'default-mode-network', name: 'デフォルトモードネットワーク', description: 'ぼーっとしている間に回復、待機時の脳疲労回復+40%' },
@@ -722,14 +765,14 @@ const specialSkills = [
   { id: 'optimistic', name: '楽観的', description: '受けるSANダメージ-15%' },
   { id: 'pessimistic', name: '悲観的', description: '受けるSANダメージ+20%だが、慎重な見積りで敵の納期+10%' },
   { id: 'chocolate-addiction', name: 'チョコレート依存症', description: 'チョコレートの回復量+80%だが、待機時の回復-20%' },
-  { id: 'communication', name: 'コミュニケーション力', description: 'レベルごとに15%の確率で援護射撃が発生する。パートナーとの意思疎通が良くなり、パートナーの被SANダメージ-10%' },
+  { id: 'communication', name: 'コミュニケーション力', description: 'レベルごとに15%の確率で援護射撃が発生する。同僚との意思疎通が良くなり、同僚の被SANダメージ-10%' },
   { id: 'report-shortage', name: '報連相不足', description: '情報共有不足で敵の納期-15%' },
   { id: 'inattentive', name: '注意力散漫', description: 'レベルごとに20%の確率で弾がランダムにそれる' },
   { id: 'silo-tendency', name: '属人化傾向', description: '自分にしかできない仕事が集中し、敵の接近速度+15%' },
   { id: 'perfectionism', name: '完璧主義', description: '質は高いが時間がかかる。攻撃力+25%だが発射間隔+15%' },
   { id: 'network-specialist', name: 'ネットワークスペシャリスト', description: '弾が画面端でレベルごとに1回多く跳ね返る' },
-  { id: 'trust-relationship', name: '信頼関係', description: 'パートナーとの信頼関係が深まり、パートナーの攻撃力+20%・被SANダメージ-15%' },
-  { id: 'teamwork', name: 'チームワーク', description: '自機とパートナーの弾が互いに当たらなくなる' }
+  { id: 'trust-relationship', name: '信頼関係', description: '同僚との信頼関係が深まり、同僚の攻撃力+20%・被SANダメージ-15%' },
+  { id: 'teamwork', name: 'チームワーク', description: '自分と同僚の弾が互いに当たらなくなる' }
 ];
 
 // スキルIDと取得レベルを対応させて保存する（これが唯一の正となる状態）
@@ -1031,12 +1074,12 @@ function resolveWeekEnd() {
   }
 }
 
-// 休日の過ごし方（1:アイテム購入 2:休息 3:勉強）を適用する
+// 休日の過ごし方（1:同僚と遊ぶ 2:休息 3:勉強）を適用する
 function applyRestActivity(choiceIndex) {
   if (choiceIndex === 1) {
-    san = Math.min(maxSan, san + 15);
-    fatigue = Math.max(0, fatigue - 20);
-    showMessage('買い物でリフレッシュ！ SAN +15 / 脳疲労 -20', 2500, '#ffcc80');
+    partner.relationship = Math.min(partnerRelationshipMax,
+      partner.relationship + partnerRelationshipWeekendRecovery);
+    showMessage('同僚と遊び、関係が少し良くなった。', 2500, '#ffcc80');
   } else if (choiceIndex === 2) {
     fatigue = 0;
     san = Math.min(maxSan, san + 25);
@@ -1111,14 +1154,14 @@ function getAllowedMaxTypeIndexByRank() {
   return capped;
 }
 
-// 納期が0になった敵を爆発させ、接触時の3倍のSANダメージを与える
+// 納期が0になった敵を爆発させ、従来の半分（接触時の1.5倍）のSANダメージを与える
 function explodeEnemy(enemyIndex) {
   const enemy = enemies[enemyIndex];
   if (!enemy) return;
 
   const skillMitigation = Math.max(0.5, 1 - skillLevel * 0.04);
   const explosionDamage = Math.ceil(
-    (enemy.type || 1) * contactSanMultiplier * skillMitigation * 3 *
+    (enemy.type || 1) * contactSanMultiplier * skillMitigation * 1.5 *
     specialSkillEffects.sanDamageMultiplier * getEnemyDifficultyMultiplier()
   );
 
@@ -1134,13 +1177,13 @@ function explodeEnemy(enemyIndex) {
 }
 
 // ===== 各種選択の実行処理（キーボード・タップ両方から呼ばれる） =====
-// 自機アイコンを選び、パートナーアイコン選択画面へ進む
+// 自分のアイコンを選び、同僚のアイコン選択画面へ進む
 function selectPlayerIcon(icon) {
   selectedPlayerIcon = icon;
   setupStep = 'partner-icon';
 }
 
-// パートナーアイコンを選ぶ（nullなら「パートナーなし」）。選択後、通常のスタート画面へ進む
+// 同僚のアイコンを選ぶ（nullなら「同僚なし」）。選択後、通常のスタート画面へ進む
 function selectPartnerIcon(icon) {
   selectedPartnerIcon = icon;
   setupStep = null;
@@ -1148,7 +1191,7 @@ function selectPartnerIcon(icon) {
 }
 
 // スタート画面：通常速度(1)か3倍速(2)でゲームを開始する
-function startGame(timeScale, title) {
+function startGame(timeScale) {
   gameTimeScale = timeScale;
   startScreen = false;
   gameClockMs = 0;
@@ -1158,7 +1201,6 @@ function startGame(timeScale, title) {
   dayNumber = 1;
   resetWeeklyQuotaForNewWeek();
   initPartner();
-  openSpecialSkillSelection(title);
 }
 
 // 週間ノルマ未達成時：休日出勤するか休むかを処理する
@@ -1189,7 +1231,7 @@ document.addEventListener("keydown", (event) => {
     }
     return;
   }
-  // 起動時のセットアップ画面（自機アイコン→パートナーアイコンの順）では数字キーで選ぶ
+  // 起動時のセットアップ画面（自分のアイコン→同僚のアイコンの順）では数字キーで選ぶ
   if (setupStep === 'player-icon') {
     const idx = Number(event.key) - 1;
     if (idx >= 0 && idx < playerIconChoices.length) selectPlayerIcon(playerIconChoices[idx]);
@@ -1217,7 +1259,7 @@ document.addEventListener("keydown", (event) => {
     }
     return;
   }
-  // 休日の過ごし方（1:アイテム購入 2:休息 3:勉強）を選ぶ
+  // 休日の過ごし方（1:同僚と遊ぶ 2:休息 3:勉強）を選ぶ
   if (restActivityChoice) {
     const choiceIndex = Number(event.key);
     if (choiceIndex >= 1 && choiceIndex <= 3) {
@@ -1233,9 +1275,9 @@ document.addEventListener("keydown", (event) => {
   // スタート画面では通常開始か3倍加速開始を選ぶ
   if (startScreen) {
     if (event.key === '1' || event.key === 'Enter') {
-      startGame(1, '最初の特殊スキルを選択');
+      startGame(1);
     } else if (event.key === '2') {
-      startGame(3, '3倍加速モード：最初の特殊スキルを選択');
+      startGame(3);
     }
     return;
   }
@@ -1341,7 +1383,7 @@ moveJoystickEl.addEventListener('pointerup', releaseMoveJoystick);
 moveJoystickEl.addEventListener('pointercancel', releaseMoveJoystick);
 
 // ===== 画面外の照準・攻撃スティック（#aimJoystick） =====
-// 倒した方向へ自機の向きを変え、触れている間は自動的に攻撃し続ける
+// 倒した方向へ自分の向きを変え、触れている間は自動的に攻撃し続ける
 const aimJoystickEl = document.getElementById('aimJoystick');
 const aimJoystickKnobEl = document.getElementById('aimJoystickKnob');
 const aimJoystickMaxRadius = 40; // CSS上のピクセル単位でのドラッグ可能半径
@@ -1432,6 +1474,7 @@ function update() {
 
   // 爆発後の短い時間、Canvas全体をランダムに揺らす
   explosionFlashTimer = Math.max(0, explosionFlashTimer - dt * 1000);
+  friendlyFireHitFlashTimer = Math.max(0, friendlyFireHitFlashTimer - dt * 1000);
   explosionShakeTimer = Math.max(0, explosionShakeTimer - dt * 1000);
   if (explosionShakeTimer > 0) {
     const shakeX = (Math.random() - 0.5) * 16;
@@ -1588,7 +1631,7 @@ function update() {
       fatigue = Math.max(0, fatigue - idleRecoveryPerSec * specialSkillEffects.idleRecoveryMultiplier * dt);
     }
 
-    // 攻撃モードに関係なく、自機は常にマウスカーソルの方向を向く
+    // 攻撃モードに関係なく、自分は常にマウスカーソルの方向を向く
     // （画面外の照準スティックを操作中は、そちらで設定した向きを優先する）
     if (aimJoystickPointerId === null) {
       player.angle = Math.atan2(
@@ -1695,7 +1738,7 @@ function update() {
     }
   }
 
-  // パートナー機の追従・ランダム移動・自律攻撃・被弾・寿命処理
+  // 同僚の追従・ランダム移動・自律攻撃・被弾・寿命処理
   updatePartner(dt);
   if (gameOver) return;
   friendlyFireInvincibleTimer = Math.max(0, friendlyFireInvincibleTimer - dt * 1000);
@@ -1944,7 +1987,7 @@ const endingConfig = {
     labelColor: '#ef9a9a',
     bgColor: 'rgba(35, 5, 12, 0.92)',
     description: [
-      'パートナーの一撃が、最後の引き金になってしまった。',
+      '同僚の一撃が、最後の引き金になってしまった。',
       '関係性を、どこかで誤ってしまったのだろうか。'
     ]
   }
@@ -2009,6 +2052,56 @@ function drawBackground() {
   ctx.restore();
 }
 
+// HUD用プロフィール区画。選択した絵文字を仮の顔イラストとして使う。
+function drawHudProfilePanel(x, y, width, height, title, icon, accentColor, statLines, inactive = false, dangerLevel = 0) {
+  ctx.save();
+  ctx.fillStyle = 'rgba(7, 12, 22, 0.82)';
+  ctx.fillRect(x, y, width, height);
+
+  const portraitCenterX = x + width / 2;
+  const portraitCenterY = y + 39;
+  ctx.beginPath();
+  ctx.arc(portraitCenterX, portraitCenterY, 30, 0, Math.PI * 2);
+  ctx.fillStyle = inactive ? 'rgba(90, 90, 90, 0.55)' : 'rgba(255, 255, 255, 0.12)';
+  ctx.fill();
+  ctx.strokeStyle = inactive ? '#757575' : accentColor;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.globalAlpha = inactive ? 0.45 : 1;
+  ctx.font = '42px "Segoe UI Emoji", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'white';
+  ctx.fillText(icon || '—', portraitCenterX, portraitCenterY + 1);
+  ctx.globalAlpha = 1;
+
+  // 関係性が悪いほど、同僚の顔全体へ強い赤みを重ねる。
+  const clampedDangerLevel = Math.max(0, Math.min(1, dangerLevel));
+  if (!inactive && clampedDangerLevel > 0) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(portraitCenterX, portraitCenterY, 29, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.fillStyle = `rgba(255, 35, 45, ${clampedDangerLevel * 0.5})`;
+    ctx.fillRect(portraitCenterX - 30, portraitCenterY - 30, 60, 60);
+    ctx.restore();
+  }
+
+  ctx.font = 'bold 14px sans-serif';
+  ctx.fillStyle = inactive ? '#9e9e9e' : accentColor;
+  ctx.fillText(title, portraitCenterX, y + 79);
+
+  ctx.font = '12px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  statLines.forEach((line, index) => {
+    ctx.fillStyle = line.color || (inactive ? '#9e9e9e' : '#eceff1');
+    ctx.fillText(line.text, x + 12, y + 101 + index * 17);
+  });
+  ctx.restore();
+}
+
 // ===== ゲーム画面の描画 =====
 // 毎フレーム、現在のゲーム状態をCanvasへ描く
 function draw() {
@@ -2024,7 +2117,7 @@ function draw() {
     ctx.textAlign = 'center';
     const iconChoices = setupStep === 'player-icon' ? playerIconChoices : partnerIconChoices;
     ctx.fillText(
-      setupStep === 'player-icon' ? '自機のアイコンを選んでください' : 'パートナー機のアイコンを選んでください',
+      setupStep === 'player-icon' ? '自分のアイコンを選んでください' : '同僚のアイコンを選んでください',
       canvas.width / 2, 110
     );
     ctx.textAlign = 'left';
@@ -2046,9 +2139,9 @@ function draw() {
     if (setupStep === 'partner-icon') {
       const noneBtnW = 260, noneBtnH = 50;
       drawUiButton(canvas.width / 2 - noneBtnW / 2, btnY + btnSize + 40, noneBtnW, noneBtnH,
-        'パートナーなし (0)', () => selectPartnerIcon(null),
+        '同僚なし (0)', () => selectPartnerIcon(null),
         { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
-      ctx.fillText('数字キー 1〜6 / タップで選択　0キーでパートナーなし', canvas.width / 2, btnY + btnSize + 122);
+      ctx.fillText('数字キー 1〜6 / タップで選択　0キーで同僚なし', canvas.width / 2, btnY + btnSize + 122);
     } else {
       ctx.fillText('数字キー 1〜6 / タップで選択', canvas.width / 2, btnY + btnSize + 50);
     }
@@ -2068,9 +2161,9 @@ function draw() {
     const btnW = 340, btnH = 54;
     const btnX = canvas.width / 2 - btnW / 2;
     drawUiButton(btnX, canvas.height / 2 - 60, btnW, btnH, '通常開始 (1 / Enter)',
-      () => startGame(1, '最初の特殊スキルを選択'));
+      () => startGame(1));
     drawUiButton(btnX, canvas.height / 2 + 4, btnW, btnH, '3倍加速モード (2)',
-      () => startGame(3, '3倍加速モード：最初の特殊スキルを選択'));
+      () => startGame(3));
 
     ctx.fillStyle = '#cfd8dc';
     ctx.font = '16px sans-serif';
@@ -2088,7 +2181,7 @@ function draw() {
   } else {
     ctx.globalAlpha = 1;
   }
-  // 自機のアイコン（仮のプレースホルダー：選択した絵文字）
+  // 自分のアイコン（仮のプレースホルダー：選択した絵文字）
   ctx.font = '30px "Segoe UI Emoji", sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -2096,7 +2189,7 @@ function draw() {
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
   ctx.globalAlpha = 1;
-  // 自機の正面方向を、機体を中心とした円軌道上の照準点で示す
+  // 自分の正面方向を、機体を中心とした円軌道上の照準点で示す
   const aimDotOrbitRadius = player.radius + 18;
   const aimDotX = player.x + Math.cos(player.angle) * aimDotOrbitRadius;
   const aimDotY = player.y + Math.sin(player.angle) * aimDotOrbitRadius;
@@ -2109,7 +2202,7 @@ function draw() {
   ctx.fill();
   ctx.restore();
 
-  // stun中は、自機の上で眠っている「💤 Zzz」を点滅・上下移動させる
+  // stun中は、自分の上で眠っている「💤 Zzz」を点滅・上下移動させる
   if (stunned && Math.floor(gameClockMs / 300) % 2 === 0) {
     const sleepFloatY = Math.sin(gameClockMs / 180) * 4;
     ctx.save();
@@ -2123,7 +2216,7 @@ function draw() {
     ctx.restore();
   }
 
-  // パートナー機の描画（存在するときのみ。仮のプレースホルダー：選択した絵文字）
+  // 同僚の描画（存在するときのみ。仮のプレースホルダー：選択した絵文字）
   if (partner.active) {
     ctx.save();
     if (partner.invincible) {
@@ -2170,95 +2263,6 @@ function draw() {
     }
   }
 
-  // プレイヤーの下に疲労ゲージを描く
-  const gaugeW = 80;
-  const gaugeH = 8;
-  const gx = player.x - gaugeW / 2;
-  const gy = player.y + player.radius + 12;
-  ctx.fillStyle = 'gray';
-  ctx.fillRect(gx, gy, gaugeW, gaugeH);
-  const frac = Math.max(0, Math.min(1, fatigue / maxFatigue));
-  ctx.fillStyle = frac < 0.5 ? '#66bb6a' : (frac < 0.8 ? '#ffa726' : '#ef5350');
-  ctx.fillRect(gx, gy, gaugeW * frac, gaugeH);
-  ctx.fillStyle = 'white';
-  ctx.font = '12px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('脳疲労: ' + Math.floor(fatigue), player.x, gy + gaugeH + 12);
-  ctx.textAlign = 'left';
-
-  // 疲労ゲージの横にSANを表示する
-  ctx.fillStyle = 'white';
-  ctx.font = '12px sans-serif';
-  ctx.fillText('SAN: ' + Math.floor(san), player.x + gaugeW + 40, gy + gaugeH + 12);
-
-  // 画面右上、日付表示の下に寿命ゲージを表示する（じわじわとしか減らないので目立たせすぎない色にする）
-  const lifespanFrac = Math.max(0, Math.min(1, lifespan / maxLifespan));
-  const lifeGaugeW = 160, lifeGaugeH = 14, lifeGx = canvas.width - lifeGaugeW - 12, lifeGy = 46;
-  ctx.fillStyle = 'gray';
-  ctx.fillRect(lifeGx, lifeGy, lifeGaugeW, lifeGaugeH);
-  ctx.fillStyle = lifespanFrac < 0.3 ? '#ef5350' : '#ba68c8';
-  ctx.fillRect(lifeGx, lifeGy, lifeGaugeW * lifespanFrac, lifeGaugeH);
-  ctx.fillStyle = 'white';
-  ctx.font = '18px sans-serif';
-  ctx.textAlign = 'right';
-  ctx.fillText('寿命: ' + Math.ceil(lifespan), lifeGx + lifeGaugeW, lifeGy + lifeGaugeH + 20);
-  ctx.textAlign = 'left';
-
-  // 現在の攻撃モードと行動不能状態を表示する
-  ctx.fillStyle = 'white';
-  ctx.font = '14px sans-serif';
-  ctx.fillText('攻撃モード: ' + (autoFireEnabled ? '自動' : '手動') + (stunned ? '（行動不能）' : ''), 12, 48);
-  // 現在のスコアを表示する
-  ctx.fillStyle = 'white';
-  ctx.font = '20px sans-serif';
-  ctx.fillText('Score: ' + score, 12, 24);
-  // 現在のランク、スキルレベル、経験値を表示する
-  ctx.font = '14px sans-serif';
-  ctx.fillText('Rank: ' + rank + ' ' + rankNames[rank-1], 12, 72);
-  ctx.fillText('Skill Lvl: ' + skillLevel + '  EXP: ' + exp, 12, 96);
-  // 週間ノルマの進捗を表示する（早期達成なら色を変える）
-  ctx.font = '13px sans-serif';
-  ctx.fillStyle = weeklyQuotaAchievedEarly ? '#69f0ae' : '#b0bec5';
-  ctx.fillText(
-    `週ノルマ: 撃破 ${weeklyKills}/${weeklyKillQuota}  Score ${weeklyScoreGained}/${weeklyScoreQuota}` +
-    (weeklyQuotaAchievedEarly ? '（達成！）' : ''),
-    12, 118
-  );
-  // パートナーが存在する間だけ、簡易ステータスを表示する
-  if (partner.active) {
-    ctx.font = '13px sans-serif';
-    ctx.fillStyle = '#80cbc4';
-    ctx.fillText(
-      `パートナー ${partner.icon}  SAN ${Math.floor(partner.san)} / 寿命 ${Math.ceil(partner.lifespan)}`,
-      12, 136
-    );
-  }
-  // 一時メッセージを画面上部の中央に表示する
-  if (messages.length > 0) {
-    ctx.textAlign = 'center';
-    let y = 158;
-    for (const m of messages) {
-      ctx.font = m.font || '20px sans-serif';
-      // 残り時間に応じてメッセージを徐々に透明にする
-      let alpha = 1;
-      if (m.initialTtl && m.initialTtl > 0) alpha = Math.max(0, Math.min(1, m.ttl / m.initialTtl));
-      ctx.save();
-      ctx.globalAlpha = alpha;
-      ctx.fillStyle = m.color || 'white';
-      ctx.fillText(m.text, canvas.width / 2, y);
-      ctx.restore();
-      y += 28;
-    }
-    ctx.textAlign = 'left';
-  }
-  // 画面右上に日付・時刻・曜日を表示する
-  const yName = weekdayNames[currentDate.getDay()];
-  const holidayFlag = isHoliday(currentDate) || yName === '土' || yName === '日';
-  ctx.font = 'bold 22px sans-serif';
-  ctx.fillStyle = holidayFlag ? '#ffeb3b' : 'white';
-  const hourStr = String(currentHour).padStart(2,'0') + ':00';
-  const dateStr = `DAY${dayNumber} ${currentDate.getFullYear()}/${String(currentDate.getMonth()+1).padStart(2,'0')}/${String(currentDate.getDate()).padStart(2,'0')} ${hourStr} (${yName})`;
-  ctx.fillText(dateStr, canvas.width - 12 - ctx.measureText(dateStr).width, 28);
   // 全ての敵を描画する
   for (const en of enemies) {
     // 当たり判定の円を先に描き、敵の文字が常に手前になるようにする
@@ -2292,6 +2296,75 @@ function draw() {
     }
   }
   ctx.textAlign = 'left';
+
+  // 左上に自分と同僚のプロフィールを同じ高さで並べる。
+  drawHudProfilePanel(12, 12, 180, 196, '自分', selectedPlayerIcon, '#4dd0e1', [
+    { text: `SAN: ${Math.floor(san)} / ${maxSan}` },
+    { text: `寿命: ${Math.ceil(lifespan)} / ${maxLifespan}` },
+    { text: `脳疲労: ${Math.floor(fatigue)} / ${maxFatigue}` },
+    { text: `Score: ${score}` },
+    { text: `Rank: ${rank} ${rankNames[rank - 1]}` },
+    { text: `Skill Lvl: ${skillLevel}  EXP: ${Math.floor(exp)}` }
+  ]);
+
+  const partnerUnavailable = !partner.active;
+  const partnerTitle = selectedPartnerIcon === null
+    ? '同僚なし'
+    : (partner.active ? '同僚' : '同僚離脱');
+  drawHudProfilePanel(204, 12, 180, 196, partnerTitle,
+    selectedPartnerIcon, '#80cbc4', partner.active ? [
+      { text: `SAN: ${Math.floor(partner.san)} / ${maxSan}` },
+      { text: `寿命: ${Math.ceil(partner.lifespan)} / ${maxLifespan}` },
+      { text: `脳疲労: ${Math.floor(partner.fatigue)} / ${maxFatigue}` },
+      { text: '状態: 行動中' }
+    ] : [
+      { text: 'SAN: —' },
+      { text: '寿命: —' },
+      { text: '脳疲労: —' },
+      { text: `状態: ${selectedPartnerIcon === null ? '不在' : '離脱'}` }
+    ], partnerUnavailable,
+    (partnerRelationshipMax - partner.relationship) / partnerRelationshipMax);
+
+  // 共通の進行情報は、2つのプロフィール区画の下へまとめる。
+  ctx.font = '13px sans-serif';
+  ctx.fillStyle = weeklyQuotaAchievedEarly ? '#69f0ae' : '#b0bec5';
+  ctx.fillText(
+    `週ノルマ: 撃破 ${weeklyKills}/${weeklyKillQuota}  Score ${weeklyScoreGained}/${weeklyScoreQuota}` +
+    (weeklyQuotaAchievedEarly ? '（達成！）' : ''),
+    12, 228
+  );
+  ctx.fillStyle = 'white';
+  ctx.fillText(
+    '攻撃モード: ' + (autoFireEnabled ? '自動' : '手動') + (stunned ? '（行動不能）' : ''),
+    12, 248
+  );
+
+  // 一時メッセージを画面上部の中央に表示する
+  if (messages.length > 0) {
+    ctx.textAlign = 'center';
+    let y = 276;
+    for (const m of messages) {
+      ctx.font = m.font || '20px sans-serif';
+      // 残り時間に応じてメッセージを徐々に透明にする
+      let alpha = 1;
+      if (m.initialTtl && m.initialTtl > 0) alpha = Math.max(0, Math.min(1, m.ttl / m.initialTtl));
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = m.color || 'white';
+      ctx.fillText(m.text, canvas.width / 2, y);
+      ctx.restore();
+      y += 28;
+    }
+    ctx.textAlign = 'left';
+  }
+  // 画面右上に日付・時刻・曜日を表示する
+  const yName = weekdayNames[currentDate.getDay()];
+  const holidayFlag = isHoliday(currentDate) || yName === '土' || yName === '日';
+  ctx.font = 'bold 22px sans-serif';
+  ctx.fillStyle = holidayFlag ? '#ffeb3b' : 'white';
+  const hourStr = String(currentHour).padStart(2,'0') + ':00';
+  const dateStr = `DAY${dayNumber} ${currentDate.getFullYear()}/${String(currentDate.getMonth()+1).padStart(2,'0')}/${String(currentDate.getDate()).padStart(2,'0')} ${hourStr} (${yName})`;
+  ctx.fillText(dateStr, canvas.width - 12 - ctx.measureText(dateStr).width, 28);
 
   if (isPaused && !gameOver && !gameClear) {
     ctx.fillStyle = 'rgba(0,0,0,0.65)';
@@ -2343,7 +2416,7 @@ function draw() {
     const btnX = canvas.width / 2 - btnW / 2;
     const optionBaseY = canvas.height / 2 - 30 + extraOffset;
     const optionLabels = [
-      'アイテム購入 (SAN +15 / 脳疲労 -20)',
+      '同僚と遊ぶ (関係性が改善)',
       '休息 (脳疲労が全回復 / SAN +25)',
       'スキル選択・勉強 (特殊スキルを1つ選ぶ)'
     ];
@@ -2416,6 +2489,13 @@ function draw() {
   if (explosionFlashTimer > 0) {
     const flashAlpha = 0.75 * (explosionFlashTimer / explosionEffectDuration);
     ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  // 同僚弾の被弾直後は赤いフラッシュを重ねる
+  if (friendlyFireHitFlashTimer > 0) {
+    const hitFlashAlpha = 0.45 * (friendlyFireHitFlashTimer / friendlyFireHitEffectDuration);
+    ctx.fillStyle = `rgba(255, 60, 80, ${hitFlashAlpha})`;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
 
