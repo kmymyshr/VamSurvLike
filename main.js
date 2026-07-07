@@ -57,6 +57,8 @@ const totalWeight = typeWeights.reduce((a, b) => a + b, 0);
 let rank = 1;
 // getAllowedMaxTypeIndexByRankがゲーム開始前のウェーブ生成時にも参照するため、ここで宣言する
 let weeklyQuotaAchievedEarly = false; // 週の途中でノルマを達成済みか
+// setEnemyStatsが敵の強さを日数に応じて調整する際に参照するため、ここで宣言する
+let dayNumber = 1; // 実際に稼働した日数（1始まり）
 
 function chooseEnemyTypeIndex() {
   // 現在のランクに応じて、出現可能な敵の上限を決める
@@ -72,14 +74,20 @@ function chooseEnemyTypeIndex() {
   return truncated.length - 1;
 }
 
+// 日数が経つごとに敵がどんどん強くなるようにする倍率（残り工数＝HPと、SAN攻撃力の両方に掛ける）
+const enemyDifficultyGrowthPerDay = 0.06;
+function getEnemyDifficultyMultiplier() {
+  return 1 + (dayNumber - 1) * enemyDifficultyGrowthPerDay;
+}
+
 function setEnemyStats(e, typeIndex) {
   const idx = typeof typeIndex === 'number' ? typeIndex : chooseEnemyTypeIndex();
   e.type = idx + 1;
   e.text = enemyTypeNames[idx];
   e.icon = enemyTypeIcons[idx];
   e.font = '28px sans-serif';
-  // 強い種類ほどHPを高くする
-  e.hp = Math.ceil(1 + idx * 0.6 + Math.random() * 1.0); // 全体的なHPは低め
+  // 強い種類ほどHPを高くする。さらに日数が経つほど全体的にHPが増えていく
+  e.hp = Math.ceil((1 + idx * 0.6 + Math.random() * 1.0) * getEnemyDifficultyMultiplier());
   // 強い種類ほど、平均移動速度は遅くする
   e.speed = Math.max(0.08, 0.95 - idx * 0.06 + (Math.random() - 0.5) * 0.08);
   // 敵の種類に応じて色を変える
@@ -226,7 +234,7 @@ const dayTransitionDurationMs = 650; // フェードアウト・フェードイ�
 let dayTransitionAdvanceFn = null; // 画面が暗転しきった瞬間に実行する、実際の日付更新処理
 
 // ===== DAYカウンターと週次ノルマシステム =====
-let dayNumber = 1; // 実際に稼働した日数（1始まり）
+// dayNumber変数は、敵の強さ調整に使うためファイル前半で宣言済み
 let weeklyKillQuota = 0; // 今週の撃破ノルマ
 let weeklyScoreQuota = 0; // 今週のスコア獲得ノルマ
 let weeklyKills = 0; // 今週の撃破数
@@ -353,17 +361,17 @@ function updatePartner(dt) {
   // 疲労回復（プレイヤーの待機時回復と同じ割合を流用）
   partner.fatigue = Math.max(0, partner.fatigue - idleRecoveryPerSec * dt);
 
-  // 追従・ランダム移動：数秒おきに「追従」⇔「ランダム徘徊」を切り替える
+  // 追従・ランダム移動：数秒おきに「追従」⇔「ランダム徘徊」を切り替える（ふらふらと動く印象を強めにしてある）
   partner.wanderTimer -= dt * 1000;
   if (partner.wanderTimer <= 0) {
-    partner.wandering = Math.random() < 0.4;
+    partner.wandering = Math.random() < 0.55;
     if (partner.wandering) {
       partner.wanderTarget = {
-        x: Math.max(partner.radius, Math.min(canvas.width - partner.radius, player.x + (Math.random() - 0.5) * 260)),
-        y: Math.max(partner.radius, Math.min(canvas.height - partner.radius, player.y + (Math.random() - 0.5) * 260))
+        x: Math.max(partner.radius, Math.min(canvas.width - partner.radius, player.x + (Math.random() - 0.5) * 340)),
+        y: Math.max(partner.radius, Math.min(canvas.height - partner.radius, player.y + (Math.random() - 0.5) * 340))
       };
     }
-    partner.wanderTimer = 1500 + Math.random() * 2500;
+    partner.wanderTimer = 900 + Math.random() * 1800;
   }
   const followTarget = partner.wandering
     ? partner.wanderTarget
@@ -416,7 +424,7 @@ function updatePartner(dt) {
     for (const en of enemies) {
       const d = Math.hypot(en.x - partner.x, en.y - partner.y);
       if (d <= en.radius + partner.radius) {
-        damagePartnerSan(Math.ceil((en.type || 1) * partnerContactSanMultiplier));
+        damagePartnerSan(Math.ceil((en.type || 1) * partnerContactSanMultiplier * getEnemyDifficultyMultiplier()));
         partner.invincible = true;
         partner.invincibleTimer = partnerInvincibleDuration;
         break;
@@ -550,13 +558,22 @@ const rankNames = [
   '部長 / 事業責任者 / CTO'
 ];
 // rank変数は、敵生成時に使うためファイル前半で宣言済み
-// ミスなくほぼ完璧に立ち回った場合のみ最終ランクへ届く想定で、後半ほど必要スコアの伸びを急にしてある
-const rankThresholds = [0, 30, 90, 200, 380, 650, 1050, 1650, 2550, 3900]; // 各ランクへの昇格に必要なスコア
+// ミスなくほぼ完璧に立ち回った場合のみ最終ランクへ届く想定で、最終ランクだけ必要スコアを大きく跳ね上げてある
+// 昇進判定は週ごとに行い、条件を満たしていれば複数ランクの飛び級もあり得る（checkRankUp参照）
+const rankThresholds = [0, 40, 120, 280, 550, 950, 1500, 2300, 3500, 6000]; // 各ランクへの昇格に必要なスコア
 
 // スキルレベルと経験値
+// レベルが上がるほど必要経験値が増えていく（後半ほどレベルが上がりにくくなるようにするため）
 let exp = 0;
-const expPerLevel = 30; // 経験値30ごとにスキルレベルが上がる
+const baseExpPerLevel = 30; // 最初のレベルアップに必要な経験値
+const expPerLevelGrowth = 6; // レベルが1上がるごとに、次のレベルアップに必要な経験値が増える量
 let skillLevel = 0;
+
+// 指定レベルに到達するまでの累積必要経験値（レベルが上がるほど1レベルあたりの必要量が増える等差数列の和）
+function expThresholdForLevel(level) {
+  if (level <= 0) return 0;
+  return baseExpPerLevel * level + expPerLevelGrowth * level * (level - 1) / 2;
+}
 
 // 時刻によって敵を加速させる倍率
 const speedDayIncreaseFactor = 0.6; // 終業時には最大60%速くなる
@@ -798,33 +815,37 @@ function queueSpecialSkillSelections(count) {
 }
 
 function updateSkillEffects() {
-  const newLevel = Math.floor(exp / expPerLevel);
-  if (newLevel !== skillLevel) {
-    if (newLevel > skillLevel) {
-      const specialSkillCount = Math.floor(newLevel / 5) - Math.floor(skillLevel / 5);
-      // レベルが上がった場合はメッセージを表示する
-      skillLevel = newLevel;
-      showMessage('スキルレベルが上昇しました！', 6000, '#00ffff', '50px sans-serif');
-      queueSpecialSkillSelections(specialSkillCount);
-    } else {
-      skillLevel = newLevel;
-    }
+  // 現在のexpが、次のレベルの必要経験値を超えている間、1レベルずつ上げていく
+  // （必要経験値はexpThresholdForLevelにより後半ほど増えるため、レベルは徐々に上がりにくくなる）
+  let newLevel = skillLevel;
+  while (exp >= expThresholdForLevel(newLevel + 1)) {
+    newLevel++;
+  }
+  if (newLevel > skillLevel) {
+    const specialSkillCount = Math.floor(newLevel / 5) - Math.floor(skillLevel / 5);
+    // レベルが上がった場合はメッセージを表示する
+    skillLevel = newLevel;
+    showMessage('スキルレベルが上昇しました！', 6000, '#00ffff', '50px sans-serif');
+    queueSpecialSkillSelections(specialSkillCount);
   }
 }
 
+// Scoreが複数ランク分の条件を満たしていれば、飛び級で一気に昇格させる
 function checkRankUp() {
-  // 一度の判定では1ランクだけ昇格させる
-  if (rank < 10 && score >= rankThresholds[rank]) {
+  let promotions = 0;
+  while (rank < 10 && score >= rankThresholds[rank]) {
     rank++;
-    return true;
+    promotions++;
   }
-  return false;
+  return promotions;
 }
 
-function rankUpAtDayEnd() {
-  const promoted = checkRankUp();
-  if (promoted) {
-    showMessage('昇進しました！ ' + rank + ' ' + rankNames[rank-1], 4500, '#ffeb3b', '32px sans-serif');
+// 週末（週の最終稼働日）にのみ呼び出す昇進判定
+function rankUpAtWeekEnd() {
+  const promotions = checkRankUp();
+  if (promotions > 0) {
+    const jumpNote = promotions > 1 ? `（${promotions}階級飛び級！）` : '';
+    showMessage('昇進しました！ ' + rank + ' ' + rankNames[rank-1] + jumpNote, 4500, '#ffeb3b', '32px sans-serif');
   }
 }
 
@@ -1012,7 +1033,7 @@ function explodeEnemy(enemyIndex) {
   const skillMitigation = Math.max(0.5, 1 - skillLevel * 0.04);
   const explosionDamage = Math.ceil(
     (enemy.type || 1) * contactSanMultiplier * skillMitigation * 3 *
-    specialSkillEffects.sanDamageMultiplier
+    specialSkillEffects.sanDamageMultiplier * getEnemyDifficultyMultiplier()
   );
 
   damageSan(explosionDamage);
@@ -1374,7 +1395,10 @@ function update() {
     currentHour += passed;
     // 終業時刻になったら一日を終了する
     if (currentHour >= dayEndHour) {
-      rankUpAtDayEnd();
+      // 昇進判定は週末（および月末＝クリア判定の直前）にのみ行う
+      if (isWeekEndDay(currentDate) || isLastDayOfMonth(currentDate)) {
+        rankUpAtWeekEnd();
+      }
       if (isLastDayOfMonth(currentDate)) {
         gameClear = true;
         endingType = isTrueEndEligible() ? 'true' : 'normal';
@@ -1693,7 +1717,7 @@ function update() {
       // 接触した瞬間：SANダメージを与え、無敵時間を開始する
       const sdamage = Math.ceil(
         (en.type || 1) * contactSanMultiplier * sanMultiplier *
-        specialSkillEffects.sanDamageMultiplier
+        specialSkillEffects.sanDamageMultiplier * getEnemyDifficultyMultiplier()
       );
       damageSan(sdamage);
       en.touching = true;
@@ -1709,7 +1733,7 @@ function update() {
       const sustainedDrain = Math.max(
         1,
         (en.type || 1) * contactSanMultiplier * sanMultiplier * 0.18 * dt *
-        specialSkillEffects.sanDamageMultiplier
+        specialSkillEffects.sanDamageMultiplier * getEnemyDifficultyMultiplier()
       );
       damageSan(sustainedDrain);
     }
