@@ -1,3 +1,4 @@
+// ===== ゲーム画面（Canvas）の準備 =====
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 console.log('main.js loaded');
@@ -7,28 +8,29 @@ const player = {
   radius: 15,
   speed: 4
 };
-// spawn enemy offscreen (returns {x,y})
+// 画面外のランダムな位置を決め、座標を { x, y } で返す
 function spawnEnemyOffscreen() {
   const margin = 80;
   const side = Math.floor(Math.random() * 4);
   let x, y;
-  if (side === 0) { // left
+  if (side === 0) { // 左側
     x = -margin;
     y = Math.random() * canvas.height;
-  } else if (side === 1) { // right
+  } else if (side === 1) { // 右側
     x = canvas.width + margin;
     y = Math.random() * canvas.height;
-  } else if (side === 2) { // top
+  } else if (side === 2) { // 上側
     x = Math.random() * canvas.width;
     y = -margin;
-  } else { // bottom
+  } else { // 下側
     x = Math.random() * canvas.width;
     y = canvas.height + margin;
   }
   return { x, y };
 }
 
-// enemy types ordered weak -> strong
+// ===== 敵の種類と能力値 =====
+// 敵の名前を弱い順から強い順に並べる
 const enemyTypeNames = [
   '問い合わせ対応',
   '軽微な修正依頼',
@@ -42,18 +44,18 @@ const enemyTypeNames = [
   'サービス停止・重大障害対応'
 ];
 
-// geometric weights: weight_i = ratio^(i-1)
-const rarityRatio = 0.6; // geometric ratio (0<r<1) -> stronger ones rarer
+// 後ろの強い敵ほど出現率が低くなるよう、等比数列で重みを付ける
+const rarityRatio = 0.6; // 0～1の値。小さいほど強い敵が出にくい
 const typeWeights = enemyTypeNames.map((_, i) => Math.pow(rarityRatio, i));
 const totalWeight = typeWeights.reduce((a, b) => a + b, 0);
 
-// prelim rank declaration to avoid TDZ when spawning early
+// 敵の初期生成より前に参照できるよう、ランクをここで宣言する
 let rank = 1;
 
 function chooseEnemyTypeIndex() {
-  // limit available types by rank
+  // 現在のランクに応じて、出現可能な敵の上限を決める
   const maxIdx = getAllowedMaxTypeIndexByRank();
-  // compute truncated weights
+  // 出現可能な敵だけに絞って重みの合計を計算する
   const truncated = typeWeights.slice(0, maxIdx + 1);
   const sum = truncated.reduce((a, b) => a + b, 0);
   let r = Math.random() * sum;
@@ -69,30 +71,30 @@ function setEnemyStats(e, typeIndex) {
   e.type = idx + 1;
   e.text = enemyTypeNames[idx];
   e.font = '28px sans-serif';
-  // hp scales with type (weaker=1.. stronger higher)
-  e.hp = Math.ceil(1 + idx * 0.6 + Math.random() * 1.0); // lower HP overall
-  // speed: stronger enemies move slower on average
+  // 強い種類ほどHPを高くする
+  e.hp = Math.ceil(1 + idx * 0.6 + Math.random() * 1.0); // 全体的なHPは低め
+  // 強い種類ほど、平均移動速度は遅くする
   e.speed = Math.max(0.08, 0.95 - idx * 0.06 + (Math.random() - 0.5) * 0.08);
-  // color gradation based on type
-  const hue = Math.max(0, 10 - idx) * 12; // redder for stronger
+  // 敵の種類に応じて色を変える
+  const hue = Math.max(0, 10 - idx) * 12; // 強い敵ほど赤に近づく
   e.color = `hsl(${hue},80%,50%)`;
 }
 
-// multiple enemies
+// ===== 敵の生成と管理 =====
 const enemies = [];
 const maxEnemies = 3;
-const spawnInterval = 3200; // ms (reduced frequency)
+const spawnInterval = 3200; // 敵を生成する間隔（ミリ秒）
 const enemyCollisionRadius = 32;
 let lastSpawn = 0;
 
 function spawnEnemy(typeIndex) {
-  // try to spawn without overlapping existing enemies or player
+  // 既存の敵やプレイヤーと重ならない位置を探す
   let attempts = 0;
   let p;
   do {
     p = spawnEnemyOffscreen();
     attempts++;
-    // small random shift toward inside so they don't all stack exactly on edge
+    // 画面端の同じ位置に固まらないよう、少しだけランダムにずらす
     p.x += (Math.random() - 0.5) * 40;
     p.y += (Math.random() - 0.5) * 40;
     const tooClose = enemies.some(en => Math.hypot(en.x - p.x, en.y - p.y) < (en.radius + enemyCollisionRadius + 20)) || Math.hypot(player.x - p.x, player.y - p.y) < 150;
@@ -105,68 +107,69 @@ function spawnEnemy(typeIndex) {
   return e;
 }
 
-// create initial enemies (start lighter)
+// ゲーム開始時の敵を2体生成する
 for (let i = 0; i < 2; i++) spawnEnemy();
-// bullets fired by player
+// ===== 弾・スコア・ゲーム状態 =====
+// プレイヤーが発射した弾を保存する配列
 const bullets = [];
-const baseFireRate = 700; // base ms between shots
+const baseFireRate = 700; // 基本の発射間隔（ミリ秒）
 let lastFire = 0;
 let score = 0;
 let gameOver = false;
 let startScreen = true;
 
-// Brain fatigue system
+// ===== 脳疲労システム =====
 const maxFatigue = 100;
 let fatigue = maxFatigue;
 let stunned = false;
-const stunDuration = 3000; // ms stunned when fatigue hits 0
+const stunDuration = 3000; // 疲労が0になったときの行動不能時間（ミリ秒）
 let stunTimer = 0;
 let invincible = false;
-const invincibleDuration = 1200; // ms after initial contact
+const invincibleDuration = 1200; // 敵との接触後に無敵になる時間（ミリ秒）
 let invincibleTimer = 0;
 let lastUpdate = Date.now();
 
-// auto-fire toggle
+// 自動攻撃のON/OFF状態
 let autoFireEnabled = true;
 
-// rates (per second or per shot)
-const movingDrainPerSec = 6; // fatigue drain per second when moving
-const firingDrainPerShot = 18; // fatigue drain per shot
-const idleRecoveryPerSec = 12; // fatigue recovery per second when idle (50% faster)
-const stunRecoveryPerSec = 12; // recovery per second while stunned
-const fireRateMultiplier = 1.5; // additional multiplier when fatigue is 0 -> increases interval
-const baseBulletDamage = 2; // damage at full fatigue
+// 1秒ごと、または1発ごとに変化する疲労関連の値
+const movingDrainPerSec = 6; // 移動時の1秒あたりの疲労量（現在は未使用）
+const firingDrainPerShot = 18; // 1発撃つごとに増える疲労量
+const idleRecoveryPerSec = 12; // 待機時の1秒あたりの回復量
+const stunRecoveryPerSec = 12; // 行動不能中の1秒あたりの回復量
+const fireRateMultiplier = 1.5; // 疲労が多いほど発射間隔を延ばす倍率
+const baseBulletDamage = 2; // 疲労がないときの基本攻撃力
 
-// Day / calendar system
-const hourMs = 20000; // 20 seconds real = 1 hour in-game
+// ===== ゲーム内の時刻・一日進行システム =====
+const hourMs = 20000; // 現実の20秒をゲーム内の1時間として扱う
 const dayStartHour = 9;
 const dayEndHour = 18;
 let dayStartTime = Date.now();
 let lastHourTime = dayStartTime;
 let currentHour = dayStartHour;
 let dayEnded = false;
-let noonChoice = false; // whether waiting for noon choice at 12:00
-let noonContinueMode = false; // if true, enemies stop until noonModeEndTime
+let noonChoice = false; // 12時の選択待ちかどうか
+let noonContinueMode = false; // trueの間は、指定時刻まで敵が停止する
 let noonModeEndTime = 0;
-// recovery amounts when player chooses to continue at day end
+// 一日の終了時に「続ける」を選んだ場合の回復量
 const dayFatigueRecover = 30;
 const daySanRecover = 10;
-// noon mode drains/recovery
-const noonFatigueDrainPerSec = 4; // continuous drain when choosing 継続 at noon
+// 昼に「継続」を選んだ場合の消耗量
+const noonFatigueDrainPerSec = 4; // 継続中の1秒あたりの疲労消耗量
 const noonSanDrainPerSec = 2;
 
-// SAN system
+// ===== SAN（精神力）システム =====
 const maxSan = 100;
 let san = maxSan;
 
-// penalty amounts
+// SANが減少する量
 const stunSanPenalty = 8;
-const contactSanMultiplier = 4; // SAN loss = type * multiplier on contact
+const contactSanMultiplier = 4; // 接触時のSAN減少量 = 敵の種類 × この倍率
 
-// calendar/date
+// ===== カレンダーと祝日 =====
 let currentDate = new Date();
 const weekdayNames = ['日','月','火','水','木','金','土'];
-// simple fixed-date holidays (MM-DD)
+// 日付が毎年変わらない祝日を「月-日」で登録する
 const holidayMMDD = new Set(['01-01','02-11','04-29','05-03','05-04','05-05','11-03','11-23']);
 function isHoliday(d) {
   const mm = String(d.getMonth() + 1).padStart(2,'0');
@@ -175,7 +178,7 @@ function isHoliday(d) {
 }
 
 function sendScore(finalScore) {
-  // send score to Java server (change URL if needed)
+  // 最終スコアをJavaサーバーへ送る（必要に応じてURLを変更する）
   fetch('http://localhost:8080/score', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -186,7 +189,7 @@ function sendScore(finalScore) {
     console.error('Failed to send score', err);
   });
 }
-// Rank and Skill system
+// ===== ランク・スキル・経験値システム =====
 const rankNames = [
   '未経験 / 新人',
   'テスター / 開発補助',
@@ -199,24 +202,24 @@ const rankNames = [
   'PMO / ITコンサル / アーキテクト',
   '部長 / 事業責任者 / CTO'
 ];
-// rank already declared earlier
-const rankThresholds = [0, 10, 30, 60, 100, 150, 210, 280, 360, 450]; // score required for each rank index (1-based)
+// rank変数は、敵生成時に使うためファイル前半で宣言済み
+const rankThresholds = [0, 10, 30, 60, 100, 150, 210, 280, 360, 450]; // 各ランクへの昇格に必要なスコア
 
-// skill/exp
+// スキルレベルと経験値
 let exp = 0;
-const expPerLevel = 30; // level up every 30 exp for faster early growth
+const expPerLevel = 30; // 経験値30ごとにスキルレベルが上がる
 let skillLevel = 0;
 
-// enemy time-of-day speed scaling: how much faster enemies become by end of day
-const speedDayIncreaseFactor = 0.6; // 0 = no change, 0.6 = up to +60% faster at day end
+// 時刻によって敵を加速させる倍率
+const speedDayIncreaseFactor = 0.6; // 終業時には最大60%速くなる
 
 function updateSkillEffects() {
   const newLevel = Math.floor(exp / expPerLevel);
   if (newLevel !== skillLevel) {
     if (newLevel > skillLevel) {
-      // leveled up
+      // レベルが上がった場合はメッセージを表示する
       skillLevel = newLevel;
-      showMessage('スキルレベルが上昇しました！', 2200, '#00ffff', '100px sans-serif');
+      showMessage('スキルレベルが上昇しました！', 6000, '#00ffff', '50px sans-serif');
     } else {
       skillLevel = newLevel;
     }
@@ -224,7 +227,7 @@ function updateSkillEffects() {
 }
 
 function checkRankUp() {
-  // only allow a single-step promotion check (no multi-step)
+  // 一度の判定では1ランクだけ昇格させる
   if (rank < 10 && score >= rankThresholds[rank]) {
     rank++;
     return true;
@@ -235,42 +238,44 @@ function checkRankUp() {
 function rankUpAtDayEnd() {
   const promoted = checkRankUp();
   if (promoted) {
-    // set persistent promotion message until player makes a day-end choice
+    // 一日の終了時に選択するまで、昇格メッセージを表示し続ける
     persistentPromotion = {
       text: '昇進しました！ ' + rank + ' ' + rankNames[rank-1],
       color: '#ffeb3b',
-      font: '64px sans-serif'
+      font: '32px sans-serif'
     };
   }
 }
 
-// simple on-screen messages
+// ===== 画面上に表示する一時メッセージ =====
 const messages = [];
 function showMessage(text, ttl = 2000, color = 'white', font = '20px sans-serif') {
   messages.push({ text, ttl, initialTtl: ttl, color, font });
 }
-// persistent promotion message shown until player responds at day end
+// 一日の終了時に回答するまで表示する昇格メッセージ
 let persistentPromotion = null;
 
 function getAllowedMaxTypeIndexByRank() {
-  // map rank 1..10 to type index 0..9 (weaker when rank is low)
+  // ランク1～10を敵番号0～9へ対応させる（低ランクでは弱い敵だけ出す）
   const maxIdx = Math.floor((rank / 10) * (enemyTypeNames.length - 1));
   return Math.max(0, Math.min(enemyTypeNames.length - 1, maxIdx));
 }
+// ===== キーボード入力 =====
+// 押されているキーを true / false で記録する
 const keys = {};
 document.addEventListener("keydown", (event) => {
-  // If waiting at noon choice
+  // 昼の選択画面を表示している場合
   if (noonChoice) {
-    // 'r' = 休憩 (rest), 'c' = 継続 (continue)
+    // Rキーで休憩、Cキーで継続する
     if (event.key === 'r') {
-      // rest: recover ~30% and skip to 13:00
+      // 休憩：疲労とSANを約30%回復し、13時まで進める
       fatigue = Math.min(maxFatigue, fatigue + Math.floor(maxFatigue * 0.3));
       san = Math.min(maxSan, san + Math.floor(maxSan * 0.3));
       currentHour = 13;
       lastHourTime = Date.now();
       noonChoice = false;
     } else if (event.key === 'c') {
-      // continue: enemies stop for one hour, but continuous drains
+      // 継続：敵は1時間停止するが、疲労とSANが減り続ける
       noonChoice = false;
       noonContinueMode = true;
       noonModeEndTime = Date.now() + hourMs;
@@ -278,11 +283,11 @@ document.addEventListener("keydown", (event) => {
     }
     return;
   }
-  // If day ended, handle continue/quit
+  // 一日が終了している場合は、翌日へ進むか終了するかを処理する
   if (dayEnded) {
     if (event.key === 'y') {
-      // continue: recover a bit, restart day
-      // advance date by one day
+      // 継続：少し回復して翌日を開始する
+      // カレンダーの日付を1日進める
       currentDate.setDate(currentDate.getDate() + 1);
       fatigue = Math.min(maxFatigue, fatigue + dayFatigueRecover);
       san = Math.min(maxSan, san + daySanRecover);
@@ -292,7 +297,7 @@ document.addEventListener("keydown", (event) => {
       currentHour = dayStartHour;
       lastUpdate = Date.now();
       stunned = false;
-      // clear any persistent promotion message when continuing to next day
+      // 翌日へ進むときに昇格メッセージを消す
       persistentPromotion = null;
     } else if (event.key === 'n') {
       gameOver = true;
@@ -300,7 +305,7 @@ document.addEventListener("keydown", (event) => {
     }
     return;
   }
-  // start screen: press Enter to begin
+  // スタート画面ではEnterキーでゲームを開始する
   if (startScreen) {
     if (event.key === 'Enter') {
       startScreen = false;
@@ -309,7 +314,7 @@ document.addEventListener("keydown", (event) => {
     }
     return;
   }
-  // toggle auto-fire with 'f'
+  // Fキーで自動攻撃のON/OFFを切り替える
   if (event.key === 'f') {
     autoFireEnabled = !autoFireEnabled;
   }
@@ -319,27 +324,29 @@ document.addEventListener("keyup", (event) => {
   keys[event.key] = false;
 });
 
+// ===== ゲーム状態の更新 =====
+// 毎フレーム、移動・攻撃・時刻・衝突などを計算する
 function update() {
   if (gameOver) return;
   const now = Date.now();
   const dt = (now - lastUpdate) / 1000;
   lastUpdate = now;
 
-  // update messages TTL
+  // 一時メッセージの残り表示時間を減らし、期限切れなら削除する
   for (let mi = messages.length - 1; mi >= 0; mi--) {
     messages[mi].ttl -= dt * 1000;
     if (messages[mi].ttl <= 0) messages.splice(mi, 1);
   }
-  // clear persistent promotion when not in day-ended state
+  // 一日の終了画面以外では昇格メッセージを消す
   if (!dayEnded) persistentPromotion = null;
 
-  // if waiting at noon choice or day end choice, pause game updates until player chooses
+  // 昼または一日の終了時の選択中は、ゲームの進行を止める
   if (noonChoice || dayEnded) return;
 
-  // hour tick: 1 minute real = 1 hour in-game
-  // handle noon continue mode duration
+  // ゲーム内時刻を進める
+  // 昼に「継続」を選んだ時間を処理する
   if (noonContinueMode) {
-    // apply continuous drains
+    // 継続中は疲労とSANを少しずつ減らす
     fatigue -= noonFatigueDrainPerSec * dt;
     if (autoFireEnabled) {
       san -= noonSanDrainPerSec * dt;
@@ -347,26 +354,26 @@ function update() {
     if (san <= 0) { san = 0; gameOver = true; sendScore(score); return; }
     if (now >= noonModeEndTime) {
       noonContinueMode = false;
-      // advance to 13:00
+      // 継続時間が終わったら13時へ進める
       currentHour = 13;
       lastHourTime = now;
     }
   }
 
-  // regular hour progression (skip if waiting at noonChoice or dayEnded)
+  // 選択画面や昼の継続中でなければ、通常どおり時刻を進める
   if (!dayEnded && !noonChoice && !noonContinueMode) {
     if (now - lastHourTime >= hourMs) {
       const passed = Math.floor((now - lastHourTime) / hourMs);
       lastHourTime += passed * hourMs;
       const prevHour = currentHour;
       currentHour += passed;
-      // if we just reached noon (12:00)
+      // 12時になったら昼の選択画面を開く
       if (prevHour < 12 && currentHour >= 12) {
         currentHour = 12;
         noonChoice = true;
         return;
       }
-      // if end of day reached
+      // 終業時刻になったら一日を終了する
       if (currentHour >= dayEndHour) {
         dayEnded = true;
         rankUpAtDayEnd();
@@ -375,31 +382,31 @@ function update() {
     }
   }
 
-  // spawn new enemies periodically
+  // 上限数に達していなければ、一定間隔で敵を生成する
   if (now - lastSpawn >= spawnInterval && enemies.length < maxEnemies) {
     spawnEnemy();
     lastSpawn = now;
   }
 
   if (stunned) {
-    // stunned: can't move or fire, recover faster
+    // 行動不能中は移動・攻撃できないが、疲労が回復する
     stunTimer -= dt * 1000;
     fatigue = Math.min(maxFatigue, fatigue + stunRecoveryPerSec * dt);
     if (stunTimer <= 0) {
       stunned = false;
     }
   } else {
-    // movement (disabled when stunned)
+    // WASDキーによるプレイヤー移動
     let moving = false;
     if (keys["w"]) { player.y -= player.speed; moving = true; }
     if (keys["s"]) { player.y += player.speed; moving = true; }
     if (keys["a"]) { player.x -= player.speed; moving = true; }
     if (keys["d"]) { player.x += player.speed; moving = true; }
-    // keep player inside canvas
+    // プレイヤーが画面外へ出ないよう座標を制限する
     player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
     player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
 
-    // update invincibility timer
+    // 無敵時間を減らし、0になったら解除する
     if (invincible) {
       invincibleTimer -= dt * 1000;
       if (invincibleTimer <= 0) {
@@ -407,7 +414,7 @@ function update() {
       }
     }
 
-    // fatigue changes: moving no longer drains, instead slightly recovers
+    // 疲労を回復する。移動中は待機中より回復量が少ない
     updateSkillEffects();
     if (moving) {
       fatigue = Math.min(maxFatigue, fatigue + (idleRecoveryPerSec * 0.35) * dt);
@@ -415,7 +422,7 @@ function update() {
       fatigue = Math.min(maxFatigue, fatigue + idleRecoveryPerSec * dt);
     }
 
-    // auto-fire bullets toward nearest enemy (respect fatigue)
+    // 自動攻撃が有効なら、疲労状態に応じた間隔で最も近い敵を狙う
     const fatigueRatio = Math.max(0, Math.min(1, fatigue / maxFatigue));
     const currentFireRate = baseFireRate * (1 + (1 - fatigueRatio) * fireRateMultiplier);
     if (autoFireEnabled && !stunned && enemies.length > 0) {
@@ -425,7 +432,7 @@ function update() {
         const projectedDrain = firingDrainPerShot * firingDrainMultiplier;
         if (fatigue - projectedDrain > 0) {
           lastFire = now;
-          // choose nearest enemy
+          // 全ての敵との距離を比べ、最も近い敵を選ぶ
           let nearest = enemies[0];
           let ndist = Math.hypot(nearest.x - player.x, nearest.y - player.y);
           for (const en of enemies) {
@@ -446,13 +453,13 @@ function update() {
             radius: 4,
             damage
           });
-          // firing drains fatigue with skill mitigation (further weakened)
+          // 発射時に疲労を増やす。スキルレベルが高いほど消耗を軽減する
           fatigue -= projectedDrain;
           if (fatigue <= 0) {
             fatigue = 0;
             stunned = true;
             stunTimer = stunDuration;
-            // reduce SAN on stun (mitigated by skill)
+            // 疲労が限界に達したら行動不能にし、SANも減らす
             const sanMultiplier = Math.max(0.5, 1 - skillLevel * 0.04);
             san -= Math.ceil(stunSanPenalty * sanMultiplier);
             if (san <= 0) {
@@ -466,13 +473,13 @@ function update() {
     }
   }
 
-  // move each enemy toward player; collision radius stays fixed
+  // 敵をプレイヤーへ向けて移動する。当たり判定の半径は固定
   for (const e of enemies) {
     if (!noonContinueMode) {
       const dx = player.x - e.x;
       const dy = player.y - e.y;
       const dist = Math.hypot(dx, dy) || 1;
-      // scale enemy speed by time of day: later hours -> faster enemies
+      // 時刻が遅くなるほど敵の移動速度を上げる
       const dayProgress = Math.max(0, Math.min(1, (currentHour - dayStartHour) / (dayEndHour - dayStartHour)));
       const timeSpeedMultiplier = 1 + dayProgress * speedDayIncreaseFactor;
       e.x += (dx / dist) * (e.speed * timeSpeedMultiplier);
@@ -480,33 +487,33 @@ function update() {
     }
   }
 
-  // update bullets
+  // ===== 弾の移動と敵への命中判定 =====
   for (let i = bullets.length - 1; i >= 0; i--) {
     const b = bullets[i];
     b.x += b.vx;
     b.y += b.vy;
-    // remove off-screen bullets
+    // 画面外へ出た弾を配列から削除する
     if (b.x < -10 || b.x > canvas.width + 10 || b.y < -10 || b.y > canvas.height + 10) {
       bullets.splice(i, 1);
       continue;
     }
-    // check collision with enemies
+    // 弾と各敵の円形当たり判定が重なっているか調べる
     for (let j = enemies.length - 1; j >= 0; j--) {
       const en = enemies[j];
       const d = Math.hypot(b.x - en.x, b.y - en.y);
       if (d <= b.radius + en.radius) {
           const dmg = b.damage || 1;
-          // damage bonus from skill
+          // スキルレベルに応じてダメージを増やす
           updateSkillEffects();
           const damageBonus = 1 + skillLevel * 0.08;
           const actualDmg = Math.max(1, Math.round(dmg * damageBonus));
           en.hp = (en.hp || 1) - actualDmg;
         bullets.splice(i, 1);
         if (en.hp <= 0) {
-            // award score based on enemy type (stronger -> more)
+            // 強い敵ほど多くのスコアを獲得する
             const pts = Math.ceil(en.type * 3);
             score += pts;
-            // award exp based on enemy type
+            // 敵の種類に応じて経験値を獲得する
             exp += en.type * 5;
             updateSkillEffects();
           enemies.splice(j, 1);
@@ -517,30 +524,30 @@ function update() {
     }
   }
 
-  // clamp fatigue
+  // 疲労値が0～最大値の範囲を超えないようにする
   fatigue = Math.max(0, Math.min(maxFatigue, fatigue));
-  // check collisions between enemies and player
+  // ===== 敵とプレイヤーの接触判定 =====
   for (let j = enemies.length - 1; j >= 0; j--) {
     const en = enemies[j];
     const ed = Math.hypot(en.x - player.x, en.y - player.y);
     if (ed <= en.radius + player.radius) {
       if (!invincible) {
-        // reduce SAN based on enemy type
+        // 接触した敵の種類に応じてSANを減らす
         updateSkillEffects();
         const sanMultiplier = Math.max(0.5, 1 - skillLevel * 0.04);
         if (!en.touching) {
-          // initial contact: full SAN cost and invincibility start
+          // 接触した瞬間：SANダメージを与え、無敵時間を開始する
           const sdamage = Math.ceil((en.type || 1) * contactSanMultiplier * sanMultiplier);
           san -= sdamage;
           en.touching = true;
           invincible = true;
           invincibleTimer = invincibleDuration;
-          // apply equivalent of one bullet hit to the enemy on initial contact
+          // 最初の接触時、敵にも弾1発相当のダメージを与える
           const contactFatigueRatio = Math.max(0, Math.min(1, fatigue / maxFatigue));
           const contactDamage = Math.max(1, Math.round(baseBulletDamage * contactFatigueRatio * (1 + skillLevel * 0.08)));
           en.hp = (en.hp || 1) - contactDamage;
           if (en.hp <= 0) {
-            // kill processing same as bullet kill
+            // 接触で倒した場合も、弾で倒した場合と同じ報酬を与える
             const pts = Math.ceil(en.type * 3);
             score += pts;
             exp += en.type * 5;
@@ -549,14 +556,14 @@ function update() {
             spawnEnemy();
           }
         } else {
-          // sustained contact: slower continuous drain
+          // 接触し続けている間は、少しずつSANを減らす
           const sustainedDrain = Math.max(1, (en.type || 1) * contactSanMultiplier * sanMultiplier * 0.18 * dt);
           san -= sustainedDrain;
         }
-        // score penalty when enemy touches player
+        // 敵との接触によるスコア減点
         const penalty = Math.ceil((en.type || 1) * 2);
         score = Math.max(0, score - penalty);
-        // only remove enemy if its remaining HP is zero or less
+        // 残りHPが0以下になった敵だけを削除する
         if (en.hp <= 0) {
           enemies.splice(j, 1);
           spawnEnemy();
@@ -572,8 +579,10 @@ function update() {
       en.touching = false;
     }
   }
-  // clamp fatigue already done above; enemy collisions handled during bullet update and move loops
+  // 疲労値の制限と各種当たり判定は上の処理で完了
 }
+// ===== ゲーム画面の描画 =====
+// 毎フレーム、現在のゲーム状態をCanvasへ描く
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   if (startScreen) {
@@ -602,14 +611,14 @@ function draw() {
   ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
   ctx.fill();
   ctx.globalAlpha = 1;
-  // draw bullets
+  // プレイヤーが発射した弾を描く
   ctx.fillStyle = 'white';
   for (const b of bullets) {
     ctx.beginPath();
     ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
     ctx.fill();
   }
-  // draw fatigue gauge under player
+  // プレイヤーの下に疲労ゲージを描く
   const gaugeW = 80;
   const gaugeH = 8;
   const gx = player.x - gaugeW / 2;
@@ -625,34 +634,34 @@ function draw() {
   ctx.fillText('脳疲労: ' + Math.floor(fatigue), player.x, gy + gaugeH + 12);
   ctx.textAlign = 'left';
 
-  // draw SAN next to fatigue
+  // 疲労ゲージの横にSANを表示する
   ctx.fillStyle = 'white';
   ctx.font = '12px sans-serif';
   ctx.fillText('SAN: ' + Math.floor(san), player.x + gaugeW + 40, gy + gaugeH + 12);
 
-  // auto-fire status
+  // 自動攻撃のON/OFFと行動不能状態を表示する
   ctx.fillStyle = 'white';
   ctx.font = '14px sans-serif';
   ctx.fillText('Auto-Fire: ' + (autoFireEnabled ? 'ON' : 'OFF') + (stunned ? ' (Stunned)' : ''), 12, 48);
-  // draw score
+  // 現在のスコアを表示する
   ctx.fillStyle = 'white';
   ctx.font = '20px sans-serif';
   ctx.fillText('Score: ' + score, 12, 24);
-  // draw rank and skill
+  // 現在のランク、スキルレベル、経験値を表示する
   ctx.font = '14px sans-serif';
   ctx.fillText('Rank: ' + rank + ' ' + rankNames[rank-1], 12, 72);
   ctx.fillText('Skill Lvl: ' + skillLevel + '  EXP: ' + exp, 12, 96);
-  // quick on-canvas debug marker
+  // JavaScriptが動いていることを確認するためのデバッグ表示
   ctx.font = '12px monospace';
   ctx.fillStyle = 'white';
   ctx.fillText('JS OK', 12, 120);
-  // draw messages (top-center)
+  // 一時メッセージを画面上部の中央に表示する
   if (messages.length > 0) {
     ctx.textAlign = 'center';
     let y = 140;
     for (const m of messages) {
       ctx.font = m.font || '20px sans-serif';
-      // fade alpha based on ttl
+      // 残り時間に応じてメッセージを徐々に透明にする
       let alpha = 1;
       if (m.initialTtl && m.initialTtl > 0) alpha = Math.max(0, Math.min(1, m.ttl / m.initialTtl));
       ctx.save();
@@ -664,7 +673,7 @@ function draw() {
     }
     ctx.textAlign = 'left';
   }
-  // draw date and weekday (top-right)
+  // 画面右上に日付・時刻・曜日を表示する
   const yName = weekdayNames[currentDate.getDay()];
   const holidayFlag = isHoliday(currentDate) || yName === '土' || yName === '日';
   ctx.font = '16px sans-serif';
@@ -672,9 +681,9 @@ function draw() {
   const hourStr = String(currentHour).padStart(2,'0') + ':00';
   const dateStr = `${currentDate.getFullYear()}/${String(currentDate.getMonth()+1).padStart(2,'0')}/${String(currentDate.getDate()).padStart(2,'0')} ${hourStr} (${yName})`;
   ctx.fillText(dateStr, canvas.width - 12 - ctx.measureText(dateStr).width, 24);
-  // draw all enemies
+  // 全ての敵を描画する
   for (const en of enemies) {
-    // Draw the collision area first so the enemy text always remains on top.
+    // 当たり判定の円を先に描き、敵の文字が常に手前になるようにする
     ctx.beginPath();
     ctx.arc(en.x, en.y, en.radius, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(160, 160, 160, 0.28)';
@@ -686,7 +695,7 @@ function draw() {
     ctx.textBaseline = 'middle';
     if (en.text) {
       ctx.fillText(en.text, en.x, en.y);
-      // draw 残工数 below text
+      // 敵の名前の下に残りHP（残工数）を表示する
       const fm = (en.font || '').match(/(\d+)px/);
       const fSize = fm ? parseInt(fm[1], 10) : 28;
       ctx.font = '14px sans-serif';
@@ -709,7 +718,7 @@ function draw() {
     ctx.fillText('Final Score: ' + score, canvas.width / 2, canvas.height / 2 + 24);
     ctx.textAlign = 'left';
   }
-  // if waiting at noon (12:00), show rest/continue choice
+  // 12時の選択待ちなら、休憩・継続の選択画面を表示する
   if (noonChoice && !gameOver) {
     ctx.fillStyle = 'rgba(0,0,0,0.7)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -722,14 +731,14 @@ function draw() {
     ctx.fillText('C = 継続 (敵停止、脳疲労/SAN が継続的に減少)', canvas.width / 2, canvas.height / 2 + 40);
     ctx.textAlign = 'left';
   }
-  // if day ended, draw overlay with continue/quit choice
+  // 一日が終了したら、翌日へ進むか終了するかの選択画面を表示する
   if (dayEnded && !gameOver) {
     ctx.fillStyle = 'rgba(0,0,0,0.7)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = 'white';
     ctx.font = '28px sans-serif';
     ctx.textAlign = 'center';
-    // if there's a persistent promotion message, draw it prominently
+    // 昇格した場合は、選択画面に大きな昇格メッセージを表示する
     if (persistentPromotion) {
       ctx.font = persistentPromotion.font || '64px sans-serif';
       ctx.fillStyle = persistentPromotion.color || '#ffeb3b';
@@ -742,6 +751,8 @@ function draw() {
     ctx.textAlign = 'left';
   }
 }
+// ===== メインループ =====
+// 状態更新と画面描画を、ブラウザの描画タイミングに合わせて繰り返す
 function gameLoop() {
   update();
   draw();
