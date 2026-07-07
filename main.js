@@ -196,15 +196,15 @@ const dayEndHour = 18;
 let dayStartTime = Date.now();
 let lastHourTime = dayStartTime;
 let currentHour = dayStartHour;
-let noonChoice = false; // 12時の選択待ちかどうか
-let noonContinueMode = false; // trueの間は、指定時刻まで敵が停止する
-let noonModeEndTime = 0;
 // 一日の終了時に「続ける」を選んだ場合の回復量
 const dayFatigueRecover = 30;
 const daySanRecover = 10;
-// 昼に「継続」を選んだ場合の消耗量
-const noonFatigueIncreasePerSec = 4; // 継続中の1秒あたりの疲労増加量
-const noonSanDrainPerSec = 2;
+
+// ===== 一日の終わりの画面演出（フェードアウト→残敵の再配置→フェードイン） =====
+let dayTransitionPhase = null; // null / 'out' / 'in'
+let dayTransitionTimer = 0;
+const dayTransitionDurationMs = 650; // フェードアウト・フェードインそれぞれの長さ
+let dayTransitionAdvanceFn = null; // 画面が暗転しきった瞬間に実行する、実際の日付更新処理
 
 // ===== DAYカウンターと週次ノルマシステム =====
 let dayNumber = 1; // 実際に稼働した日数（1始まり）
@@ -275,9 +275,10 @@ function nextMonday(date) {
 }
 
 // ランクに応じて今週のノルマを再設定する
+// 集中して手を止めずにプレイしてようやく届く程度の、ぎりぎり達成できる水準にしてある
 function resetWeeklyQuotaForNewWeek() {
-  weeklyKillQuota = 6 + (rank - 1) * 2;
-  weeklyScoreQuota = 25 + (rank - 1) * 12;
+  weeklyKillQuota = 14 + (rank - 1) * 5;
+  weeklyScoreQuota = 55 + (rank - 1) * 22;
   weeklyKills = 0;
   weeklyScoreGained = 0;
   weeklyQuotaAchievedEarly = false;
@@ -319,7 +320,8 @@ const rankNames = [
   '部長 / 事業責任者 / CTO'
 ];
 // rank変数は、敵生成時に使うためファイル前半で宣言済み
-const rankThresholds = [0, 10, 30, 60, 100, 150, 210, 280, 360, 450]; // 各ランクへの昇格に必要なスコア
+// ミスなくほぼ完璧に立ち回った場合のみ最終ランクへ届く想定で、後半ほど必要スコアの伸びを急にしてある
+const rankThresholds = [0, 30, 90, 200, 380, 650, 1050, 1650, 2550, 3900]; // 各ランクへの昇格に必要なスコア
 
 // スキルレベルと経験値
 let exp = 0;
@@ -573,6 +575,35 @@ function rankUpAtDayEnd() {
 
 // ===== 日次進行・週次ノルマ判定・休日フロー =====
 
+// 画面フェードアウト→残っている仕事（敵）の再配置→フェードインの演出を開始する。
+// advanceFnは画面が暗転しきった瞬間に呼ばれ、実際の日付・カウンターの更新を行う
+function startDayTransition(advanceFn) {
+  dayTransitionPhase = 'out';
+  dayTransitionTimer = dayTransitionDurationMs;
+  dayTransitionAdvanceFn = advanceFn;
+}
+
+// 一日の終わりに、まだ片付いていない仕事（敵）を新しい位置へ配置し直す
+function repositionRemainingEnemies() {
+  for (const en of enemies) {
+    let attempts = 0;
+    let p;
+    do {
+      p = spawnEnemyOffscreen();
+      attempts++;
+      p.x += (Math.random() - 0.5) * 40;
+      p.y += (Math.random() - 0.5) * 40;
+      const tooClose = enemies.some(other => other !== en &&
+        Math.hypot(other.x - p.x, other.y - p.y) < (other.radius + en.radius + 20)
+      ) || Math.hypot(player.x - p.x, player.y - p.y) < 150;
+      if (!tooClose) break;
+    } while (attempts < 18);
+    en.x = p.x;
+    en.y = p.y;
+    en.touching = false;
+  }
+}
+
 // 通常の平日（または休日出勤中の土日）の終業処理。続行確認なしで自動的に翌日へ進む
 function autoAdvanceDay() {
   const isWeekendWork = currentDate.getDay() === 0 || currentDate.getDay() === 6;
@@ -584,10 +615,23 @@ function autoAdvanceDay() {
   currentHour = dayStartHour;
   stunned = false;
   dayNumber++;
-  showMessage(`DAY ${dayNumber - 1} 終了${isWeekendWork ? '（休日出勤）' : ''}`, 2200, '#90caf9', '26px sans-serif');
+  showMessage(`DAY ${dayNumber} 開始${isWeekendWork ? '（休日出勤）' : ''}`, 2200, '#90caf9', '26px sans-serif');
   if (currentDate.getDay() === 1) {
     resetWeeklyQuotaForNewWeek();
   }
+  lastUpdate = Date.now();
+}
+
+// 週末（土日祝日）を飛ばして次の月曜から新しい週を始める
+function jumpToNextMondayAndResetWeek() {
+  currentDate = nextMonday(currentDate);
+  dayStartTime = gameClockMs;
+  lastHourTime = gameClockMs;
+  currentHour = dayStartHour;
+  stunned = false;
+  dayNumber++;
+  resetWeeklyQuotaForNewWeek();
+  showMessage(`DAY ${dayNumber} 開始（月曜日）`, 2200, '#90caf9', '26px sans-serif');
   lastUpdate = Date.now();
 }
 
@@ -598,14 +642,7 @@ function resolveWeekEnd() {
     const bonus = 10 + rank * 3;
     score += bonus;
     showMessage(`週間ノルマ達成！ Score +${bonus}`, 4000, '#69f0ae', '28px sans-serif');
-    currentDate = nextMonday(currentDate);
-    dayStartTime = gameClockMs;
-    lastHourTime = gameClockMs;
-    currentHour = dayStartHour;
-    stunned = false;
-    dayNumber++;
-    resetWeeklyQuotaForNewWeek();
-    lastUpdate = Date.now();
+    startDayTransition(jumpToNextMondayAndResetWeek);
   } else {
     const scorePenalty = Math.ceil(score * weeklyFailScorePenaltyRatio);
     const sanPenalty = Math.ceil(maxSan * weeklyFailSanPenaltyRatio);
@@ -689,14 +726,7 @@ function forgetRandomSkill() {
 function finishRestDayAndAdvanceToMonday() {
   triggerRandomRestEvent();
   if (gameOver) return;
-  currentDate = nextMonday(currentDate);
-  dayStartTime = gameClockMs;
-  lastHourTime = gameClockMs;
-  currentHour = dayStartHour;
-  stunned = false;
-  dayNumber++;
-  resetWeeklyQuotaForNewWeek();
-  lastUpdate = Date.now();
+  startDayTransition(jumpToNextMondayAndResetWeek);
 }
 
 // ===== 画面上に表示する一時メッセージ =====
@@ -752,26 +782,7 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
-  // 昼の選択画面を表示している場合
   if (gameOver || gameClear) {
-    return;
-  }
-  if (noonChoice) {
-    // Rキーで休憩、Cキーで継続する
-    if (event.key === 'r') {
-      // 休憩：疲労とSANを約30%回復し、13時まで進める
-      fatigue = Math.max(0, fatigue - Math.floor(maxFatigue * 0.3));
-      san = Math.min(maxSan, san + Math.floor(maxSan * 0.3));
-      currentHour = 13;
-      lastHourTime = gameClockMs;
-      noonChoice = false;
-    } else if (event.key === 'c') {
-      // 継続：敵は1時間停止するが、脳疲労が増えてSANが減り続ける
-      noonChoice = false;
-      noonContinueMode = true;
-      noonModeEndTime = gameClockMs + hourMs;
-      lastHourTime = gameClockMs;
-    }
     return;
   }
   // 週間ノルマ未達成時：休日出勤するかどうかの選択
@@ -779,7 +790,7 @@ document.addEventListener("keydown", (event) => {
     if (event.key === 'y') {
       // 出勤：土日をまとめて通常の稼働日として続ける
       weekendWorkChoice = false;
-      autoAdvanceDay();
+      startDayTransition(autoAdvanceDay);
     } else if (event.key === 'n') {
       // 休む：評価がさらに下がり、休日の過ごし方を選ぶ
       weekendWorkChoice = false;
@@ -906,55 +917,47 @@ function update() {
     if (messages[mi].ttl <= 0) messages.splice(mi, 1);
   }
 
-  // 昼・週末の休日出勤選択・休日の過ごし方選択中は、ゲームの進行を止める
-  if (noonChoice || weekendWorkChoice || restActivityChoice) return;
-
-  // ゲーム内時刻を進める
-  // 昼に「継続」を選んだ時間を処理する
-  if (noonContinueMode) {
-    // 継続中は脳疲労を増やし、SANを少しずつ減らす
-    fatigue += noonFatigueIncreasePerSec * dt;
-    if (autoFireEnabled) {
-      san -= noonSanDrainPerSec * dt;
+  // 一日の終わりの画面演出中は、フェードの進行だけを行い、他の処理はすべて止める
+  if (dayTransitionPhase) {
+    dayTransitionTimer -= dt * 1000;
+    if (dayTransitionPhase === 'out' && dayTransitionTimer <= 0) {
+      // 画面が暗転しきったら、残っている仕事（敵）を配置し直してから日付を進める
+      repositionRemainingEnemies();
+      const advanceFn = dayTransitionAdvanceFn;
+      dayTransitionAdvanceFn = null;
+      if (advanceFn) advanceFn();
+      if (gameOver || gameClear) return;
+      dayTransitionPhase = 'in';
+      dayTransitionTimer = dayTransitionDurationMs;
+    } else if (dayTransitionPhase === 'in' && dayTransitionTimer <= 0) {
+      dayTransitionPhase = null;
     }
-    if (san <= 0) { san = 0; gameOver = true; sendScore(score); return; }
-    if (now >= noonModeEndTime) {
-      noonContinueMode = false;
-      // 継続時間が終わったら13時へ進める
-      currentHour = 13;
-      lastHourTime = now;
-    }
+    return;
   }
 
-  // 選択画面や昼の継続中でなければ、通常どおり時刻を進める
-  if (!noonChoice && !noonContinueMode) {
-    if (now - lastHourTime >= hourMs) {
-      const passed = Math.floor((now - lastHourTime) / hourMs);
-      lastHourTime += passed * hourMs;
-      const prevHour = currentHour;
-      currentHour += passed;
-      // 12時になったら昼の選択画面を開く
-      if (prevHour < 12 && currentHour >= 12) {
-        currentHour = 12;
-        noonChoice = true;
+  // 週末の休日出勤選択・休日の過ごし方選択中は、ゲームの進行を止める
+  if (weekendWorkChoice || restActivityChoice) return;
+
+  // ゲーム内時刻を進める
+  if (now - lastHourTime >= hourMs) {
+    const passed = Math.floor((now - lastHourTime) / hourMs);
+    lastHourTime += passed * hourMs;
+    currentHour += passed;
+    // 終業時刻になったら一日を終了する
+    if (currentHour >= dayEndHour) {
+      if (isLastDayOfMonth(currentDate)) {
+        gameClear = true;
+        sendScore(score);
         return;
       }
-      // 終業時刻になったら一日を終了する
-      if (currentHour >= dayEndHour) {
-        if (isLastDayOfMonth(currentDate)) {
-          gameClear = true;
-          sendScore(score);
-          return;
-        }
-        rankUpAtDayEnd();
-        // 週の最終稼働日なら週次ノルマを判定し、それ以外は自動的に翌日へ進む
-        if (isWeekEndDay(currentDate)) {
-          resolveWeekEnd();
-        } else {
-          autoAdvanceDay();
-        }
-        return;
+      rankUpAtDayEnd();
+      // 週の最終稼働日なら週次ノルマを判定し、それ以外は自動的に翌日へ進む
+      if (isWeekEndDay(currentDate)) {
+        resolveWeekEnd();
+      } else {
+        startDayTransition(autoAdvanceDay);
       }
+      return;
     }
   }
 
@@ -1142,17 +1145,15 @@ function update() {
 
   // 敵をプレイヤーへ向けて移動する。当たり判定の半径は固定
   for (const e of enemies) {
-    if (!noonContinueMode) {
-      const dx = player.x - e.x;
-      const dy = player.y - e.y;
-      const dist = Math.hypot(dx, dy) || 1;
-      // 時刻が遅くなるほど敵の移動速度を上げる
-      const dayProgress = Math.max(0, Math.min(1, (currentHour - dayStartHour) / (dayEndHour - dayStartHour)));
-      const timeSpeedMultiplier = 1 + dayProgress * speedDayIncreaseFactor;
-      const totalSpeed = e.speed * timeSpeedMultiplier * specialSkillEffects.enemyApproachSpeedMultiplier;
-      e.x += (dx / dist) * totalSpeed;
-      e.y += (dy / dist) * totalSpeed;
-    }
+    const dx = player.x - e.x;
+    const dy = player.y - e.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    // 時刻が遅くなるほど敵の移動速度を上げる
+    const dayProgress = Math.max(0, Math.min(1, (currentHour - dayStartHour) / (dayEndHour - dayStartHour)));
+    const timeSpeedMultiplier = 1 + dayProgress * speedDayIncreaseFactor;
+    const totalSpeed = e.speed * timeSpeedMultiplier * specialSkillEffects.enemyApproachSpeedMultiplier;
+    e.x += (dx / dist) * totalSpeed;
+    e.y += (dy / dist) * totalSpeed;
   }
 
   // ===== 弾の移動と敵への命中判定 =====
@@ -1501,19 +1502,6 @@ function draw() {
     ctx.fillText('Final Score: ' + score, canvas.width / 2, canvas.height / 2 + 24);
     ctx.textAlign = 'left';
   }
-  // 12時の選択待ちなら、休憩・継続の選択画面を表示する
-  if (noonChoice && !gameOver) {
-    ctx.fillStyle = 'rgba(0,0,0,0.7)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = 'white';
-    ctx.font = '28px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('12:00 休憩しますか？', canvas.width / 2, canvas.height / 2 - 40);
-    ctx.font = '20px sans-serif';
-    ctx.fillText('R = 休憩 (13:00 へ移動, 脳疲労/SAN 約30%回復)', canvas.width / 2, canvas.height / 2 + 8);
-    ctx.fillText('C = 継続 (敵停止、脳疲労は増加、SANは減少)', canvas.width / 2, canvas.height / 2 + 40);
-    ctx.textAlign = 'left';
-  }
   // 週間ノルマ未達成：休日出勤するかどうかの選択画面
   if (weekendWorkChoice && !gameOver && !gameClear) {
     ctx.fillStyle = 'rgba(0,0,0,0.7)';
@@ -1590,6 +1578,21 @@ function draw() {
     const flashAlpha = 0.75 * (explosionFlashTimer / explosionEffectDuration);
     ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  // 一日の終わりの演出：黒くフェードアウト→（この間に敵を再配置）→フェードイン
+  if (dayTransitionPhase) {
+    const t = Math.max(0, Math.min(1, dayTransitionTimer / dayTransitionDurationMs));
+    const alpha = dayTransitionPhase === 'out' ? (1 - t) : t;
+    ctx.fillStyle = `rgba(0, 0, 0, ${alpha})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (alpha > 0.6) {
+      ctx.fillStyle = `rgba(255, 255, 255, ${(alpha - 0.6) / 0.4})`;
+      ctx.font = '36px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(`DAY ${dayNumber}`, canvas.width / 2, canvas.height / 2);
+      ctx.textAlign = 'left';
+    }
   }
 }
 // ===== メインループ =====
