@@ -152,6 +152,29 @@ const stunRecoveryPerSec = 12; // 行動不能中の1秒あたりの回復量
 const fireRateMultiplier = 1.5; // 疲労が多いほど発射間隔を延ばす倍率
 const baseBulletDamage = 2; // 疲労がないときの基本攻撃力
 
+// ===== 回復アイテム（チョコレート） =====
+const chocolateLifetimeMs = 10000; // 出現してから消えるまでの時間（10秒）
+const chocolateBlinkMs = 3000; // 消える3秒前から点滅する
+const chocolateRecoveryRatio = 0.3; // 最大脳疲労の30%を回復する
+const chocolateRadius = 22;
+let chocolate = null;
+let chocolateSpawnTimerMs = getRandomChocolateSpawnDelay();
+
+// 次のチョコレートは8～15秒後に出現する
+function getRandomChocolateSpawnDelay() {
+  return 8000 + Math.random() * 7000;
+}
+
+function spawnChocolate() {
+  const margin = chocolateRadius + 20;
+  chocolate = {
+    x: margin + Math.random() * (canvas.width - margin * 2),
+    y: margin + Math.random() * (canvas.height - margin * 2),
+    radius: chocolateRadius,
+    remainingMs: chocolateLifetimeMs
+  };
+}
+
 // ===== ゲーム内の時刻・一日進行システム =====
 const hourMs = 20000; // 現実の20秒をゲーム内の1時間として扱う
 const dayStartHour = 9;
@@ -474,6 +497,31 @@ function update() {
     }
   }
 
+  // チョコレートの出現待ち、取得判定、時間切れを処理する
+  if (chocolate) {
+    chocolate.remainingMs -= dt * 1000;
+    const distanceToChocolate = Math.hypot(
+      player.x - chocolate.x,
+      player.y - chocolate.y
+    );
+
+    if (distanceToChocolate <= player.radius + chocolate.radius) {
+      const recoveryAmount = Math.ceil(maxFatigue * chocolateRecoveryRatio);
+      fatigue = Math.min(maxFatigue, fatigue + recoveryAmount);
+      showMessage(`チョコレート取得！ 脳疲労 +${recoveryAmount}`, 1500, '#ffcc80');
+      chocolate = null;
+      chocolateSpawnTimerMs = getRandomChocolateSpawnDelay();
+    } else if (chocolate.remainingMs <= 0) {
+      chocolate = null;
+      chocolateSpawnTimerMs = getRandomChocolateSpawnDelay();
+    }
+  } else {
+    chocolateSpawnTimerMs -= dt * 1000;
+    if (chocolateSpawnTimerMs <= 0) {
+      spawnChocolate();
+    }
+  }
+
   if (stunned) {
     // 行動不能中は移動・攻撃できないが、疲労が回復する
     stunTimer -= dt * 1000;
@@ -714,6 +762,33 @@ function draw() {
     ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
     ctx.fill();
   }
+
+  // 回復アイテムを描く。消滅直前は一定間隔で表示を切り替えて点滅させる
+  if (chocolate) {
+    const shouldShowChocolate = chocolate.remainingMs > chocolateBlinkMs ||
+      Math.floor(chocolate.remainingMs / 200) % 2 === 0;
+
+    if (shouldShowChocolate) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(chocolate.x, chocolate.y, chocolate.radius, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255, 204, 128, 0.3)';
+      ctx.fill();
+      ctx.font = '34px "Segoe UI Emoji", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('🍫', chocolate.x, chocolate.y);
+      ctx.font = '12px sans-serif';
+      ctx.fillStyle = '#ffcc80';
+      ctx.fillText(
+        `${Math.max(0, chocolate.remainingMs / 1000).toFixed(1)}秒`,
+        chocolate.x,
+        chocolate.y + chocolate.radius + 12
+      );
+      ctx.restore();
+    }
+  }
+
   // プレイヤーの下に疲労ゲージを描く
   const gaugeW = 80;
   const gaugeH = 8;
