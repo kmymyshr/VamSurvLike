@@ -76,6 +76,7 @@ function chooseEnemyTypeIndex() {
 
 // 日数が経つごとに敵がどんどん強くなるようにする倍率（残り工数＝HPと、SAN攻撃力の両方に掛ける）
 const enemyDifficultyGrowthPerDay = 0.06;
+const enemyHpMultiplier = 3; // 敵の基本HPを従来の約3倍にする
 function getEnemyDifficultyMultiplier() {
   return 1 + (dayNumber - 1) * enemyDifficultyGrowthPerDay;
 }
@@ -87,7 +88,8 @@ function setEnemyStats(e, typeIndex) {
   e.icon = enemyTypeIcons[idx];
   e.font = '28px sans-serif';
   // 強い種類ほどHPを高くする。さらに日数が経つほど全体的にHPが増えていく
-  e.hp = Math.ceil((1 + idx * 0.6 + Math.random() * 1.0) * getEnemyDifficultyMultiplier());
+  e.hp = Math.ceil((1 + idx * 0.6 + Math.random() * 1.0) *
+    getEnemyDifficultyMultiplier() * enemyHpMultiplier);
   // 強い種類ほど、平均移動速度は遅くする
   e.speed = Math.max(0.08, 0.95 - idx * 0.06 + (Math.random() - 0.5) * 0.08);
   // 敵の種類に応じて色を変える
@@ -253,7 +255,13 @@ let san = maxSan;
 
 // SANが減少する量
 const stunSanPenalty = 8;
+const stunLifespanPenaltyMin = 2;
+const stunLifespanPenaltyMax = 3;
 const contactSanMultiplier = 4; // 接触時のSAN減少量 = 敵の種類 × この倍率
+const friendlyFireSanDamage = 5;
+const friendlyFireLifespanDamage = 2;
+const friendlyFireInvincibleDuration = 900;
+let friendlyFireInvincibleTimer = 0;
 
 // ===== 寿命（健康）システム =====
 // SANダメージの蓄積や、脳疲労・SANの悪い状態が長く続くことで少しずつ削れていく。
@@ -326,6 +334,7 @@ const partner = {
   fireTimer: 0,
   highFatigueTimerMs: 0,
   lowSanTimerMs: 0,
+  friendlyFireInvincibleTimer: 0,
   // 賢さ（0〜1、初期はランダム）：高いほど的が正確で、疲労時に無駄撃ちを避けやすい
   intelligence: 0.5,
   // 性格・向こう見ずさ（0〜1、初期はランダム）：高いほど疲労していても構わず撃ちたがる
@@ -350,6 +359,7 @@ function initPartner() {
   partner.fireTimer = partnerBaseFireRate;
   partner.highFatigueTimerMs = 0;
   partner.lowSanTimerMs = 0;
+  partner.friendlyFireInvincibleTimer = 0;
   partner.intelligence = Math.random();
   partner.recklessness = Math.random();
 }
@@ -358,6 +368,23 @@ function initPartner() {
 function damagePartnerSan(amount) {
   if (amount <= 0 || !partner.active) return;
   partner.san = Math.max(0, partner.san - amount * specialSkillEffects.partnerSanDamageMultiplier);
+}
+// 味方の弾はSANと寿命を直接削る。連続被弾は専用の短い無敵時間で抑える。
+function damagePlayerByFriendlyFire() {
+  if (specialSkillEffects.preventFriendlyFire || friendlyFireInvincibleTimer > 0) return false;
+  san = Math.max(0, san - friendlyFireSanDamage * specialSkillEffects.sanDamageMultiplier);
+  lifespan = Math.max(0, lifespan - friendlyFireLifespanDamage);
+  friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
+  checkVitalsGameOver();
+  return true;
+}
+
+function damagePartnerByFriendlyFire() {
+  if (!partner.active || specialSkillEffects.preventFriendlyFire || partner.friendlyFireInvincibleTimer > 0) return false;
+  partner.san = Math.max(0, partner.san - friendlyFireSanDamage * specialSkillEffects.partnerSanDamageMultiplier);
+  partner.lifespan = Math.max(0, partner.lifespan - friendlyFireLifespanDamage);
+  partner.friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
+  return true;
 }
 
 // 週末の特殊イベント（後日実装予定）から、パートナーの賢さ・性格を恒久的に変化させるためのフック
@@ -390,6 +417,9 @@ function getPartnerEffectiveRecklessness() {
 // パートナーの追従・ランダム移動・自律攻撃・被弾・寿命減少・退場判定をまとめて処理する
 function updatePartner(dt) {
   if (!partner.active) return;
+
+  partner.friendlyFireInvincibleTimer = Math.max(0,
+    partner.friendlyFireInvincibleTimer - dt * 1000);
 
   // 疲労回復（プレイヤーの待機時回復と同じ割合を流用）
   partner.fatigue = Math.max(0, partner.fatigue - idleRecoveryPerSec * dt);
@@ -456,7 +486,8 @@ function updatePartner(dt) {
         vy: Math.sin(angle) * bulletSpeed,
         radius: 4,
         damage,
-        bounces: 0
+        bounces: 0,
+        owner: 'partner'
       });
       partner.fatigue = Math.min(maxFatigue, partner.fatigue + partnerFiringFatiguePerShot);
       partner.fireTimer = partnerBaseFireRate;
@@ -652,7 +683,8 @@ function getDefaultSpecialSkillEffects() {
     bulletBounceCount: 0,
     partnerDamageMultiplier: 1,
     partnerSanDamageMultiplier: 1,
-    partnerLifespanDrainMultiplier: 1
+    partnerLifespanDrainMultiplier: 1,
+    preventFriendlyFire: false
   };
 }
 const specialSkillEffects = getDefaultSpecialSkillEffects();
@@ -694,7 +726,8 @@ const specialSkills = [
   { id: 'silo-tendency', name: '属人化傾向', description: '自分にしかできない仕事が集中し、敵の接近速度+15%' },
   { id: 'perfectionism', name: '完璧主義', description: '質は高いが時間がかかる。攻撃力+25%だが発射間隔+15%' },
   { id: 'network-specialist', name: 'ネットワークスペシャリスト', description: '弾が画面端でレベルごとに1回多く跳ね返る' },
-  { id: 'trust-relationship', name: '信頼関係', description: 'パートナーとの信頼関係が深まり、パートナーの攻撃力+20%・被SANダメージ-15%' }
+  { id: 'trust-relationship', name: '信頼関係', description: 'パートナーとの信頼関係が深まり、パートナーの攻撃力+20%・被SANダメージ-15%' },
+  { id: 'teamwork', name: 'チームワーク', description: '自機とパートナーの弾が互いに当たらなくなる' }
 ];
 
 // スキルIDと取得レベルを対応させて保存する（これが唯一の正となる状態）
@@ -788,6 +821,7 @@ function applySkillEffectDelta(skillId) {
       specialSkillEffects.partnerDamageMultiplier *= 1.2;
       specialSkillEffects.partnerSanDamageMultiplier *= 0.85;
       break;
+    case 'teamwork': specialSkillEffects.preventFriendlyFire = true; break;
   }
 }
 
@@ -1614,7 +1648,8 @@ function update() {
               vy: Math.sin(bulletAngle) * speed,
               radius: 4,
               damage,
-              bounces: specialSkillEffects.bulletBounceCount
+              bounces: specialSkillEffects.bulletBounceCount,
+              owner: 'player'
             });
           }
           // コミュニケーション力：一定確率で、最寄りの敵へ援護射撃が飛ぶ
@@ -1631,11 +1666,13 @@ function update() {
               vy: Math.sin(supportAngle) * speed,
               radius: 4,
               damage,
-              bounces: specialSkillEffects.bulletBounceCount
+              bounces: specialSkillEffects.bulletBounceCount,
+              owner: 'player'
             });
           }
           // 発射時に疲労を増やす。スキルレベルが高いほど消耗を軽減する
-          fatigue += projectedFatigue;
+          // マルチタスクは処理する弾数に比例して脳疲労も増える。
+          fatigue += projectedFatigue * shotCount;
           if (fatigue >= maxFatigue) {
             fatigue = maxFatigue;
             stunned = true;
@@ -1645,6 +1682,11 @@ function update() {
             damageSan(Math.ceil(
               stunSanPenalty * sanMultiplier * specialSkillEffects.sanDamageMultiplier
             ));
+            const stunLifespanPenalty = stunLifespanPenaltyMin + Math.floor(
+              Math.random() * (stunLifespanPenaltyMax - stunLifespanPenaltyMin + 1)
+            );
+            lifespan = Math.max(0, lifespan - stunLifespanPenalty);
+            checkVitalsGameOver();
           }
         }
       }
@@ -1654,6 +1696,7 @@ function update() {
   // パートナー機の追従・ランダム移動・自律攻撃・被弾・寿命処理
   updatePartner(dt);
   if (gameOver) return;
+  friendlyFireInvincibleTimer = Math.max(0, friendlyFireInvincibleTimer - dt * 1000);
 
   // 敵をプレイヤーへ向けて移動する。当たり判定の半径は固定
   for (const e of enemies) {
@@ -1696,6 +1739,19 @@ function update() {
       }
     }
     if (removed) continue;
+    // 発射者と反対側の味方に当たった場合は、敵より先に誤射として処理する。
+    if (!specialSkillEffects.preventFriendlyFire && b.owner === 'player' && partner.active &&
+        Math.hypot(b.x - partner.x, b.y - partner.y) <= b.radius + partner.radius) {
+      damagePartnerByFriendlyFire();
+      bullets.splice(i, 1);
+      continue;
+    } else if (!specialSkillEffects.preventFriendlyFire && b.owner === 'partner' &&
+        Math.hypot(b.x - player.x, b.y - player.y) <= b.radius + player.radius) {
+      damagePlayerByFriendlyFire();
+      bullets.splice(i, 1);
+      if (gameOver) return;
+      continue;
+    }
     // 弾と各敵の円形当たり判定が重なっているか調べる
     for (let j = enemies.length - 1; j >= 0; j--) {
       const en = enemies[j];
