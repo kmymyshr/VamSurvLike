@@ -6,7 +6,8 @@ const player = {
   x: 400,
   y: 300,
   radius: 15,
-  speed: 4
+  speed: 4,
+  angle: 0 // 自機が向いている角度（ラジアン）
 };
 // 画面外のランダムな位置を決め、座標を { x, y } で返す
 function spawnEnemyOffscreen() {
@@ -138,8 +139,10 @@ const invincibleDuration = 1200; // 敵との接触後に無敵になる時間�
 let invincibleTimer = 0;
 let lastUpdate = Date.now();
 
-// 自動攻撃のON/OFF状態
-let autoFireEnabled = true;
+// 手動攻撃と自動攻撃の状態
+let autoFireEnabled = false;
+let mouseFireHeld = false;
+const mousePosition = { x: player.x + 100, y: player.y };
 
 // 1秒ごと、または1発ごとに変化する疲労関連の値
 const movingDrainPerSec = 6; // 移動時の1秒あたりの疲労量（現在は未使用）
@@ -358,6 +361,33 @@ document.addEventListener("keyup", (event) => {
   keys[event.key] = false;
 });
 
+// ===== マウスによる照準と攻撃 =====
+// ブラウザ上のマウス座標をCanvas内部の座標へ変換する
+function updateMousePosition(event) {
+  const rect = canvas.getBoundingClientRect();
+  mousePosition.x = (event.clientX - rect.left) * (canvas.width / rect.width);
+  mousePosition.y = (event.clientY - rect.top) * (canvas.height / rect.height);
+  player.angle = Math.atan2(
+    mousePosition.y - player.y,
+    mousePosition.x - player.x
+  );
+}
+
+canvas.addEventListener('pointermove', updateMousePosition);
+canvas.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0) return;
+  updateMousePosition(event);
+  mouseFireHeld = true;
+  canvas.setPointerCapture(event.pointerId);
+});
+canvas.addEventListener('pointerup', (event) => {
+  if (event.button === 0) mouseFireHeld = false;
+});
+canvas.addEventListener('pointercancel', () => {
+  mouseFireHeld = false;
+});
+canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+
 // ===== ゲーム状態の更新 =====
 // 毎フレーム、移動・攻撃・時刻・衝突などを計算する
 function update() {
@@ -478,34 +508,61 @@ function update() {
       fatigue = Math.min(maxFatigue, fatigue + idleRecoveryPerSec * dt);
     }
 
-    // 自動攻撃が有効なら、疲労状態に応じた間隔で最も近い敵を狙う
+    // 手動時はマウス、自動時は最も近い敵の方向へ自機を向ける
+    if (!autoFireEnabled) {
+      player.angle = Math.atan2(
+        mousePosition.y - player.y,
+        mousePosition.x - player.x
+      );
+    } else if (enemies.length > 0) {
+      let facingTarget = enemies[0];
+      let facingDistance = Math.hypot(facingTarget.x - player.x, facingTarget.y - player.y);
+      for (const enemy of enemies) {
+        const distance = Math.hypot(enemy.x - player.x, enemy.y - player.y);
+        if (distance < facingDistance) {
+          facingTarget = enemy;
+          facingDistance = distance;
+        }
+      }
+      player.angle = Math.atan2(facingTarget.y - player.y, facingTarget.x - player.x);
+    }
+
+    // 手動時はクリック方向、自動時は最も近い敵へ向けて攻撃する
     const fatigueRatio = Math.max(0, Math.min(1, fatigue / maxFatigue));
     const currentFireRate = baseFireRate * (1 + (1 - fatigueRatio) * fireRateMultiplier);
-    if (autoFireEnabled && !stunned && enemies.length > 0) {
+    const wantsToFire = autoFireEnabled ? enemies.length > 0 : mouseFireHeld;
+    if (wantsToFire && !stunned) {
       if (now - lastFire >= currentFireRate) {
         updateSkillEffects();
         const firingDrainMultiplier = Math.max(0.8, 1 - skillLevel * 0.05);
         const projectedDrain = firingDrainPerShot * firingDrainMultiplier;
         if (fatigue - projectedDrain > 0) {
           lastFire = now;
-          // 全ての敵との距離を比べ、最も近い敵を選ぶ
-          let nearest = enemies[0];
-          let ndist = Math.hypot(nearest.x - player.x, nearest.y - player.y);
-          for (const en of enemies) {
-            const dtemp = Math.hypot(en.x - player.x, en.y - player.y);
-            if (dtemp < ndist) { nearest = en; ndist = dtemp; }
+          let shotAngle = player.angle;
+
+          if (autoFireEnabled) {
+            // 自動攻撃では、全ての敵から最も近い敵を選ぶ
+            let nearest = enemies[0];
+            let nearestDistance = Math.hypot(nearest.x - player.x, nearest.y - player.y);
+            for (const enemy of enemies) {
+              const distance = Math.hypot(enemy.x - player.x, enemy.y - player.y);
+              if (distance < nearestDistance) {
+                nearest = enemy;
+                nearestDistance = distance;
+              }
+            }
+            shotAngle = Math.atan2(nearest.y - player.y, nearest.x - player.x);
+            player.angle = shotAngle;
           }
-          const dirX = nearest.x - player.x;
-          const dirY = nearest.y - player.y;
-          const d = Math.hypot(dirX, dirY) || 1;
+
           const speed = 6;
           const damageBonus = 1 + skillLevel * 0.08;
           const damage = Math.max(1, Math.round(baseBulletDamage * fatigueRatio * damageBonus));
           bullets.push({
-            x: player.x,
-            y: player.y,
-            vx: (dirX / d) * speed,
-            vy: (dirY / d) * speed,
+            x: player.x + Math.cos(shotAngle) * player.radius,
+            y: player.y + Math.sin(shotAngle) * player.radius,
+            vx: Math.cos(shotAngle) * speed,
+            vy: Math.sin(shotAngle) * speed,
             radius: 4,
             damage
           });
@@ -650,7 +707,8 @@ function draw() {
     ctx.fillText('Survivors風ゲーム', canvas.width / 2, canvas.height / 2 - 40);
     ctx.font = '20px sans-serif';
     ctx.fillText('Enterキーでスタート', canvas.width / 2, canvas.height / 2 + 20);
-    ctx.fillText('WASDで移動、自動攻撃はFでON/OFF', canvas.width / 2, canvas.height / 2 + 60);
+    ctx.fillText('WASDで移動、マウスで照準、左クリックで攻撃', canvas.width / 2, canvas.height / 2 + 60);
+    ctx.fillText('Fキーで手動攻撃／自動攻撃を切り替え', canvas.width / 2, canvas.height / 2 + 90);
     ctx.textAlign = 'left';
     return;
   }
@@ -667,6 +725,16 @@ function draw() {
   ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
   ctx.fill();
   ctx.globalAlpha = 1;
+  // 自機の正面方向を水色の照準線で示す
+  ctx.beginPath();
+  ctx.moveTo(player.x, player.y);
+  ctx.lineTo(
+    player.x + Math.cos(player.angle) * (player.radius + 18),
+    player.y + Math.sin(player.angle) * (player.radius + 18)
+  );
+  ctx.strokeStyle = '#4dd0e1';
+  ctx.lineWidth = 3;
+  ctx.stroke();
   // プレイヤーが発射した弾を描く
   ctx.fillStyle = 'white';
   for (const b of bullets) {
@@ -695,10 +763,10 @@ function draw() {
   ctx.font = '12px sans-serif';
   ctx.fillText('SAN: ' + Math.floor(san), player.x + gaugeW + 40, gy + gaugeH + 12);
 
-  // 自動攻撃のON/OFFと行動不能状態を表示する
+  // 現在の攻撃モードと行動不能状態を表示する
   ctx.fillStyle = 'white';
   ctx.font = '14px sans-serif';
-  ctx.fillText('Auto-Fire: ' + (autoFireEnabled ? 'ON' : 'OFF') + (stunned ? ' (Stunned)' : ''), 12, 48);
+  ctx.fillText('攻撃モード: ' + (autoFireEnabled ? '自動' : '手動') + (stunned ? '（行動不能）' : ''), 12, 48);
   // 現在のスコアを表示する
   ctx.fillStyle = 'white';
   ctx.font = '20px sans-serif';
