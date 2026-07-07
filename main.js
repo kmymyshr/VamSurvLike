@@ -136,7 +136,22 @@ let lastFire = 0;
 let score = 0;
 let gameOver = false;
 let gameClear = false;
-let startScreen = true;
+let startScreen = false;
+// 'player-icon' → 'partner-icon' → null（完了、startScreenへ）の順に進む起動時のセットアップ画面
+let setupStep = 'player-icon';
+
+// ===== エンディング =====
+// 'true' | 'normal' | 'bad-san' | 'bad-lifespan' のいずれか。gameOver / gameClear になる瞬間に確定する
+let endingType = null;
+// 週末ごとの特殊イベントで正しい選択をし続けているか（詳細な内容は別途実装予定。誤った選択で false になる）
+let allSpecialEventChoicesCorrect = true;
+function recordSpecialEventChoiceResult(isCorrect) {
+  if (!isCorrect) allSpecialEventChoicesCorrect = false;
+}
+// トゥルーエンドの条件：最終ランク（Rank10）に到達し、かつ週末の特殊イベントの選択をすべて正しく行っていること
+function isTrueEndEligible() {
+  return rank >= 10 && allSpecialEventChoicesCorrect && !partnerEverLost;
+}
 
 // ===== 納期切れの爆発エフェクト =====
 const explosionEffectDuration = 500; // フラッシュと揺れの継続時間（ミリ秒）
@@ -256,11 +271,185 @@ function damageSan(amount) {
 }
 
 // SAN・寿命のいずれかが尽きたらゲームオーバーにする（二重にScore送信しないようgameOverで一度だけ発火）
+// どちらが尽きたかでバッドエンドの種類を分ける
 function checkVitalsGameOver() {
   if (gameOver) return;
-  if (san <= 0 || lifespan <= 0) {
+  if (san <= 0) {
     gameOver = true;
+    endingType = 'bad-san';
     sendScore(score);
+  } else if (lifespan <= 0) {
+    gameOver = true;
+    endingType = 'bad-lifespan';
+    sendScore(score);
+  }
+}
+
+// ===== 自機・パートナー機のアイコン選択 =====
+// 絵・画像は仮のプレースホルダー（著作権フリーの絵文字）として扱う
+const playerIconChoices = ['🧑‍💻', '🧑‍💼', '🥷', '🤖', '🦸', '🧙'];
+const partnerIconChoices = ['🐱', '🐶', '🐧', '🦉', '👾', '🧚'];
+let selectedPlayerIcon = playerIconChoices[0];
+let selectedPartnerIcon = partnerIconChoices[0]; // nullの場合は「パートナーなし」
+
+// ===== パートナー機 =====
+const partnerMoveSpeed = 3.2;
+const partnerFollowOffsetX = -55;
+const partnerFollowOffsetY = 40;
+const partnerBaseFireRate = 700; // 自律攻撃の間隔（ミリ秒）
+const partnerFiringFatiguePerShot = 8;
+const partnerContactSanMultiplier = 3; // 接触時のSANダメージ = 敵の種類 × この倍率（プレイヤーよりやや軽め）
+const partnerInvincibleDuration = 1200;
+const partnerLossSanPenalty = 20; // パートナーが力尽きたとき、プレイヤーが受けるSANダメージ
+
+const partner = {
+  active: false, // 「パートナーなし」を選んだ場合や、力尽きた後はfalseのまま
+  x: 0, y: 0, angle: 0,
+  radius: 13,
+  icon: '',
+  fatigue: 0,
+  san: maxSan,
+  lifespan: maxLifespan,
+  invincible: false,
+  invincibleTimer: 0,
+  wandering: false,
+  wanderTimer: 0,
+  wanderTarget: { x: 0, y: 0 },
+  fireTimer: 0,
+  highFatigueTimerMs: 0,
+  lowSanTimerMs: 0
+};
+let partnerEverLost = false; // 一度でも力尽きたらtrue（トゥルーエンド条件に使う）
+
+// ゲーム開始時にパートナーの状態を初期化する
+function initPartner() {
+  partner.active = selectedPartnerIcon !== null;
+  partner.icon = selectedPartnerIcon || '';
+  partner.x = player.x + partnerFollowOffsetX;
+  partner.y = player.y + partnerFollowOffsetY;
+  partner.angle = 0;
+  partner.fatigue = 0;
+  partner.san = maxSan;
+  partner.lifespan = maxLifespan;
+  partner.invincible = false;
+  partner.invincibleTimer = 0;
+  partner.wandering = false;
+  partner.wanderTimer = 1500 + Math.random() * 2500;
+  partner.fireTimer = partnerBaseFireRate;
+  partner.highFatigueTimerMs = 0;
+  partner.lowSanTimerMs = 0;
+}
+
+// パートナーのSANにダメージを与える（プレイヤーのdamageSanとは独立。パートナーの生死のみに影響する）
+function damagePartnerSan(amount) {
+  if (amount <= 0 || !partner.active) return;
+  partner.san = Math.max(0, partner.san - amount * specialSkillEffects.partnerSanDamageMultiplier);
+}
+
+// パートナーの追従・ランダム移動・自律攻撃・被弾・寿命減少・退場判定をまとめて処理する
+function updatePartner(dt) {
+  if (!partner.active) return;
+
+  // 疲労回復（プレイヤーの待機時回復と同じ割合を流用）
+  partner.fatigue = Math.max(0, partner.fatigue - idleRecoveryPerSec * dt);
+
+  // 追従・ランダム移動：数秒おきに「追従」⇔「ランダム徘徊」を切り替える
+  partner.wanderTimer -= dt * 1000;
+  if (partner.wanderTimer <= 0) {
+    partner.wandering = Math.random() < 0.4;
+    if (partner.wandering) {
+      partner.wanderTarget = {
+        x: Math.max(partner.radius, Math.min(canvas.width - partner.radius, player.x + (Math.random() - 0.5) * 260)),
+        y: Math.max(partner.radius, Math.min(canvas.height - partner.radius, player.y + (Math.random() - 0.5) * 260))
+      };
+    }
+    partner.wanderTimer = 1500 + Math.random() * 2500;
+  }
+  const followTarget = partner.wandering
+    ? partner.wanderTarget
+    : { x: player.x + partnerFollowOffsetX, y: player.y + partnerFollowOffsetY };
+  const fdx = followTarget.x - partner.x;
+  const fdy = followTarget.y - partner.y;
+  const fdist = Math.hypot(fdx, fdy);
+  if (fdist > 2) {
+    const step = Math.min(fdist, partnerMoveSpeed);
+    partner.x += (fdx / fdist) * step;
+    partner.y += (fdy / fdist) * step;
+    partner.angle = Math.atan2(fdy, fdx);
+  }
+  partner.x = Math.max(partner.radius, Math.min(canvas.width - partner.radius, partner.x));
+  partner.y = Math.max(partner.radius, Math.min(canvas.height - partner.radius, partner.y));
+
+  // 自律攻撃：最も近い敵へ向けて、既存の弾配列にそのまま追加する
+  partner.fireTimer -= dt * 1000;
+  if (partner.fireTimer <= 0 && enemies.length > 0 && partner.fatigue < maxFatigue) {
+    const nearestEnemy = enemies.reduce((closest, candidate) => {
+      const d = Math.hypot(candidate.x - partner.x, candidate.y - partner.y);
+      return (!closest || d < closest.d) ? { en: candidate, d } : closest;
+    }, null).en;
+    const angle = Math.atan2(nearestEnemy.y - partner.y, nearestEnemy.x - partner.x);
+    const bulletSpeed = 6;
+    const damage = Math.max(1, Math.round(
+      baseBulletDamage * specialSkillEffects.partnerDamageMultiplier * (1 + skillLevel * 0.08)
+    ));
+    bullets.push({
+      x: partner.x + Math.cos(angle) * partner.radius,
+      y: partner.y + Math.sin(angle) * partner.radius,
+      vx: Math.cos(angle) * bulletSpeed,
+      vy: Math.sin(angle) * bulletSpeed,
+      radius: 4,
+      damage,
+      bounces: 0
+    });
+    partner.fatigue = Math.min(maxFatigue, partner.fatigue + partnerFiringFatiguePerShot);
+    partner.fireTimer = partnerBaseFireRate;
+  }
+
+  // 無敵時間の減少
+  if (partner.invincible) {
+    partner.invincibleTimer -= dt * 1000;
+    if (partner.invincibleTimer <= 0) partner.invincible = false;
+  }
+
+  // 敵との接触判定（プレイヤーの接触判定の簡易版）
+  if (!partner.invincible) {
+    for (const en of enemies) {
+      const d = Math.hypot(en.x - partner.x, en.y - partner.y);
+      if (d <= en.radius + partner.radius) {
+        damagePartnerSan(Math.ceil((en.type || 1) * partnerContactSanMultiplier));
+        partner.invincible = true;
+        partner.invincibleTimer = partnerInvincibleDuration;
+        break;
+      }
+    }
+  }
+
+  // 高疲労・低SANが続くと、プレイヤーと同様に寿命が少しずつ削れる
+  if (partner.fatigue >= maxFatigue * highFatigueThresholdRatio) {
+    partner.highFatigueTimerMs += dt * 1000;
+    if (partner.highFatigueTimerMs > highFatigueGraceMs) {
+      partner.lifespan = Math.max(0, partner.lifespan -
+        highFatigueLifespanPerSec * dt * specialSkillEffects.partnerLifespanDrainMultiplier);
+    }
+  } else {
+    partner.highFatigueTimerMs = 0;
+  }
+  if (partner.san <= maxSan * lowSanThresholdRatio) {
+    partner.lowSanTimerMs += dt * 1000;
+    if (partner.lowSanTimerMs > lowSanGraceMs) {
+      partner.lifespan = Math.max(0, partner.lifespan -
+        lowSanLifespanPerSec * dt * specialSkillEffects.partnerLifespanDrainMultiplier);
+    }
+  } else {
+    partner.lowSanTimerMs = 0;
+  }
+
+  // 退場判定：SANか寿命が尽きたら以後登場しなくなり、プレイヤーにもSANダメージが入る
+  if (partner.san <= 0 || partner.lifespan <= 0) {
+    partner.active = false;
+    partnerEverLost = true;
+    showMessage('パートナーが力尽きてしまった…', 4000, '#ef9a9a', '24px sans-serif');
+    damageSan(partnerLossSanPenalty);
   }
 }
 
@@ -393,34 +582,37 @@ function getDefaultSpecialSkillEffects() {
     supportFireChance: 0,
     bulletScatterChance: 0,
     enemyApproachSpeedMultiplier: 1,
-    bulletBounceCount: 0
+    bulletBounceCount: 0,
+    partnerDamageMultiplier: 1,
+    partnerSanDamageMultiplier: 1,
+    partnerLifespanDrainMultiplier: 1
   };
 }
 const specialSkillEffects = getDefaultSpecialSkillEffects();
 
 const specialSkills = [
-  { id: 'dual-shot', name: 'マルチタスク', description: 'レベルごとに同時発射する弾が1発増える' },
+  { id: 'dual-shot', name: 'マルチタスクA', description: 'レベルごとに同時発射する弾が1発増える' },
   { id: 'speed-up', name: '高速移動', description: '移動速度が1.5倍になる' },
   { id: 'fatigue-save', name: '省エネ射撃', description: '射撃による脳疲労を35%軽減する' },
   { id: 'rapid-fire', name: '高速連射', description: '発射間隔を25%短縮する' },
   { id: 'power-shot', name: '高威力弾', description: '弾のダメージが50%増える' },
-  { id: 'triple-shot', name: '三方向射撃', description: '正面と左右20度へ3発同時に撃つ' },
+  { id: 'triple-shot', name: 'マルチタスクB', description: '正面と左右20度へ3発同時に撃つ' },
   { id: 'chocolate-lover', name: 'チョコ好き', description: 'チョコレートの回復量が50%増える' },
   { id: 'deadline-master', name: '納期管理', description: '敵の納期が50%長くなる' },
   { id: 'mental-guard', name: 'メンタルガード', description: '受けるSANダメージを25%軽減する' },
   { id: 'high-speed-bullet', name: '処理速度', description: '弾の速度が40%上がる' },
   { id: 'short-sleeper', name: 'ショートスリーパー', description: 'stun時間を半分にする' },
   { id: 'through-power', name: 'スルー力', description: '受けるSANダメージ-15%。ただし気にしない分EXP獲得-10%' },
-  { id: 'listening', name: '傾聴力', description: '人の話をよく聞き学びが早い。EXP獲得+15%' },
+  { id: 'listening', name: '傾聴力', description: '人の話をよく聞き学びが早い。EXP獲得+15%。パートナーの寿命減少-10%' },
   { id: 'proactiveness', name: '主体性', description: '自分から動くので発射間隔-7%・移動速度+8%' },
   { id: 'problem-solving', name: '問題解決力', description: '攻撃力+20%' },
   { id: 'logical-thinking', name: '論理的思考力', description: '筋道立てて評価されやすい。攻撃力+10%・獲得スコア+10%' },
   { id: 'priority-judgement', name: '優先順位判断力', description: '重要な仕事から片付け、獲得スコア+20%' },
   { id: 'learning-power', name: '学習力', description: 'EXP獲得+30%' },
   { id: 'stress-tolerance', name: 'ストレス耐性', description: '受けるSANダメージ-20%' },
-  { id: 'business-manner', name: 'ビジネスマナー', description: '印象が良く、敵接触時のスコア減点-30%' },
+  { id: 'business-manner', name: 'ビジネスマナー', description: '印象が良く、敵接触時のスコア減点-30%。パートナーの寿命減少-10%' },
   { id: 'negotiation', name: '交渉力', description: '敵の納期+15%' },
-  { id: 'self-centered', name: '自己中心性', description: '攻撃力+15%だが、敵の反感を買いSANダメージ+15%' },
+  { id: 'self-centered', name: '自己中心性', description: '攻撃力+15%だが、敵の反感を買いSANダメージ+15%。パートナーを気にかけず、パートナーの被SANダメージ+20%' },
   { id: 'negative-thinking', name: '否定的思考', description: '素直に喜べず、チョコレートの回復量-30%' },
   { id: 'passivity', name: '消極性', description: '動きが鈍くなり発射間隔+15%・移動速度-10%' },
   { id: 'default-mode-network', name: 'デフォルトモードネットワーク', description: 'ぼーっとしている間に回復、待機時の脳疲労回復+40%' },
@@ -429,12 +621,13 @@ const specialSkills = [
   { id: 'optimistic', name: '楽観的', description: '受けるSANダメージ-15%' },
   { id: 'pessimistic', name: '悲観的', description: '受けるSANダメージ+20%だが、慎重な見積りで敵の納期+10%' },
   { id: 'chocolate-addiction', name: 'チョコレート依存症', description: 'チョコレートの回復量+80%だが、待機時の回復-20%' },
-  { id: 'communication', name: 'コミュニケーション力', description: 'レベルごとに15%の確率で援護射撃が発生する' },
+  { id: 'communication', name: 'コミュニケーション力', description: 'レベルごとに15%の確率で援護射撃が発生する。パートナーとの意思疎通が良くなり、パートナーの被SANダメージ-10%' },
   { id: 'report-shortage', name: '報連相不足', description: '情報共有不足で敵の納期-15%' },
   { id: 'inattentive', name: '注意力散漫', description: 'レベルごとに20%の確率で弾がランダムにそれる' },
   { id: 'silo-tendency', name: '属人化傾向', description: '自分にしかできない仕事が集中し、敵の接近速度+15%' },
   { id: 'perfectionism', name: '完璧主義', description: '質は高いが時間がかかる。攻撃力+25%だが発射間隔+15%' },
-  { id: 'network-specialist', name: 'ネットワークスペシャリスト', description: '弾が画面端でレベルごとに1回多く跳ね返る' }
+  { id: 'network-specialist', name: 'ネットワークスペシャリスト', description: '弾が画面端でレベルごとに1回多く跳ね返る' },
+  { id: 'trust-relationship', name: '信頼関係', description: 'パートナーとの信頼関係が深まり、パートナーの攻撃力+20%・被SANダメージ-15%' }
 ];
 
 // スキルIDと取得レベルを対応させて保存する（これが唯一の正となる状態）
@@ -463,7 +656,10 @@ function applySkillEffectDelta(skillId) {
       specialSkillEffects.sanDamageMultiplier *= 0.85;
       specialSkillEffects.expGainMultiplier *= 0.9;
       break;
-    case 'listening': specialSkillEffects.expGainMultiplier *= 1.15; break;
+    case 'listening':
+      specialSkillEffects.expGainMultiplier *= 1.15;
+      specialSkillEffects.partnerLifespanDrainMultiplier *= 0.9;
+      break;
     case 'proactiveness':
       specialSkillEffects.fireRateMultiplier *= 0.93;
       specialSkillEffects.moveSpeedMultiplier *= 1.08;
@@ -476,11 +672,15 @@ function applySkillEffectDelta(skillId) {
     case 'priority-judgement': specialSkillEffects.scoreGainMultiplier *= 1.2; break;
     case 'learning-power': specialSkillEffects.expGainMultiplier *= 1.3; break;
     case 'stress-tolerance': specialSkillEffects.sanDamageMultiplier *= 0.8; break;
-    case 'business-manner': specialSkillEffects.contactScorePenaltyMultiplier *= 0.7; break;
+    case 'business-manner':
+      specialSkillEffects.contactScorePenaltyMultiplier *= 0.7;
+      specialSkillEffects.partnerLifespanDrainMultiplier *= 0.9;
+      break;
     case 'negotiation': specialDeadlineMultiplier *= 1.15; break;
     case 'self-centered':
       specialSkillEffects.damageMultiplier *= 1.15;
       specialSkillEffects.sanDamageMultiplier *= 1.15;
+      specialSkillEffects.partnerSanDamageMultiplier *= 1.2;
       break;
     case 'negative-thinking': specialSkillEffects.chocolateRecoveryMultiplier *= 0.7; break;
     case 'passivity':
@@ -505,7 +705,10 @@ function applySkillEffectDelta(skillId) {
       specialSkillEffects.chocolateRecoveryMultiplier *= 1.8;
       specialSkillEffects.idleRecoveryMultiplier *= 0.8;
       break;
-    case 'communication': specialSkillEffects.supportFireChance += 0.15; break;
+    case 'communication':
+      specialSkillEffects.supportFireChance += 0.15;
+      specialSkillEffects.partnerSanDamageMultiplier *= 0.9;
+      break;
     case 'report-shortage': specialDeadlineMultiplier *= 0.85; break;
     case 'inattentive': specialSkillEffects.bulletScatterChance += 0.2; break;
     case 'silo-tendency': specialSkillEffects.enemyApproachSpeedMultiplier *= 1.15; break;
@@ -514,6 +717,10 @@ function applySkillEffectDelta(skillId) {
       specialSkillEffects.fireRateMultiplier *= 1.15;
       break;
     case 'network-specialist': specialSkillEffects.bulletBounceCount += 1; break;
+    case 'trust-relationship':
+      specialSkillEffects.partnerDamageMultiplier *= 1.2;
+      specialSkillEffects.partnerSanDamageMultiplier *= 0.85;
+      break;
   }
 }
 
@@ -527,6 +734,9 @@ function recomputeSpecialSkillEffects() {
   }
 }
 
+const specialSkillSelectionLockDurationMs = 1000; // 表示直後の連続タップ／クリックによる誤選択を防ぐ猶予時間
+let specialSkillSelectionUnlockAt = 0; // この時刻（Date.now()基準）を過ぎるまで選択を受け付けない
+
 function openSpecialSkillSelection(title) {
   // 取得済みスキルも候補に含め、再取得するとレベルアップできる
   const availableSkills = [...specialSkills];
@@ -539,9 +749,13 @@ function openSpecialSkillSelection(title) {
   specialSkillChoices = availableSkills.slice(0, 3);
   specialSkillSelectionTitle = title;
   specialSkillSelectionActive = true;
+  specialSkillSelectionUnlockAt = Date.now() + specialSkillSelectionLockDurationMs;
 }
 
 function chooseSpecialSkill(choiceIndex) {
+  // 表示直後の連打・連続タップによる誤選択を防ぐため、猶予時間内の選択は無視する
+  if (Date.now() < specialSkillSelectionUnlockAt) return;
+
   const skill = specialSkillChoices[choiceIndex];
   if (!skill) return;
 
@@ -813,6 +1027,19 @@ function explodeEnemy(enemyIndex) {
 }
 
 // ===== 各種選択の実行処理（キーボード・タップ両方から呼ばれる） =====
+// 自機アイコンを選び、パートナーアイコン選択画面へ進む
+function selectPlayerIcon(icon) {
+  selectedPlayerIcon = icon;
+  setupStep = 'partner-icon';
+}
+
+// パートナーアイコンを選ぶ（nullなら「パートナーなし」）。選択後、通常のスタート画面へ進む
+function selectPartnerIcon(icon) {
+  selectedPartnerIcon = icon;
+  setupStep = null;
+  startScreen = true;
+}
+
 // スタート画面：通常速度(1)か3倍速(2)でゲームを開始する
 function startGame(timeScale, title) {
   gameTimeScale = timeScale;
@@ -823,6 +1050,7 @@ function startGame(timeScale, title) {
   dayStartTime = 0;
   dayNumber = 1;
   resetWeeklyQuotaForNewWeek();
+  initPartner();
   openSpecialSkillSelection(title);
 }
 
@@ -852,6 +1080,21 @@ document.addEventListener("keydown", (event) => {
     if (choiceIndex >= 0 && choiceIndex < specialSkillChoices.length) {
       chooseSpecialSkill(choiceIndex);
     }
+    return;
+  }
+  // 起動時のセットアップ画面（自機アイコン→パートナーアイコンの順）では数字キーで選ぶ
+  if (setupStep === 'player-icon') {
+    const idx = Number(event.key) - 1;
+    if (idx >= 0 && idx < playerIconChoices.length) selectPlayerIcon(playerIconChoices[idx]);
+    return;
+  }
+  if (setupStep === 'partner-icon') {
+    if (event.key === '0') {
+      selectPartnerIcon(null);
+      return;
+    }
+    const idx = Number(event.key) - 1;
+    if (idx >= 0 && idx < partnerIconChoices.length) selectPartnerIcon(partnerIconChoices[idx]);
     return;
   }
 
@@ -1092,7 +1335,7 @@ function update() {
   }
 
   // スタート前とゲーム終了後は、敵や納期の更新を止める
-  if (gameOver || gameClear || startScreen || specialSkillSelectionActive) return;
+  if (gameOver || gameClear || setupStep || startScreen || specialSkillSelectionActive) return;
 
   // 一時メッセージの残り表示時間を減らし、期限切れなら削除する
   for (let mi = messages.length - 1; mi >= 0; mi--) {
@@ -1131,12 +1374,13 @@ function update() {
     currentHour += passed;
     // 終業時刻になったら一日を終了する
     if (currentHour >= dayEndHour) {
+      rankUpAtDayEnd();
       if (isLastDayOfMonth(currentDate)) {
         gameClear = true;
+        endingType = isTrueEndEligible() ? 'true' : 'normal';
         sendScore(score);
         return;
       }
-      rankUpAtDayEnd();
       // 週の最終稼働日なら週次ノルマを判定し、それ以外は自動的に翌日へ進む
       if (isWeekEndDay(currentDate)) {
         resolveWeekEnd();
@@ -1333,6 +1577,10 @@ function update() {
     }
   }
 
+  // パートナー機の追従・ランダム移動・自律攻撃・被弾・寿命処理
+  updatePartner(dt);
+  if (gameOver) return;
+
   // 敵をプレイヤーへ向けて移動する。当たり判定の半径は固定
   for (const e of enemies) {
     const dx = player.x - e.x;
@@ -1516,6 +1764,81 @@ function drawEndScreenButtons(baseY) {
   ctx.textAlign = 'left';
 }
 
+// ===== エンディング演出（一枚絵・説明文は仮のプレースホルダー。後で差し替え予定） =====
+const endingConfig = {
+  true: {
+    icon: '🌟',
+    label: 'TRUE END',
+    labelColor: '#ffd54f',
+    bgColor: 'rgba(40, 32, 4, 0.88)',
+    description: [
+      '（仮）あなたは仕事と人生の、真のバランスを見つけた。',
+      '最後まで正しい選択を積み重ねた者だけが辿り着く、本当の終わり。'
+    ]
+  },
+  normal: {
+    icon: '🏁',
+    label: 'NORMAL END',
+    labelColor: '#b0bec5',
+    bgColor: 'rgba(10, 15, 20, 0.88)',
+    description: [
+      '（仮）月末を迎え、ひとまずの区切りがついた。',
+      'これもまた、一つの生き方だった。'
+    ]
+  },
+  'bad-san': {
+    icon: '🌀',
+    label: 'BAD END',
+    labelColor: '#ce93d8',
+    bgColor: 'rgba(30, 0, 40, 0.88)',
+    description: [
+      '（仮）積み重なったストレスが、ついに心を壊してしまった。',
+      'もう、まともに働くことはできない…。'
+    ]
+  },
+  'bad-lifespan': {
+    icon: '⚰️',
+    label: 'BAD END',
+    labelColor: '#90a4ae',
+    bgColor: 'rgba(8, 8, 8, 0.92)',
+    description: [
+      '（仮）気づかぬうちに蓄積した消耗が、静かに寿命を削りきった。',
+      '働きすぎは、命を削る。'
+    ]
+  }
+};
+
+function drawEndingScreen() {
+  const cfg = endingConfig[endingType] || endingConfig.normal;
+  ctx.fillStyle = cfg.bgColor;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.textAlign = 'center';
+  ctx.font = '100px "Segoe UI Emoji", sans-serif';
+  ctx.fillStyle = 'white';
+  ctx.fillText(cfg.icon, canvas.width / 2, canvas.height / 2 - 140);
+
+  ctx.font = 'bold 40px sans-serif';
+  ctx.fillStyle = cfg.labelColor;
+  ctx.fillText(cfg.label, canvas.width / 2, canvas.height / 2 - 50);
+
+  ctx.font = '17px sans-serif';
+  ctx.fillStyle = '#e0e0e0';
+  cfg.description.forEach((line, i) => {
+    ctx.fillText(line, canvas.width / 2, canvas.height / 2 - 14 + i * 24);
+  });
+
+  ctx.font = 'bold 18px sans-serif';
+  ctx.fillStyle = 'white';
+  ctx.fillText(`Final Score: ${score}`, canvas.width / 2, canvas.height / 2 + 54);
+  ctx.font = 'bold 26px sans-serif';
+  ctx.fillStyle = cfg.labelColor;
+  ctx.fillText('E N D', canvas.width / 2, canvas.height / 2 + 86);
+
+  ctx.textAlign = 'left';
+  drawEndScreenButtons(canvas.height / 2 + 108);
+}
+
 // ===== 背景（仮のプレースホルダー） =====
 // 著作権フリーの絵文字アイコンを薄く散らして、オフィス風の背景を演出する
 const backgroundGradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
@@ -1550,6 +1873,47 @@ function draw() {
   // タップ可能な矩形を、今フレームの表示内容に合わせて作り直す
   uiButtons = [];
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (setupStep === 'player-icon' || setupStep === 'partner-icon') {
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 32px sans-serif';
+    ctx.textAlign = 'center';
+    const iconChoices = setupStep === 'player-icon' ? playerIconChoices : partnerIconChoices;
+    ctx.fillText(
+      setupStep === 'player-icon' ? '自機のアイコンを選んでください' : 'パートナー機のアイコンを選んでください',
+      canvas.width / 2, 110
+    );
+    ctx.textAlign = 'left';
+
+    const btnSize = 100, gap = 16;
+    const totalWidth = iconChoices.length * btnSize + (iconChoices.length - 1) * gap;
+    const startX = canvas.width / 2 - totalWidth / 2;
+    const btnY = 210;
+    iconChoices.forEach((icon, i) => {
+      drawUiButton(startX + i * (btnSize + gap), btnY, btnSize, btnSize, icon,
+        () => (setupStep === 'player-icon' ? selectPlayerIcon(icon) : selectPartnerIcon(icon)),
+        { font: '48px "Segoe UI Emoji", sans-serif' });
+    });
+
+    ctx.fillStyle = '#cfd8dc';
+    ctx.font = '16px sans-serif';
+    ctx.textAlign = 'center';
+
+    if (setupStep === 'partner-icon') {
+      const noneBtnW = 260, noneBtnH = 50;
+      drawUiButton(canvas.width / 2 - noneBtnW / 2, btnY + btnSize + 40, noneBtnW, noneBtnH,
+        'パートナーなし (0)', () => selectPartnerIcon(null),
+        { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
+      ctx.fillText('数字キー 1〜6 / タップで選択　0キーでパートナーなし', canvas.width / 2, btnY + btnSize + 122);
+    } else {
+      ctx.fillText('数字キー 1〜6 / タップで選択', canvas.width / 2, btnY + btnSize + 50);
+    }
+    ctx.textAlign = 'left';
+    return;
+  }
+
   if (startScreen) {
     ctx.fillStyle = 'black';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -1582,10 +1946,13 @@ function draw() {
   } else {
     ctx.globalAlpha = 1;
   }
-  ctx.fillStyle = "white";
-  ctx.beginPath();
-  ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
-  ctx.fill();
+  // 自機のアイコン（仮のプレースホルダー：選択した絵文字）
+  ctx.font = '30px "Segoe UI Emoji", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(selectedPlayerIcon, player.x, player.y);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
   ctx.globalAlpha = 1;
   // 自機の正面方向を水色の照準線で示す
   ctx.beginPath();
@@ -1609,6 +1976,19 @@ function draw() {
     ctx.shadowColor = '#0288d1';
     ctx.shadowBlur = 6;
     ctx.fillText('💤 Zzz', player.x, player.y - player.radius - 10 + sleepFloatY);
+    ctx.restore();
+  }
+
+  // パートナー機の描画（存在するときのみ。仮のプレースホルダー：選択した絵文字）
+  if (partner.active) {
+    ctx.save();
+    if (partner.invincible) {
+      ctx.globalAlpha = Math.floor(gameClockMs / 100) % 2 === 0 ? 0.4 : 0.8;
+    }
+    ctx.font = '26px "Segoe UI Emoji", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(partner.icon, partner.x, partner.y);
     ctx.restore();
   }
 
@@ -1700,10 +2080,19 @@ function draw() {
     (weeklyQuotaAchievedEarly ? '（達成！）' : ''),
     12, 118
   );
+  // パートナーが存在する間だけ、簡易ステータスを表示する
+  if (partner.active) {
+    ctx.font = '13px sans-serif';
+    ctx.fillStyle = '#80cbc4';
+    ctx.fillText(
+      `パートナー ${partner.icon}  SAN ${Math.floor(partner.san)} / 寿命 ${Math.ceil(partner.lifespan)}`,
+      12, 136
+    );
+  }
   // 一時メッセージを画面上部の中央に表示する
   if (messages.length > 0) {
     ctx.textAlign = 'center';
-    let y = 140;
+    let y = 158;
     for (const m of messages) {
       ctx.font = m.font || '20px sans-serif';
       // 残り時間に応じてメッセージを徐々に透明にする
@@ -1772,31 +2161,8 @@ function draw() {
     ctx.textAlign = 'left';
   }
 
-  if (gameClear) {
-    ctx.fillStyle = 'rgba(0,0,0,0.7)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#8df5c5';
-    ctx.font = '52px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('GAME CLEAR', canvas.width / 2, canvas.height / 2 - 100);
-    ctx.font = '24px sans-serif';
-    ctx.fillStyle = 'white';
-    ctx.fillText('Final Score: ' + score, canvas.width / 2, canvas.height / 2 - 56);
-    ctx.textAlign = 'left';
-    drawEndScreenButtons(canvas.height / 2 - 10);
-  }
-
-  if (gameOver) {
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = 'white';
-    ctx.font = '48px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('Game Over', canvas.width / 2, canvas.height / 2 - 92);
-    ctx.font = '24px sans-serif';
-    ctx.fillText('Final Score: ' + score, canvas.width / 2, canvas.height / 2 - 48);
-    ctx.textAlign = 'left';
-    drawEndScreenButtons(canvas.height / 2 - 10);
+  if (gameClear || gameOver) {
+    drawEndingScreen();
   }
   // 週間ノルマ未達成：休日出勤するかどうかの選択画面
   if (weekendWorkChoice && !gameOver && !gameClear) {
@@ -1849,6 +2215,8 @@ function draw() {
 
   // 特殊スキルの3択画面。数字キー1～3で取得する
   if (specialSkillSelectionActive) {
+    const selectionLocked = Date.now() < specialSkillSelectionUnlockAt;
+
     ctx.fillStyle = 'rgba(8, 10, 24, 0.9)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.textAlign = 'center';
@@ -1856,6 +2224,8 @@ function draw() {
     ctx.font = 'bold 30px sans-serif';
     ctx.fillText(specialSkillSelectionTitle, canvas.width / 2, 70);
 
+    ctx.save();
+    if (selectionLocked) ctx.globalAlpha = 0.5; // 誤選択防止の猶予中は、選べないことが分かるよう薄く表示する
     specialSkillChoices.forEach((skill, index) => {
       const cardX = 90;
       const cardY = 115 + index * 125;
@@ -1881,13 +2251,20 @@ function draw() {
       ctx.font = '16px sans-serif';
       ctx.fillText(skill.description, cardX + 22, cardY + 68);
 
-      uiButtons.push({ x: cardX, y: cardY, w: cardWidth, h: cardHeight, action: () => chooseSpecialSkill(index) });
+      // 猶予中はタップ可能領域自体を登録しない（キーボードもchooseSpecialSkill側で無視される）
+      if (!selectionLocked) {
+        uiButtons.push({ x: cardX, y: cardY, w: cardWidth, h: cardHeight, action: () => chooseSpecialSkill(index) });
+      }
     });
+    ctx.restore();
 
     ctx.textAlign = 'center';
     ctx.fillStyle = '#fff59d';
     ctx.font = '18px sans-serif';
-    ctx.fillText('数字キー 1～3 / タップで選択', canvas.width / 2, 530);
+    ctx.fillText(
+      selectionLocked ? '少々お待ちください…' : '数字キー 1～3 / タップで選択',
+      canvas.width / 2, 530
+    );
     ctx.textAlign = 'left';
   }
 
