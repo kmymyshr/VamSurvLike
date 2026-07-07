@@ -88,6 +88,7 @@ const spawnInterval = 3200; // 敵を生成する間隔（ミリ秒）
 const enemyCollisionRadius = 32;
 const minDeadlineMs = 5000; // 納期の最短時間（5秒）
 const maxDeadlineMs = 30000; // 納期の最長時間（30秒）
+let specialDeadlineMultiplier = 1;
 let lastSpawn = 0;
 
 function spawnEnemy(typeIndex) {
@@ -107,7 +108,9 @@ function spawnEnemy(typeIndex) {
   setEnemyStats(e, typeIndex);
   e.touched = false;
   // 敵ごとに5～30秒のランダムな納期を設定する
-  e.deadlineMs = minDeadlineMs + Math.random() * (maxDeadlineMs - minDeadlineMs);
+  e.deadlineMs = (
+    minDeadlineMs + Math.random() * (maxDeadlineMs - minDeadlineMs)
+  ) * specialDeadlineMultiplier;
   enemies.push(e);
   return e;
 }
@@ -248,13 +251,110 @@ let skillLevel = 0;
 // 時刻によって敵を加速させる倍率
 const speedDayIncreaseFactor = 0.6; // 終業時には最大60%速くなる
 
+// ===== 特殊スキルシステム =====
+const specialSkillEffects = {
+  dualShot: false,
+  tripleShot: false,
+  moveSpeedMultiplier: 1,
+  firingFatigueMultiplier: 1,
+  fireRateMultiplier: 1,
+  damageMultiplier: 1,
+  chocolateRecoveryMultiplier: 1,
+  sanDamageMultiplier: 1,
+  bulletSpeedMultiplier: 1
+};
+
+const specialSkills = [
+  { id: 'dual-shot', name: '二方向射撃', description: '30度違う二方向へ同時に発射する' },
+  { id: 'speed-up', name: '高速移動', description: '移動速度が1.5倍になる' },
+  { id: 'fatigue-save', name: '省エネ射撃', description: '射撃による脳疲労を35%軽減する' },
+  { id: 'rapid-fire', name: '高速連射', description: '発射間隔を25%短縮する' },
+  { id: 'power-shot', name: '高威力弾', description: '弾のダメージが50%増える' },
+  { id: 'triple-shot', name: '三方向射撃', description: '正面と左右20度へ3発同時に撃つ' },
+  { id: 'chocolate-lover', name: 'チョコ好き', description: 'チョコレートの回復量が50%増える' },
+  { id: 'deadline-master', name: '納期管理', description: '敵の納期が50%長くなる' },
+  { id: 'mental-guard', name: 'メンタルガード', description: '受けるSANダメージを25%軽減する' },
+  { id: 'high-speed-bullet', name: '高速弾', description: '弾の速度が40%上がる' }
+];
+
+const acquiredSpecialSkillIds = new Set();
+let specialSkillChoices = [];
+let specialSkillSelectionActive = false;
+let specialSkillSelectionTitle = '';
+let pendingSpecialSkillSelections = 0;
+
+function applySpecialSkill(skillId) {
+  switch (skillId) {
+    case 'dual-shot': specialSkillEffects.dualShot = true; break;
+    case 'speed-up': specialSkillEffects.moveSpeedMultiplier *= 1.5; break;
+    case 'fatigue-save': specialSkillEffects.firingFatigueMultiplier *= 0.65; break;
+    case 'rapid-fire': specialSkillEffects.fireRateMultiplier *= 0.75; break;
+    case 'power-shot': specialSkillEffects.damageMultiplier *= 1.5; break;
+    case 'triple-shot': specialSkillEffects.tripleShot = true; break;
+    case 'chocolate-lover': specialSkillEffects.chocolateRecoveryMultiplier *= 1.5; break;
+    case 'deadline-master':
+      specialDeadlineMultiplier *= 1.5;
+      enemies.forEach(enemy => { enemy.deadlineMs *= 1.5; });
+      break;
+    case 'mental-guard': specialSkillEffects.sanDamageMultiplier *= 0.75; break;
+    case 'high-speed-bullet': specialSkillEffects.bulletSpeedMultiplier *= 1.4; break;
+  }
+}
+
+function openSpecialSkillSelection(title) {
+  const availableSkills = specialSkills.filter(
+    skill => !acquiredSpecialSkillIds.has(skill.id)
+  );
+  if (availableSkills.length === 0) {
+    specialSkillSelectionActive = false;
+    pendingSpecialSkillSelections = 0;
+    return;
+  }
+
+  // Fisher-Yates法で候補をシャッフルし、先頭から3つ選ぶ
+  for (let i = availableSkills.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [availableSkills[i], availableSkills[j]] = [availableSkills[j], availableSkills[i]];
+  }
+  specialSkillChoices = availableSkills.slice(0, 3);
+  specialSkillSelectionTitle = title;
+  specialSkillSelectionActive = true;
+}
+
+function chooseSpecialSkill(choiceIndex) {
+  const skill = specialSkillChoices[choiceIndex];
+  if (!skill) return;
+
+  acquiredSpecialSkillIds.add(skill.id);
+  applySpecialSkill(skill.id);
+  showMessage(`特殊スキル「${skill.name}」を取得！`, 2500, '#e1bee7', '26px sans-serif');
+  specialSkillSelectionActive = false;
+  lastUpdate = Date.now();
+
+  if (pendingSpecialSkillSelections > 0) {
+    pendingSpecialSkillSelections--;
+    openSpecialSkillSelection('レベルアップ：特殊スキルを選択');
+  }
+}
+
+function queueSpecialSkillSelections(count) {
+  if (count <= 0) return;
+  pendingSpecialSkillSelections += count;
+  if (!specialSkillSelectionActive) {
+    pendingSpecialSkillSelections--;
+    openSpecialSkillSelection('レベルアップ：特殊スキルを選択');
+  }
+}
+
 function updateSkillEffects() {
   const newLevel = Math.floor(exp / expPerLevel);
   if (newLevel !== skillLevel) {
     if (newLevel > skillLevel) {
+      const specialSkillCount = Math.floor(newLevel / 5) - Math.floor(skillLevel / 5);
       // レベルが上がった場合はメッセージを表示する
       skillLevel = newLevel;
       showMessage('スキルレベルが上昇しました！', 6000, '#00ffff', '50px sans-serif');
+      queueSpecialSkillSelections(specialSkillCount);
     } else {
       skillLevel = newLevel;
     }
@@ -303,7 +403,8 @@ function explodeEnemy(enemyIndex) {
 
   const skillMitigation = Math.max(0.5, 1 - skillLevel * 0.04);
   const explosionDamage = Math.ceil(
-    (enemy.type || 1) * contactSanMultiplier * skillMitigation * 3
+    (enemy.type || 1) * contactSanMultiplier * skillMitigation * 3 *
+    specialSkillEffects.sanDamageMultiplier
   );
 
   san = Math.max(0, san - explosionDamage);
@@ -324,6 +425,15 @@ function explodeEnemy(enemyIndex) {
 // 押されているキーを true / false で記録する
 const keys = {};
 document.addEventListener("keydown", (event) => {
+  // 特殊スキル選択中は数字キー1～3だけを受け付ける
+  if (specialSkillSelectionActive) {
+    const choiceIndex = Number(event.key) - 1;
+    if (choiceIndex >= 0 && choiceIndex < specialSkillChoices.length) {
+      chooseSpecialSkill(choiceIndex);
+    }
+    return;
+  }
+
   // 昼の選択画面を表示している場合
   if (noonChoice) {
     // Rキーで休憩、Cキーで継続する
@@ -371,6 +481,7 @@ document.addEventListener("keydown", (event) => {
       startScreen = false;
       lastUpdate = Date.now();
       lastHourTime = Date.now();
+      openSpecialSkillSelection('最初の特殊スキルを選択');
     }
     return;
   }
@@ -430,7 +541,7 @@ function update() {
   }
 
   // スタート前とゲーム終了後は、敵や納期の更新を止める
-  if (gameOver || startScreen) return;
+  if (gameOver || startScreen || specialSkillSelectionActive) return;
 
   // 一時メッセージの残り表示時間を減らし、期限切れなら削除する
   for (let mi = messages.length - 1; mi >= 0; mi--) {
@@ -506,7 +617,9 @@ function update() {
     );
 
     if (distanceToChocolate <= player.radius + chocolate.radius) {
-      const recoveryAmount = Math.ceil(maxFatigue * chocolateRecoveryRatio);
+      const recoveryAmount = Math.ceil(
+        maxFatigue * chocolateRecoveryRatio * specialSkillEffects.chocolateRecoveryMultiplier
+      );
       const reducedFatigue = Math.min(fatigue, recoveryAmount);
       fatigue -= reducedFatigue;
       showMessage(`チョコレート取得！ 脳疲労 -${Math.ceil(reducedFatigue)}`, 1500, '#ffcc80');
@@ -533,10 +646,11 @@ function update() {
   } else {
     // WASDキーによるプレイヤー移動
     let moving = false;
-    if (keys["w"]) { player.y -= player.speed; moving = true; }
-    if (keys["s"]) { player.y += player.speed; moving = true; }
-    if (keys["a"]) { player.x -= player.speed; moving = true; }
-    if (keys["d"]) { player.x += player.speed; moving = true; }
+    const currentMoveSpeed = player.speed * specialSkillEffects.moveSpeedMultiplier;
+    if (keys["w"]) { player.y -= currentMoveSpeed; moving = true; }
+    if (keys["s"]) { player.y += currentMoveSpeed; moving = true; }
+    if (keys["a"]) { player.x -= currentMoveSpeed; moving = true; }
+    if (keys["d"]) { player.x += currentMoveSpeed; moving = true; }
     // プレイヤーが画面外へ出ないよう座標を制限する
     player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
     player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
@@ -566,28 +680,44 @@ function update() {
     // 手動時は左クリック中だけ、自動時は常にカーソル方向へ攻撃する
     const fatigueRatio = Math.max(0, Math.min(1, fatigue / maxFatigue));
     const conditionRatio = 1 - fatigueRatio;
-    const currentFireRate = baseFireRate * (1 + fatigueRatio * fireRateMultiplier);
+    const currentFireRate = baseFireRate * (1 + fatigueRatio * fireRateMultiplier) *
+      specialSkillEffects.fireRateMultiplier;
     const wantsToFire = autoFireEnabled || mouseFireHeld;
     if (wantsToFire && !stunned) {
       if (now - lastFire >= currentFireRate) {
         updateSkillEffects();
         const firingDrainMultiplier = Math.max(0.8, 1 - skillLevel * 0.05);
-        const projectedFatigue = firingFatiguePerShot * firingDrainMultiplier;
+        const projectedFatigue = firingFatiguePerShot * firingDrainMultiplier *
+          specialSkillEffects.firingFatigueMultiplier;
         if (fatigue < maxFatigue) {
           lastFire = now;
           const shotAngle = player.angle;
 
-          const speed = 6;
+          const speed = 6 * specialSkillEffects.bulletSpeedMultiplier;
           const damageBonus = 1 + skillLevel * 0.08;
-          const damage = Math.max(1, Math.round(baseBulletDamage * conditionRatio * damageBonus));
-          bullets.push({
-            x: player.x + Math.cos(shotAngle) * player.radius,
-            y: player.y + Math.sin(shotAngle) * player.radius,
-            vx: Math.cos(shotAngle) * speed,
-            vy: Math.sin(shotAngle) * speed,
-            radius: 4,
-            damage
-          });
+          const damage = Math.max(1, Math.round(
+            baseBulletDamage * conditionRatio * damageBonus * specialSkillEffects.damageMultiplier
+          ));
+
+          // 二方向・三方向スキルに応じて、同時発射する角度を決める
+          let shotOffsets = [0];
+          if (specialSkillEffects.tripleShot) {
+            shotOffsets = [-20, 0, 20];
+          } else if (specialSkillEffects.dualShot) {
+            shotOffsets = [-15, 15];
+          }
+
+          for (const offsetDegrees of shotOffsets) {
+            const bulletAngle = shotAngle + offsetDegrees * Math.PI / 180;
+            bullets.push({
+              x: player.x + Math.cos(bulletAngle) * player.radius,
+              y: player.y + Math.sin(bulletAngle) * player.radius,
+              vx: Math.cos(bulletAngle) * speed,
+              vy: Math.sin(bulletAngle) * speed,
+              radius: 4,
+              damage
+            });
+          }
           // 発射時に疲労を増やす。スキルレベルが高いほど消耗を軽減する
           fatigue += projectedFatigue;
           if (fatigue >= maxFatigue) {
@@ -596,7 +726,9 @@ function update() {
             stunTimer = stunDuration;
             // 疲労が限界に達したら行動不能にし、SANも減らす
             const sanMultiplier = Math.max(0.5, 1 - skillLevel * 0.04);
-            san -= Math.ceil(stunSanPenalty * sanMultiplier);
+            san -= Math.ceil(
+              stunSanPenalty * sanMultiplier * specialSkillEffects.sanDamageMultiplier
+            );
             if (san <= 0) {
               san = 0;
               gameOver = true;
@@ -672,7 +804,10 @@ function update() {
         const sanMultiplier = Math.max(0.5, 1 - skillLevel * 0.04);
         if (!en.touching) {
           // 接触した瞬間：SANダメージを与え、無敵時間を開始する
-          const sdamage = Math.ceil((en.type || 1) * contactSanMultiplier * sanMultiplier);
+          const sdamage = Math.ceil(
+            (en.type || 1) * contactSanMultiplier * sanMultiplier *
+            specialSkillEffects.sanDamageMultiplier
+          );
           san -= sdamage;
           en.touching = true;
           invincible = true;
@@ -692,7 +827,11 @@ function update() {
           }
         } else {
           // 接触し続けている間は、少しずつSANを減らす
-          const sustainedDrain = Math.max(1, (en.type || 1) * contactSanMultiplier * sanMultiplier * 0.18 * dt);
+          const sustainedDrain = Math.max(
+            1,
+            (en.type || 1) * contactSanMultiplier * sanMultiplier * 0.18 * dt *
+            specialSkillEffects.sanDamageMultiplier
+          );
           san -= sustainedDrain;
         }
         // 敵との接触によるスコア減点
@@ -940,6 +1079,43 @@ function draw() {
     ctx.fillText('一日が終了しました', canvas.width / 2, canvas.height / 2 - 40);
     ctx.font = '20px sans-serif';
     ctx.fillText('続けますか？ Y = 続ける / N = 終了', canvas.width / 2, canvas.height / 2 + 8);
+    ctx.textAlign = 'left';
+  }
+
+  // 特殊スキルの3択画面。数字キー1～3で取得する
+  if (specialSkillSelectionActive) {
+    ctx.fillStyle = 'rgba(8, 10, 24, 0.9)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#e1bee7';
+    ctx.font = 'bold 30px sans-serif';
+    ctx.fillText(specialSkillSelectionTitle, canvas.width / 2, 70);
+
+    specialSkillChoices.forEach((skill, index) => {
+      const cardX = 90;
+      const cardY = 115 + index * 125;
+      const cardWidth = canvas.width - 180;
+      const cardHeight = 95;
+
+      ctx.fillStyle = 'rgba(103, 58, 183, 0.45)';
+      ctx.fillRect(cardX, cardY, cardWidth, cardHeight);
+      ctx.strokeStyle = '#ce93d8';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(cardX, cardY, cardWidth, cardHeight);
+
+      ctx.textAlign = 'left';
+      ctx.fillStyle = 'white';
+      ctx.font = 'bold 22px sans-serif';
+      ctx.fillText(`${index + 1}. ${skill.name}`, cardX + 22, cardY + 34);
+      ctx.fillStyle = '#e0e0e0';
+      ctx.font = '16px sans-serif';
+      ctx.fillText(skill.description, cardX + 22, cardY + 68);
+    });
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#fff59d';
+    ctx.font = '18px sans-serif';
+    ctx.fillText('数字キー 1～3 で選択', canvas.width / 2, 530);
     ctx.textAlign = 'left';
   }
 
