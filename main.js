@@ -170,12 +170,15 @@ const iconGreetingFadeMs = 500; // フェードアウトにかける時間
 let iconGreetingPhase = null; // null / 'hold' / 'fadeout'
 let iconGreetingTimer = 0;
 let iconGreetingIcon = '';
+let iconGreetingImage = null; // 画像（同僚アイコンなど）を表示する場合はImage要素を入れる
 let iconGreetingText = '';
 let iconGreetingOnComplete = null;
 
 // アイコンの下にひとことを表示し、少し経ったらフェードアウトしてonCompleteへ進む
-function startIconGreeting(icon, text, onComplete) {
+// iconImageを渡した場合は絵文字の代わりに画像を表示する
+function startIconGreeting(icon, text, onComplete, iconImage = null) {
   iconGreetingIcon = icon;
+  iconGreetingImage = iconImage;
   iconGreetingText = text;
   iconGreetingPhase = 'hold';
   iconGreetingTimer = iconGreetingHoldMs;
@@ -619,11 +622,22 @@ genderChoices.forEach(choice => {
 });
 let selectedGender = null;
 
-// ===== 自分・同僚のアイコン選択 =====
+// ===== 自分のアイコン選択 =====
 // 絵・画像は仮のプレースホルダー（著作権フリーの絵文字）として扱う
 const playerIconChoices = ['🧑‍💻', '🧑‍💼', '🥷', '🤖', '🦸', '🧙'];
-const partnerIconChoices = ['🐱', '🐶', '🐧', '🦉', '👾', '🧚'];
 let selectedPlayerIcon = playerIconChoices[0];
+
+// ===== 同僚のアイコン選択（imagesフォルダの画像を使用） =====
+const partnerIconChoices = [
+  'char_01', 'char_02', 'char_03', 'char_04', 'char_05', 'char_06',
+  'char_07', 'char_08', 'char_09', 'char_10', 'char_11', 'char_12'
+];
+const partnerIconImageElements = {};
+partnerIconChoices.forEach(id => {
+  const img = new Image();
+  img.src = `images/partner/${id}.png`;
+  partnerIconImageElements[id] = img;
+});
 let selectedPartnerIcon = partnerIconChoices[0]; // nullの場合は「同僚なし」
 
 // ===== 同僚 =====
@@ -1588,7 +1602,7 @@ function selectPartnerIcon(icon) {
     return;
   }
   const line = partnerIconGreetingLines[Math.floor(Math.random() * partnerIconGreetingLines.length)];
-  startIconGreeting(icon, line, () => { setupStep = null; startScreen = true; });
+  startIconGreeting(icon, line, () => { setupStep = null; startScreen = true; }, partnerIconImageElements[icon]);
 }
 
 // スタート画面：通常速度(1)か3倍速(2)でゲームを開始する
@@ -2645,11 +2659,12 @@ function mixHexColors(fromColor, toColor, ratio) {
 }
 
 // HUD用プロフィール区画。選択した絵文字を仮の顔イラストとして使う。
-function drawHudProfilePanel(x, y, width, height, title, icon, accentColor, statLines, inactive = false, dangerLevel = 0) {
+function drawHudProfilePanel(x, y, width, height, title, icon, accentColor, statLines, inactive = false, dangerLevel = 0, iconImage = null) {
   ctx.save();
   ctx.fillStyle = 'rgba(7, 12, 22, 0.34)';
   ctx.fillRect(x, y, width, height);
 
+  const portraitRadius = 23;
   const portraitCenterX = x + width / 2;
   const portraitCenterY = y + 30;
   const clampedDangerLevel = Math.max(0, Math.min(1, dangerLevel));
@@ -2657,20 +2672,34 @@ function drawHudProfilePanel(x, y, width, height, title, icon, accentColor, stat
     ? '#757575'
     : mixHexColors(accentColor, '#ff2338', clampedDangerLevel);
   ctx.beginPath();
-  ctx.arc(portraitCenterX, portraitCenterY, 23, 0, Math.PI * 2);
+  ctx.arc(portraitCenterX, portraitCenterY, portraitRadius, 0, Math.PI * 2);
   ctx.fillStyle = inactive ? 'rgba(90, 90, 90, 0.4)' : 'rgba(255, 255, 255, 0.07)';
   ctx.fill();
+
+  ctx.globalAlpha = inactive ? 0.45 : 1;
+  if (iconImage && iconImage.complete && iconImage.naturalWidth > 0) {
+    // 画像アイコンは円形にクリップして中央に収める
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(portraitCenterX, portraitCenterY, portraitRadius, 0, Math.PI * 2);
+    ctx.clip();
+    const imgSize = portraitRadius * 2;
+    ctx.drawImage(iconImage, portraitCenterX - imgSize / 2, portraitCenterY - imgSize / 2, imgSize, imgSize);
+    ctx.restore();
+  } else {
+    ctx.font = '32px "Segoe UI Emoji", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'white';
+    ctx.fillText(icon || '—', portraitCenterX, portraitCenterY + 1);
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.beginPath();
+  ctx.arc(portraitCenterX, portraitCenterY, portraitRadius, 0, Math.PI * 2);
   ctx.strokeStyle = portraitFrameColor;
   ctx.lineWidth = 2;
   ctx.stroke();
-
-  ctx.globalAlpha = inactive ? 0.45 : 1;
-  ctx.font = '32px "Segoe UI Emoji", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = 'white';
-  ctx.fillText(icon || '—', portraitCenterX, portraitCenterY + 1);
-  ctx.globalAlpha = 1;
 
 
   ctx.font = 'bold 14px sans-serif';
@@ -2704,9 +2733,14 @@ function draw() {
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.textAlign = 'center';
-    ctx.font = '96px "Segoe UI Emoji", sans-serif';
-    ctx.fillStyle = 'white';
-    ctx.fillText(iconGreetingIcon, canvas.width / 2, canvas.height / 2 - 20);
+    if (iconGreetingImage && iconGreetingImage.complete && iconGreetingImage.naturalWidth > 0) {
+      const imgSize = 160;
+      ctx.drawImage(iconGreetingImage, canvas.width / 2 - imgSize / 2, canvas.height / 2 - 20 - imgSize / 2, imgSize, imgSize);
+    } else {
+      ctx.font = '96px "Segoe UI Emoji", sans-serif';
+      ctx.fillStyle = 'white';
+      ctx.fillText(iconGreetingIcon, canvas.width / 2, canvas.height / 2 - 20);
+    }
     ctx.font = 'bold 26px sans-serif';
     ctx.fillStyle = '#ffe082';
     ctx.fillText(iconGreetingText, canvas.width / 2, canvas.height / 2 + 60);
@@ -2758,42 +2792,78 @@ function draw() {
     return;
   }
 
-  if (setupStep === 'player-icon' || setupStep === 'partner-icon') {
+  if (setupStep === 'player-icon') {
     ctx.fillStyle = 'black';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = 'white';
     ctx.font = 'bold 32px sans-serif';
     ctx.textAlign = 'center';
-    const iconChoices = setupStep === 'player-icon' ? playerIconChoices : partnerIconChoices;
-    ctx.fillText(
-      setupStep === 'player-icon' ? '自分のアイコンを選んでください' : '同僚のアイコンを選んでください',
-      canvas.width / 2, 110
-    );
+    ctx.fillText('自分のアイコンを選んでください', canvas.width / 2, 110);
     ctx.textAlign = 'left';
 
     const btnSize = 100, gap = 16;
-    const totalWidth = iconChoices.length * btnSize + (iconChoices.length - 1) * gap;
+    const totalWidth = playerIconChoices.length * btnSize + (playerIconChoices.length - 1) * gap;
     const startX = canvas.width / 2 - totalWidth / 2;
     const btnY = 210;
-    iconChoices.forEach((icon, i) => {
+    playerIconChoices.forEach((icon, i) => {
       drawUiButton(startX + i * (btnSize + gap), btnY, btnSize, btnSize, icon,
-        () => (setupStep === 'player-icon' ? selectPlayerIcon(icon) : selectPartnerIcon(icon)),
+        () => selectPlayerIcon(icon),
         { font: '48px "Segoe UI Emoji", sans-serif' });
     });
 
     ctx.fillStyle = '#cfd8dc';
     ctx.font = '16px sans-serif';
     ctx.textAlign = 'center';
+    ctx.fillText('数字キー 1〜6 / タップで選択', canvas.width / 2, btnY + btnSize + 50);
+    ctx.textAlign = 'left';
+    return;
+  }
 
-    if (setupStep === 'partner-icon') {
-      const noneBtnW = 260, noneBtnH = 50;
-      drawUiButton(canvas.width / 2 - noneBtnW / 2, btnY + btnSize + 40, noneBtnW, noneBtnH,
-        '同僚なし (0)', () => selectPartnerIcon(null),
-        { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
-      ctx.fillText('数字キー 1〜6 / タップで選択　0キーで同僚なし', canvas.width / 2, btnY + btnSize + 122);
-    } else {
-      ctx.fillText('数字キー 1〜6 / タップで選択', canvas.width / 2, btnY + btnSize + 50);
-    }
+  if (setupStep === 'partner-icon') {
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 32px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('同僚のアイコンを選んでください', canvas.width / 2, 90);
+    ctx.textAlign = 'left';
+
+    const cols = 6;
+    const cellSize = 88, gap = 14;
+    const rows = Math.ceil(partnerIconChoices.length / cols);
+    const totalWidth = cols * cellSize + (cols - 1) * gap;
+    const startX = canvas.width / 2 - totalWidth / 2;
+    const startY = 140;
+    partnerIconChoices.forEach((id, i) => {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const cellX = startX + col * (cellSize + gap);
+      const cellY = startY + row * (cellSize + gap);
+      ctx.save();
+      ctx.fillStyle = 'rgba(103, 58, 183, 0.35)';
+      ctx.fillRect(cellX, cellY, cellSize, cellSize);
+      ctx.strokeStyle = '#ce93d8';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(cellX, cellY, cellSize, cellSize);
+      const img = partnerIconImageElements[id];
+      if (img && img.complete && img.naturalWidth > 0) {
+        ctx.drawImage(img, cellX + 4, cellY + 4, cellSize - 8, cellSize - 8);
+      }
+      ctx.restore();
+      uiButtons.push({ x: cellX, y: cellY, w: cellSize, h: cellSize, action: () => selectPartnerIcon(id) });
+    });
+
+    const gridBottom = startY + rows * (cellSize + gap) - gap;
+    const noneBtnW = 260, noneBtnH = 50;
+    drawUiButton(canvas.width / 2 - noneBtnW / 2, gridBottom + 30, noneBtnW, noneBtnH,
+      '同僚なし (0)', () => selectPartnerIcon(null),
+      { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
+
+    ctx.fillStyle = '#cfd8dc';
+    ctx.font = '16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('タップで選択（キー1〜9でも一部選択可）　0キーで同僚なし',
+      canvas.width / 2, gridBottom + 30 + noneBtnH + 30);
     ctx.textAlign = 'left';
     return;
   }
@@ -2865,16 +2935,22 @@ function draw() {
     ctx.restore();
   }
 
-  // 同僚の描画（存在するときのみ。仮のプレースホルダー：選択した絵文字）
+  // 同僚の描画（存在するときのみ。imagesフォルダの選択した画像を使用）
   if (partner.active) {
     ctx.save();
     if (partner.invincible) {
       ctx.globalAlpha = Math.floor(gameClockMs / 100) % 2 === 0 ? 0.4 : 0.8;
     }
-    ctx.font = '26px "Segoe UI Emoji", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(partner.icon, partner.x, partner.y);
+    const partnerImg = partnerIconImageElements[partner.icon];
+    if (partnerImg && partnerImg.complete && partnerImg.naturalWidth > 0) {
+      const imgSize = partner.radius * 2.4;
+      ctx.drawImage(partnerImg, partner.x - imgSize / 2, partner.y - imgSize / 2, imgSize, imgSize);
+    } else {
+      ctx.font = '26px "Segoe UI Emoji", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('🧑', partner.x, partner.y);
+    }
     ctx.restore();
   }
 
@@ -3068,7 +3144,8 @@ function draw() {
       { text: '脳疲労: —' },
       { text: `状態: ${selectedPartnerIcon === null ? '不在' : '離脱'}` }
     ], partnerUnavailable,
-    (partnerRelationshipMax - partner.relationship) / partnerRelationshipMax);
+    (partnerRelationshipMax - partner.relationship) / partnerRelationshipMax,
+    selectedPartnerIcon !== null ? partnerIconImageElements[selectedPartnerIcon] : null);
 
   // 共通の進行情報は、2つのプロフィール区画の下へまとめる。
   ctx.font = '13px sans-serif';
