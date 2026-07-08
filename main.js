@@ -101,8 +101,8 @@ function chooseEnemyTypeIndex() {
 }
 
 // 日数が経つごとに敵がどんどん強くなるようにする倍率（残り工数＝HPと、SAN攻撃力の両方に掛ける）
-const enemyDifficultyGrowthPerDay = 0.06;
-const enemyHpMultiplier = 3; // 敵の基本HPを従来の約3倍にする
+const enemyDifficultyGrowthPerDay = 0.045;
+const enemyHpMultiplier = 2.2; // 敵の基本HPの倍率（全体的に弱めに調整）
 function getEnemyDifficultyMultiplier() {
   return 1 + (dayNumber - 1) * enemyDifficultyGrowthPerDay;
 }
@@ -230,6 +230,22 @@ let friendlyFireHitFlashTimer = 0;
 // ===== 脳疲労システム =====
 const maxFatigue = 100;
 let fatigue = 0; // 0が元気な状態、100が疲労の限界
+
+// 時間帯が進むほど、回復してもここより下がらなくなる「脳疲労の下限」。
+// 通常プレイなら夕方(終業時刻)には脳疲労が70～100前後を保つよう、この下限を利用してなかなか回復しきらないようにする。
+const fatigueFloorAtDayEnd = 50; // 終業時刻(夕方)には、回復してもここより下がらない
+const fatigueFloorAtOvertimeEnd = 70; // 残業の限界時刻まで残業した場合の下限
+function getFatigueRecoveryFloor() {
+  const visualHour = getVisualGameHour();
+  if (visualHour > dayEndHour) {
+    const overtimeProgress = Math.max(0, Math.min(1,
+      (visualHour - dayEndHour) / (maxOvertimeHour - dayEndHour)));
+    return fatigueFloorAtDayEnd + overtimeProgress * (fatigueFloorAtOvertimeEnd - fatigueFloorAtDayEnd);
+  }
+  const dayProgress = Math.max(0, Math.min(1, (visualHour - dayStartHour) / (dayEndHour - dayStartHour)));
+  return dayProgress * fatigueFloorAtDayEnd;
+}
+
 let stunned = false;
 const stunDuration = 2200; // 疲労が100になったときの行動不能時間（ミリ秒）
 let stunTimer = 0;
@@ -603,7 +619,7 @@ let san = maxSan;
 const stunSanPenalty = 8;
 const stunLifespanPenaltyMin = 2;
 const stunLifespanPenaltyMax = 3;
-const contactSanMultiplier = 4; // 接触時のSAN減少量 = 敵の種類 × この倍率
+const contactSanMultiplier = 3; // 接触時のSAN減少量 = 敵の種類 × この倍率
 const playerFriendlyFireSanDamage = 2; // 同僚弾を自分が受けた際のダメージ
 const playerFriendlyFireLifespanDamage = 2;
 const partnerFriendlyFireSanDamage = 5; // 自分の弾を同僚が受けた際のダメージ
@@ -919,6 +935,7 @@ const partner = {
   fireTimer: 0,
   highFatigueTimerMs: 0,
   lowSanTimerMs: 0,
+  fatigueResting: false, // 脳疲労が100に達し、50まで下がるまで攻撃を控えている状態
   friendlyFireInvincibleTimer: 0,
   relationship: partnerRelationshipInitial, // 非表示。0～100で、低いほど自分へ反撃しやすい
   // 賢さ（0〜1、初期はランダム）：高いほど的が正確で、疲労時に無駄撃ちを避けやすい
@@ -952,6 +969,7 @@ function initPartner() {
   partner.fireTimer = partnerBaseFireRate;
   partner.highFatigueTimerMs = 0;
   partner.lowSanTimerMs = 0;
+  partner.fatigueResting = false;
   partner.friendlyFireInvincibleTimer = 0;
   partner.relationship = partnerRelationshipInitial;
   partner.intelligence = Math.random();
@@ -1036,8 +1054,8 @@ function updatePartner(dt) {
   partner.friendlyFireInvincibleTimer = Math.max(0,
     partner.friendlyFireInvincibleTimer - dt * 1000);
 
-  // 疲労回復（プレイヤーの待機時回復と同じ割合を流用）
-  partner.fatigue = Math.max(0, partner.fatigue - idleRecoveryPerSec * dt);
+  // 疲労回復（プレイヤーの待機時回復と同じ割合を流用。時間帯の下限より下へは回復しない）
+  partner.fatigue = Math.max(getFatigueRecoveryFloor(), partner.fatigue - idleRecoveryPerSec * dt);
 
   // 追従する時間を減らし、画面内を広く自発的に徘徊する。
   partner.wanderTimer -= dt * 1000;
@@ -1064,10 +1082,22 @@ function updatePartner(dt) {
   clampToPlayableFloor(partner);
   pushEntityOutsideScheduledReport(partner);
 
+  // 脳疲労が100に達したら、50（または時間帯の下限、どちらか高い方）まで下がるまで攻撃を控えて休ませる。
+  // 下限が50を超える時間帯でも、必ずいつかは休息を終えられるようにする
+  if (partner.fatigue >= maxFatigue) {
+    partner.fatigueResting = true;
+  } else if (partner.fatigueResting &&
+      partner.fatigue <= Math.max(maxFatigue * 0.5, getFatigueRecoveryFloor())) {
+    partner.fatigueResting = false;
+  }
+
   // 自律攻撃：最も近い敵へ向けて、既存の弾配列にそのまま追加する
   // 賢さ・性格・脳疲労に応じて、無駄撃ちを避けたり、狙いが不正確になったりする
   partner.fireTimer -= dt * 1000;
-  if (partner.fireTimer <= 0 && (enemies.length > 0 || scheduledReport) && partner.fatigue < maxFatigue) {
+  // 自分の脳疲労が100に達してしまうような攻撃はしない（休息中も同様に攻撃しない）
+  const wouldMaxOutPartnerFatigue = partner.fatigue + partnerFiringFatiguePerShot >= maxFatigue;
+  if (partner.fireTimer <= 0 && (enemies.length > 0 || scheduledReport) &&
+      !partner.fatigueResting && !wouldMaxOutPartnerFatigue) {
     const intelligence = getPartnerEffectiveIntelligence();
     const recklessness = getPartnerEffectiveRecklessness();
     const fatigueRatio = partner.fatigue / maxFatigue;
@@ -1301,7 +1331,7 @@ const rankThresholds = [0, 40, 120, 280, 550, 950, 1500, 2300, 3500, 6000]; // �
 // スキルレベルと経験値
 // レベルが上がるほど必要経験値が増えていく（後半ほどレベルが上がりにくくなるようにするため）
 let exp = 0;
-const baseExpPerLevel = 30; // 最初のレベルアップに必要な経験値
+const baseExpPerLevel = 20; // 最初のレベルアップに必要な経験値（序盤が上がりやすいよう引き下げ）
 const expPerLevelGrowth = 6; // レベルが1上がるごとに、次のレベルアップに必要な経験値が増える量
 let skillLevel = 0;
 
@@ -1312,7 +1342,7 @@ function expThresholdForLevel(level) {
 }
 
 // 時刻によって敵を加速させる倍率
-const speedDayIncreaseFactor = 0.6; // 終業時には最大60%速くなる
+const speedDayIncreaseFactor = 0.45; // 終業時には最大45%速くなる
 
 // ===== 特殊スキルシステム =====
 // スキル効果は「レベルマップから毎回再計算」できるよう、初期値を関数で持つ
@@ -1795,6 +1825,7 @@ function applyRestActivity(choiceIndex) {
         partner.fatigue = 0;
         partner.highFatigueTimerMs = 0;
         partner.lowSanTimerMs = 0;
+        partner.fatigueResting = false;
         partner.friendlyFireInvincibleTimer = 0;
         partner.invincible = false;
         partner.invincibleTimer = 0;
@@ -2516,12 +2547,14 @@ function update() {
       }
     }
 
-    // 疲労を回復する。移動中は待機中より回復量が少ない
+    // 疲労を回復する。移動中は待機中より回復量が少ない。
+    // ただし時間帯に応じた下限（getFatigueRecoveryFloor）より下へは回復しない
     updateSkillEffects();
+    const fatigueFloor = getFatigueRecoveryFloor();
     if (moving) {
-      fatigue = Math.max(0, fatigue - (idleRecoveryPerSec * 0.35) * dt);
+      fatigue = Math.max(fatigueFloor, fatigue - (idleRecoveryPerSec * 0.35) * dt);
     } else {
-      fatigue = Math.max(0, fatigue - idleRecoveryPerSec * specialSkillEffects.idleRecoveryMultiplier * dt);
+      fatigue = Math.max(fatigueFloor, fatigue - idleRecoveryPerSec * specialSkillEffects.idleRecoveryMultiplier * dt);
     }
 
     // 攻撃モードに関係なく、自分は常にマウスカーソルの方向を向く
