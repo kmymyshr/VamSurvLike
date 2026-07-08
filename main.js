@@ -2622,7 +2622,8 @@ function draw() {
     ctx.restore();
   }
 
-  // 左上に自分と同僚のプロフィールを同じ高さで並べる。  drawHudProfilePanel(12, 12, 180, 196, '自分', selectedPlayerIcon, '#4dd0e1', [
+  // 左上に自分と同僚のプロフィールを同じ高さで並べる。
+  drawHudProfilePanel(12, 12, 180, 196, '自分', selectedPlayerIcon, '#4dd0e1', [
     { text: `SAN: ${Math.floor(san)} / ${maxSan}` },
     { text: `寿命: ${Math.ceil(lifespan)} / ${maxLifespan}` },
     { text: `脳疲労: ${Math.floor(fatigue)} / ${maxFatigue}` },
