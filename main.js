@@ -276,6 +276,8 @@ const baseBulletDamage = 2; // 疲労がないときの基本攻撃力
 const chocolateLifetimeMs = 10000; // 出現してから消えるまでの時間（10秒）
 const chocolateBlinkMs = 3000; // 消える3秒前から点滅する
 const chocolateRecoveryRatio = 0.3; // 最大値の30%ぶん脳疲労を減らす
+const chocolateSanRecovery = 8; // 少しSANも回復する（その代わり寿命を消費する）
+const chocolateLifespanCost = 3;
 const chocolateRadius = 22;
 let chocolate = null;
 let chocolateSpawnTimerMs = getRandomChocolateSpawnDelay();
@@ -619,6 +621,8 @@ let san = maxSan;
 const stunSanPenalty = 8;
 const stunLifespanPenaltyMin = 2;
 const stunLifespanPenaltyMax = 3;
+const stunReleaseSanRecovery = 6; // stunが解けた瞬間に少し回復するSAN（その代わり寿命を消費する）
+const stunReleaseLifespanCost = 2;
 const contactSanMultiplier = 3; // 接触時のSAN減少量 = 敵の種類 × この倍率
 const playerFriendlyFireSanDamage = 2; // 同僚弾を自分が受けた際のダメージ
 const playerFriendlyFireLifespanDamage = 2;
@@ -2454,9 +2458,16 @@ function update() {
       );
       const reducedFatigue = Math.min(fatigue, recoveryAmount);
       fatigue -= reducedFatigue;
-      showMessage(`チョコレート取得！ 脳疲労 -${Math.ceil(reducedFatigue)}`, 1500, '#ffcc80');
+      san = Math.min(maxSan, san + chocolateSanRecovery);
+      lifespan = Math.max(0, lifespan - chocolateLifespanCost);
+      showMessage(
+        `チョコレート取得！ 脳疲労 -${Math.ceil(reducedFatigue)} / SAN +${chocolateSanRecovery} / 寿命 -${chocolateLifespanCost}`,
+        1800, '#ffcc80'
+      );
+      checkVitalsGameOver();
       chocolate = null;
       chocolateSpawnTimerMs = getRandomChocolateSpawnDelay();
+      if (gameOver || deathSequence) return;
     } else if (chocolate.remainingMs <= 0) {
       chocolate = null;
       chocolateSpawnTimerMs = getRandomChocolateSpawnDelay();
@@ -2520,6 +2531,12 @@ function update() {
     fatigue = Math.max(0, fatigue - stunRecoveryPerSec * dt);
     if (stunTimer <= 0) {
       stunned = false;
+      // stunが解けた瞬間、少しSANが回復する代わりに寿命を消費する
+      san = Math.min(maxSan, san + stunReleaseSanRecovery);
+      lifespan = Math.max(0, lifespan - stunReleaseLifespanCost);
+      showMessage(`SAN +${stunReleaseSanRecovery} / 寿命 -${stunReleaseLifespanCost}`, 1800, '#b3e5fc');
+      checkVitalsGameOver();
+      if (gameOver || deathSequence) return;
     }
   } else {
     // WASDキーによるプレイヤー移動
