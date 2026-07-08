@@ -3657,10 +3657,17 @@ const bossTrueEndLines = [
   '「なんだか長い夢を見ていた気がする。」',
   '職業訓練期間がもうすぐ終わる前に、早く就職活動を始めないと。'
 ];
-let bossFinalSequence = null; // null、または { phase, phaseTimerMs }
+// 同僚が生存していない場合の代替エンド（画面は黒くなり、1行だけ表示してENDへ）
+const bossAltEndCues = [
+  { start: 0, fadeMs: 1500 }, // 1行目
+  { start: 2200, fadeMs: 800 } // END
+];
+const bossAltEndReturnAtMs = 5800; // このタイミングでタイトルへ戻る
+let bossFinalSequence = null; // null、または { phase, phaseTimerMs, partnerAlive }
 
 function startBossFinalSequence() {
-  bossFinalSequence = { phase: 'retreat', phaseTimerMs: 0 };
+  // ラスボスを退けた瞬間の同僚の生死で、この先のエンディングの分岐を決めておく
+  bossFinalSequence = { phase: 'retreat', phaseTimerMs: 0, partnerAlive: partner.active };
 }
 
 function updateBossFinalSequence(dt) {
@@ -3678,8 +3685,9 @@ function updateBossFinalSequence(dt) {
   } else if (seq.phase === 'whiteWait' && seq.phaseTimerMs >= bossFinalWhiteWaitDurationMs) {
     seq.phase = 'trueEnd';
     seq.phaseTimerMs = 0;
-  } else if (seq.phase === 'trueEnd' && seq.phaseTimerMs >= bossTrueEndReturnAtMs) {
-    finishBossTrueEnd();
+  } else if (seq.phase === 'trueEnd') {
+    const returnAtMs = seq.partnerAlive ? bossTrueEndReturnAtMs : bossAltEndReturnAtMs;
+    if (seq.phaseTimerMs >= returnAtMs) finishBossTrueEnd();
   }
 }
 
@@ -5395,9 +5403,11 @@ function drawBossEvent() {
   const retreatProgress = retreating
     ? Math.min(1, bossFinalSequence.phaseTimerMs / bossFinalRetreatDurationMs)
     : 0;
-  const retreatAlpha = 1 - retreatProgress;
+  // 透明化は退場の進み具合の150%の速さで進める（振動の幅は半分、頻度は倍にする）
+  const retreatFadeProgress = Math.min(1, retreatProgress * 1.5);
+  const retreatAlpha = 1 - retreatFadeProgress;
   const retreatOffsetY = -retreatProgress * (bossHeight + 400);
-  const retreatShakeX = retreating ? Math.sin(gameClockMs / 35) * 10 * (1 - retreatProgress * 0.3) : 0;
+  const retreatShakeX = retreating ? Math.sin(gameClockMs / 17.5) * 5 * (1 - retreatProgress * 0.3) : 0;
 
   // 画面全体を、赤黒く沈んだ夜のような色合いに染める
   ctx.save();
@@ -5508,33 +5518,56 @@ function drawBossFinalTransition() {
     return;
   }
 
-  // whiteFade以降は、画面が白くなり、真エンドの文章を表示する
-  const whiteAlpha = seq.phase === 'whiteFade'
+  // whiteFade以降は、同僚が生存していれば画面が白く、生存していなければ画面が黒くなっていく
+  const fadeAlpha = seq.phase === 'whiteFade'
     ? Math.min(1, seq.phaseTimerMs / bossFinalWhiteFadeDurationMs)
     : 1;
-  ctx.fillStyle = `rgba(255, 255, 255, ${whiteAlpha})`;
+  ctx.fillStyle = seq.partnerAlive
+    ? `rgba(255, 255, 255, ${fadeAlpha})`
+    : `rgba(0, 0, 0, ${fadeAlpha})`;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   if (seq.phase !== 'trueEnd') return;
 
   ctx.save();
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#333333';
-  ctx.font = '22px sans-serif';
-  bossTrueEndLines.forEach((line, i) => {
-    const cue = bossTrueEndCues[i];
-    const alpha = Math.max(0, Math.min(1, (seq.phaseTimerMs - cue.start) / cue.fadeMs));
-    if (alpha <= 0) return;
-    ctx.globalAlpha = alpha;
-    ctx.fillText(line, canvas.width / 2, canvas.height / 2 - 30 + i * 70);
-  });
-  const endCue = bossTrueEndCues[2];
-  const endAlpha = Math.max(0, Math.min(1, (seq.phaseTimerMs - endCue.start) / endCue.fadeMs));
-  if (endAlpha > 0) {
-    ctx.globalAlpha = endAlpha;
-    ctx.font = 'bold 42px sans-serif';
-    ctx.fillStyle = '#222222';
-    ctx.fillText('END', canvas.width / 2, canvas.height / 2 + 140);
+  if (seq.partnerAlive) {
+    ctx.fillStyle = '#333333';
+    ctx.font = '22px sans-serif';
+    bossTrueEndLines.forEach((line, i) => {
+      const cue = bossTrueEndCues[i];
+      const alpha = Math.max(0, Math.min(1, (seq.phaseTimerMs - cue.start) / cue.fadeMs));
+      if (alpha <= 0) return;
+      ctx.globalAlpha = alpha;
+      ctx.fillText(line, canvas.width / 2, canvas.height / 2 - 30 + i * 70);
+    });
+    const endCue = bossTrueEndCues[2];
+    const endAlpha = Math.max(0, Math.min(1, (seq.phaseTimerMs - endCue.start) / endCue.fadeMs));
+    if (endAlpha > 0) {
+      ctx.globalAlpha = endAlpha;
+      ctx.font = 'bold 42px sans-serif';
+      ctx.fillStyle = '#222222';
+      ctx.fillText('END', canvas.width / 2, canvas.height / 2 + 140);
+    }
+  } else {
+    // 同僚が生存していない場合の代替エンド：黒い画面に、同僚を案じる一言だけを表示する
+    const pronoun = getPartnerPronoun(selectedPartnerIcon);
+    const lineCue = bossAltEndCues[0];
+    const lineAlpha = Math.max(0, Math.min(1, (seq.phaseTimerMs - lineCue.start) / lineCue.fadeMs));
+    if (lineAlpha > 0) {
+      ctx.globalAlpha = lineAlpha;
+      ctx.fillStyle = '#eeeeee';
+      ctx.font = '22px sans-serif';
+      ctx.fillText(`・・・${pronoun}を助けないと。`, canvas.width / 2, canvas.height / 2);
+    }
+    const endCue = bossAltEndCues[1];
+    const endAlpha = Math.max(0, Math.min(1, (seq.phaseTimerMs - endCue.start) / endCue.fadeMs));
+    if (endAlpha > 0) {
+      ctx.globalAlpha = endAlpha;
+      ctx.font = 'bold 42px sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText('END', canvas.width / 2, canvas.height / 2 + 100);
+    }
   }
   ctx.restore();
 }
