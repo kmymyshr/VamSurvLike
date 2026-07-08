@@ -410,6 +410,31 @@ function spawnChocolate() {
   };
 }
 
+// ===== 固定設備（コーヒーメーカー・冷蔵庫） =====
+// 画面端に固定で置かれ、それぞれコーヒー・栄養ドリンクをすぐ隣に生成し続ける
+const coffeeMakerPosition = { x: 50, y: 340 };
+const fridgePosition = { x: 750, y: 340 };
+const coffeeItemSpawnPosition = { x: coffeeMakerPosition.x + 60, y: coffeeMakerPosition.y };
+const energyDrinkItemSpawnPosition = { x: fridgePosition.x - 60, y: fridgePosition.y };
+const stationRespawnDelayMs = 3000; // 取得後、この設備の隣にまた出現するまでの時間
+
+function drawStation(x, y, icon, label, color) {
+  ctx.save();
+  ctx.fillStyle = 'rgba(40, 40, 48, 0.85)';
+  ctx.fillRect(x - 26, y - 32, 52, 64);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x - 26, y - 32, 52, 64);
+  ctx.font = '28px "Segoe UI Emoji", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(icon, x, y - 6);
+  ctx.font = 'bold 11px sans-serif';
+  ctx.fillStyle = color;
+  ctx.fillText(label, x, y + 22);
+  ctx.restore();
+}
+
 // ===== 回復アイテム（栄養ドリンク） =====
 // チョコレートより効果は強いが出現頻度は低い上位互換の回復アイテム
 const energyDrinkLifetimeMs = 10000; // 出現してから消えるまでの時間（10秒）
@@ -446,21 +471,20 @@ function getEnergyDrinkFireRateMultiplier() {
   return 1;
 }
 
-// 次の栄養ドリンクは15～25秒後に出現する（チョコレートより希少）
+// 冷蔵庫から取られたら、この時間だけ経つとまた隣に補充される
 function getRandomEnergyDrinkSpawnDelay() {
-  return 15000 + Math.random() * 10000;
+  return stationRespawnDelayMs;
 }
 
-// マップ上部から落ちてきて、窓の範囲を避けた床の上に着地する
+// 冷蔵庫のすぐ隣に生成する（固定位置。落下演出はなく、最初から取得可能）
 function spawnEnergyDrink() {
-  const target = getRandomEventPosition(energyDrinkRadius);
   energyDrink = {
-    x: target.x,
-    y: -energyDrinkRadius - 20,
-    targetY: target.y,
+    x: energyDrinkItemSpawnPosition.x,
+    y: energyDrinkItemSpawnPosition.y,
+    targetY: energyDrinkItemSpawnPosition.y,
     radius: energyDrinkRadius,
     fallSpeed: 0,
-    landed: false,
+    landed: true,
     remainingMs: energyDrinkLifetimeMs
   };
 }
@@ -540,21 +564,20 @@ function getCoffeeFireRateMultiplier() {
   return coffeeBuffTimerMs > 0 ? coffeeFireRateBuffMultiplier : 1;
 }
 
-// 次のコーヒーは8～15秒後に出現する（チョコレートと同程度の頻度）
+// コーヒーメーカーから取られたら、この時間だけ経つとまた隣に補充される
 function getRandomCoffeeSpawnDelay() {
-  return 8000 + Math.random() * 7000;
+  return stationRespawnDelayMs;
 }
 
-// マップ上部から落ちてきて、窓の範囲を避けた床の上に着地する
+// コーヒーメーカーのすぐ隣に生成する（固定位置。落下演出はなく、最初から取得可能）
 function spawnCoffee() {
-  const target = getRandomEventPosition(coffeeRadius);
   coffee = {
-    x: target.x,
-    y: -coffeeRadius - 20,
-    targetY: target.y,
+    x: coffeeItemSpawnPosition.x,
+    y: coffeeItemSpawnPosition.y,
+    targetY: coffeeItemSpawnPosition.y,
     radius: coffeeRadius,
     fallSpeed: 0,
-    landed: false,
+    landed: true,
     remainingMs: coffeeLifetimeMs
   };
 }
@@ -4106,6 +4129,9 @@ function draw() {
   }
 
   drawBackground();
+  // 画面端に固定で置かれた、コーヒーメーカーと冷蔵庫
+  drawStation(coffeeMakerPosition.x, coffeeMakerPosition.y, '☕', 'COFFEE', '#a1887f');
+  drawStation(fridgePosition.x, fridgePosition.y, '🧊', 'FRIDGE', '#80deea');
   // 敵・アイコン・自分/同僚などの前景要素に薄い影をつけ、背景から浮き上がって見やすくする
   ctx.shadowColor = 'rgba(0, 0, 0, 0.65)';
   ctx.shadowBlur = 4;
