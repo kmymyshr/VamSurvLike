@@ -98,7 +98,7 @@ const dreamMemoryUpgradeDefs = [
   },
   {
     id: 'invincibleTest', label: '無敵（テスト用）',
-    describeLevel: () => 'SAN・寿命が0にならず、脳疲労も常に0のままになる（テスト用）',
+    describeLevel: () => 'SAN・寿命が0にならず、脳疲労も常に0のまま、攻撃力が10倍になる（テスト用）',
     maxLevel: 1,
     costOverride: 1
   }
@@ -3329,8 +3329,9 @@ function findNearestEnemyToPlayer() {
 }
 
 // パリィで弾いた弾を、指定した地点から見て最も近い敵へ向け直し、ダメージを2倍にする共通処理
+const parryBulletSpeedMultiplier = 1.5; // パリィした弾は、パリィ前の速度の150%になる
 function performBulletParry(bullet, fromX, fromY, actorAngle) {
-  const speed = Math.hypot(bullet.vx, bullet.vy) || 6;
+  const speed = (Math.hypot(bullet.vx, bullet.vy) || 6) * parryBulletSpeedMultiplier;
   let angle;
   if (bullet.sourceHole && bossEvent && !bullet.sourceHole.destroyed) {
     // ラスボス弾は、それを撃った発射口へ打ち返す
@@ -3635,7 +3636,7 @@ function damagePartnerByBossBullet() {
 // 'whiteWait'：白いまま少し待つ
 // 'trueEnd'：真エンドの文章とENDを表示し、最後にタイトルへ戻る
 const bossFinalFlashDurationMs = 2000; // フラッシュが不規則に入る時間（retreatの前半）
-const bossFinalRetreatDurationMs = 4500; // 振動・フェードアウト・後退にかかる全体の時間
+const bossFinalRetreatDurationMs = 9000; // 振動・フェードアウト・後退にかかる全体の時間
 const bossFinalBgRestoreDurationMs = 1800;
 const bossFinalWhiteFadeDurationMs = 1800;
 const bossFinalWhiteWaitDurationMs = 3000;
@@ -3648,7 +3649,7 @@ const bossTrueEndCues = [
 const bossTrueEndReturnAtMs = 9500; // このタイミングでタイトルへ戻る
 const bossTrueEndLines = [
   '「なんだか長い夢を見ていた気がする。」',
-  '・・・職業訓練期間がもうすぐ終わるから、早く就職活動を始めないと。'
+  '職業訓練期間がもうすぐ終わる前に、早く就職活動を始めないと。'
 ];
 let bossFinalSequence = null; // null、または { phase, phaseTimerMs }
 
@@ -4505,8 +4506,10 @@ function update() {
 
           const speed = 6 * specialSkillEffects.bulletSpeedMultiplier;
           const damageBonus = 1 + skillLevel * 0.08;
+          // 「無敵（テスト用）」：攻撃力が10倍になる
+          const invincibleDamageMultiplier = dreamMemorySave.upgrades.invincibleTest >= 1 ? 10 : 1;
           const damage = Math.max(1, Math.round(
-            baseBulletDamage * conditionRatio * damageBonus * specialSkillEffects.damageMultiplier
+            baseBulletDamage * conditionRatio * damageBonus * specialSkillEffects.damageMultiplier * invincibleDamageMultiplier
           ));
 
           // マルチタスクと三方向射撃のレベルに応じて弾数と角度を増やす
@@ -4871,7 +4874,8 @@ function update() {
       const contactConditionRatio = 1 - Math.max(0, Math.min(1, fatigue / maxFatigue));
       const contactDamage = Math.max(1, Math.round(
         baseBulletDamage * contactConditionRatio * (1 + skillLevel * 0.08) *
-        (autoParried ? deflectDamageMultiplier : 1)
+        (autoParried ? deflectDamageMultiplier : 1) *
+        (dreamMemorySave.upgrades.invincibleTest >= 1 ? 10 : 1)
       ));
       en.hp = (en.hp || 1) - contactDamage;
       if (en.hp <= 0) defeated = true;
