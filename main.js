@@ -659,7 +659,6 @@ const partnerRelationshipInitial = 50;
 const partnerRelationshipSafeFireThreshold = 50;
 const partnerRelationshipDamagePerHit = 15;
 const partnerRelationshipRetaliationThreshold = 40;
-const partnerRelationshipWeekendRecovery = 30;
 
 const partner = {
   active: false, // 「同僚なし」を選んだ場合や、力尽きた後はfalseのまま
@@ -1442,14 +1441,96 @@ function resolveWeekEnd() {
   }
 }
 
+// ===== 「同僚と遊ぶ」を選んだ時のアドベンチャーパート（簡易サウンドノベル） =====
+// 現在進行中のシーン状態。null なら非表示
+let adventureState = null; // { scene, nodeId, onComplete }
+
+// 特定の特殊スキルを1レベル分だけ習得させる（アドベンチャーの選択肢報酬などに使う）
+function grantSpecialSkillById(id) {
+  const newLevel = (specialSkillLevels.get(id) || 0) + 1;
+  specialSkillLevels.set(id, newLevel);
+  recomputeSpecialSkillEffects();
+}
+
+function adjustPartnerRelationship(amount) {
+  partner.relationship = Math.max(0, Math.min(partnerRelationshipMax, partner.relationship + amount));
+}
+
+// シナリオデータ：シーンごとに開始ノードと、ノード間を選択肢でつなぐ分岐木を持つ
+const partnerAdventureScenes = {
+  cafe: {
+    start: 'intro',
+    nodes: {
+      intro: {
+        text: '休日、同僚を誘って近くのカフェへ入った。「今日は何を話そうか」と同僚が笑いかけてくる。',
+        choices: [
+          { label: '最近の仕事の悩みを相談する', next: 'consult',
+            effects: () => adjustPartnerRelationship(15) },
+          { label: '同僚の好きなことを聞いてみる', next: 'hobby',
+            effects: () => { adjustPartnerRelationship(10); grantSpecialSkillById('listening'); } },
+          { label: '特に話さず、黙って店内を眺める', next: 'silence',
+            effects: () => {} }
+        ]
+      },
+      consult: {
+        text: '同僚は真剣に話を聞いてくれた。「一緒に頑張ろう」と力強く言ってくれる。',
+        choices: [
+          { label: 'ありがとう、と素直に伝える', next: null,
+            effects: () => { adjustPartnerRelationship(10); specialSkillEffects.partnerDamageMultiplier *= 1.1; } },
+          { label: '照れくさくて、つい話をそらす', next: null,
+            effects: () => adjustPartnerRelationship(3) }
+        ]
+      },
+      hobby: {
+        text: '同僚は嬉しそうに趣味の話をしてくれた。意外な特技があるらしい。',
+        choices: [
+          { label: 'その特技を今度教えてもらう約束をする', next: null,
+            effects: () => grantSpecialSkillById('learning-power') },
+          { label: '自分の好きなことも話してみる', next: null,
+            effects: () => adjustPartnerRelationship(8) }
+        ]
+      },
+      silence: {
+        text: '会話は弾まなかった。ふと隣を見ると、同僚は少し寂しそうな顔をしていた。',
+        choices: [
+          { label: '思い切って話しかけてみる', next: null,
+            effects: () => adjustPartnerRelationship(5) },
+          { label: 'そのまま静かに過ごす', next: null,
+            effects: () => adjustPartnerRelationship(-5) }
+        ]
+      }
+    }
+  }
+};
+
+// 「同僚と遊ぶ」アドベンチャーパートを開始する。終了後にonCompleteを呼んで元のゲームへ戻す
+function startPartnerAdventure(onComplete) {
+  const sceneKeys = Object.keys(partnerAdventureScenes);
+  const scene = partnerAdventureScenes[sceneKeys[Math.floor(Math.random() * sceneKeys.length)]];
+  adventureState = { scene, nodeId: scene.start, onComplete };
+}
+
+// アドベンチャーパートの選択肢を選ぶ。次のノードがあれば進み、なければ終了してonCompleteへ
+function chooseAdventureOption(choiceIndex) {
+  if (!adventureState) return;
+  const node = adventureState.scene.nodes[adventureState.nodeId];
+  const choice = node.choices[choiceIndex];
+  if (!choice) return;
+  if (choice.effects) choice.effects();
+  if (choice.next) {
+    adventureState.nodeId = choice.next;
+  } else {
+    const onComplete = adventureState.onComplete;
+    adventureState = null;
+    if (onComplete) onComplete();
+  }
+}
+
 // 休日の過ごし方（1:同僚と遊ぶ 2:休息 3:勉強）を適用する
 function applyRestActivity(choiceIndex) {
   if (choiceIndex === 1) {
     if (partner.active) {
-      partner.relationship = Math.min(partnerRelationshipMax,
-        partner.relationship + partnerRelationshipWeekendRecovery);
-      showAcknowledgementNotice('同僚と遊び、関係が少し良くなった。', '#ffcc80', '',
-        () => finishRestDayAndAdvanceToMonday());
+      startPartnerAdventure(() => finishRestDayAndAdvanceToMonday());
     } else if (partnerLossReason === 'lifespan') {
       // 寿命が尽きての離脱はもう戻らない。会いに行った虚しさで自機のSANが大きく削れる
       san = Math.max(0, Math.floor(san * partnerLossGriefSanRatio));
@@ -1671,6 +1752,13 @@ document.addEventListener("keydown", (event) => {
   }
   // アイコン選択後のひとことメッセージ演出中は、フェードして次へ進むまで入力を受け付けない
   if (iconGreetingPhase) return;
+  // 「同僚と遊ぶ」アドベンチャーパート中は、数字キーで選択肢を選ぶ
+  if (adventureState) {
+    const idx = Number(event.key) - 1;
+    const node = adventureState.scene.nodes[adventureState.nodeId];
+    if (idx >= 0 && idx < node.choices.length) chooseAdventureOption(idx);
+    return;
+  }
   // 起動時のセットアップ画面：まず自機の性別を選ぶ
   if (setupStep === 'gender') {
     const idx = Number(event.key) - 1;
@@ -1967,6 +2055,8 @@ function update() {
 
   // スタート前とゲーム終了後は、敵や納期の更新を止める
   if (gameOver || gameClear || setupStep || startScreen || specialSkillSelectionActive) return;
+  // 「同僚と遊ぶ」アドベンチャーパート中は、ゲームの進行を止める
+  if (adventureState) return;
 
   // 一時メッセージの残り表示時間を減らし、期限切れなら削除する
   // ただし「DAY～」演出中（暗転～クリック待ち）は、読み終える前に消えないよう時間を止める
@@ -3333,7 +3423,7 @@ function draw() {
     const btnX = canvas.width / 2 - btnW / 2;
     const optionBaseY = canvas.height / 2 - 30 + extraOffset;
     const optionLabels = [
-      '同僚と遊ぶ (関係性が改善)',
+      '同僚と遊ぶ (アドベンチャーパートへ)',
       '休息 (脳疲労が全回復 / SAN +25)',
       'スキル選択・勉強 (特殊スキルを1つ選ぶ)'
     ];
@@ -3344,6 +3434,36 @@ function draw() {
         applyRestActivity(choiceIndex);
       });
     });
+  }
+
+  // 「同僚と遊ぶ」アドベンチャーパート（簡易サウンドノベル）の画面
+  if (adventureState && !gameOver && !gameClear) {
+    const node = adventureState.scene.nodes[adventureState.nodeId];
+    ctx.fillStyle = 'rgba(4, 6, 12, 0.92)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = '#ffe0b2';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.textAlign = 'left';
+    const textLines = wrapTextToWidth(node.text, canvas.width - 160);
+    textLines.forEach((line, i) => {
+      ctx.fillText(line, 80, 140 + i * 30);
+    });
+
+    const btnW2 = 560, btnH2 = 50;
+    const btnX2 = canvas.width / 2 - btnW2 / 2;
+    const choicesStartY = 140 + textLines.length * 30 + 40;
+    node.choices.forEach((choice, i) => {
+      drawUiButton(btnX2, choicesStartY + i * 60, btnW2, btnH2, `${i + 1}. ${choice.label}`,
+        () => chooseAdventureOption(i));
+    });
+
+    ctx.fillStyle = '#cfd8dc';
+    ctx.font = '14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('数字キー / タップで選択', canvas.width / 2,
+      choicesStartY + node.choices.length * 60 + 20);
+    ctx.textAlign = 'left';
   }
 
   // 特殊スキルの3択画面。数字キー1～3で取得する
