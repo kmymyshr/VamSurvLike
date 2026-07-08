@@ -3245,9 +3245,12 @@ function computeFullAutoEnemyAvoidanceVector() {
 // 完全オートモード中の移動方向（-1〜1に正規化済み）を、優先度順に1つだけ選んで決める
 // （複数の意図を混ぜず、優先度が高いものだけに従うことで振動を防ぐ）
 // 優先度1: 同僚弾の回避 → 優先度2: 近い敵からの回避 → 優先度3〜6: 食事・チョコレート・心の壁・クイズ
+// → 優先度7: 同僚との距離を置く
 // 敵の反発がほぼ打ち消し合って板挟みになった時、振動せずランダムな方向へ抜け出すための状態
 const fullAutoStuckVectorThreshold = 0.15; // 合成ベクトルの大きさがこれ未満なら「板挟み」とみなす
 const fullAutoEscapeDurationMs = 500; // 一度ランダムな方向へ逃げ始めたら、この間は同じ方向を保つ
+// 他に優先事項がない時、同僚とこれ以上近づかないようにする距離
+const fullAutoPartnerKeepDistance = 130;
 let fullAutoEscapeDirection = null;
 let fullAutoEscapeTimerMs = 0;
 
@@ -3284,12 +3287,25 @@ function computeFullAutoMoveVector(dt) {
 
   // 優先度3〜6：避けるべきものがなければ、食事・チョコレート・心の壁・クイズの順で拾いに行く
   const seekTarget = findFullAutoSeekTarget();
-  if (!seekTarget) return { x: 0, y: 0 };
-  const dx = seekTarget.x - player.x;
-  const dy = seekTarget.y - player.y;
-  const dist = Math.hypot(dx, dy);
-  if (dist <= 4) return { x: 0, y: 0 };
-  return { x: dx / dist, y: dy / dist };
+  if (seekTarget) {
+    const dx = seekTarget.x - player.x;
+    const dy = seekTarget.y - player.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist <= 4) return { x: 0, y: 0 };
+    return { x: dx / dist, y: dy / dist };
+  }
+
+  // 優先度7：他に優先事項がなければ、同僚から距離を置く
+  // （同僚弾を被弾しにくくし、自機の弾線上に同僚が入って誤射を防ぐ状況自体も減らす）
+  if (partner.active) {
+    const pdx = player.x - partner.x;
+    const pdy = player.y - partner.y;
+    const pdist = Math.hypot(pdx, pdy);
+    if (pdist > 0 && pdist < fullAutoPartnerKeepDistance) {
+      return { x: pdx / pdist, y: pdy / pdist };
+    }
+  }
+  return { x: 0, y: 0 };
 }
 
 // ===== メニュー選択のタップ／クリック対応 =====
