@@ -85,7 +85,7 @@ function dreamMemoryUpgradeCost(currentLevel) {
 function loadDreamMemorySave() {
   const fallbackUpgrades = {};
   dreamMemoryUpgradeDefs.forEach(def => { fallbackUpgrades[def.id] = 0; });
-  const fallback = { points: 0, upgrades: fallbackUpgrades };
+  const fallback = { points: 0, upgrades: fallbackUpgrades, lastRun: null };
   try {
     const raw = localStorage.getItem(dreamMemoryStorageKey);
     if (!raw) return fallback;
@@ -95,7 +95,15 @@ function loadDreamMemorySave() {
     dreamMemoryUpgradeDefs.forEach(def => {
       upgrades[def.id] = Math.max(0, Math.min(dreamMemoryUpgradeMaxLevel, Math.floor(rawUpgrades[def.id]) || 0));
     });
-    return { points: Math.max(0, Math.floor(parsed.points) || 0), upgrades };
+    // 前回プレイした自機の性別・同僚アイコン・信頼関係・最期の原因（同じ自機と同僚で再開した時の再会シーンに使う）
+    const rawLastRun = parsed.lastRun;
+    const lastRun = rawLastRun ? {
+      playerGender: rawLastRun.playerGender || null,
+      partnerIcon: rawLastRun.partnerIcon || null,
+      relationship: Math.max(0, Math.min(100, Math.floor(rawLastRun.relationship) || 0)),
+      endingType: rawLastRun.endingType || null
+    } : null;
+    return { points: Math.max(0, Math.floor(parsed.points) || 0), upgrades, lastRun };
   } catch (e) {
     return fallback;
   }
@@ -1162,6 +1170,140 @@ partnerIconChoices.forEach(id => {
   partnerIconImageElements[id] = img;
 });
 let selectedPartnerIcon = partnerIconChoices[0]; // nullの場合は「同僚なし」
+
+// 同僚アイコンごとの性別（一人称・三人称の言い回しの出し分けに使う）
+const partnerGenderById = {
+  char_01: 'male', char_02: 'female', char_03: 'male', char_04: 'female',
+  char_05: 'male', char_06: 'female', char_07: 'male', char_08: 'male',
+  char_09: 'female', char_10: 'male', char_11: 'male', char_12: 'female'
+};
+
+// ===== 前回と同じ自機・同僚で始めた時の再会シーン =====
+// 前回の周回の信頼関係（と、その終わり方）に応じて、DAY1が始まる前に短い会話を挟む
+const reunionSceneTiers = {
+  1: { // とても良い関係（関係性80〜100）
+    line: '「……はじめまして。また、会えたね」',
+    paragraph: [
+      '{partner}は、知らない人を見る目で{player}を見ていた。',
+      'その目に、何度も救われたことがある。',
+      '名前を呼ばれたことも、手を握られたことも、最後に笑ってくれたこともある。',
+      'でも今の{partner}には、何ひとつ残っていない。',
+      '二人分だった時間が、{player}一人の胸に沈んでいた。'
+    ]
+  },
+  2: { // 良い関係（関係性60〜79）
+    line: '「……はじめまして。また会えてよかった」',
+    paragraph: [
+      '{partner}は少し不思議そうに首を傾げた。',
+      '当然だ。',
+      '「また」なんて、{partner}の中にはない。',
+      '前の時間で交わした約束も、くだらない会話も、ようやく向けてくれた笑顔も、今は全部こちら側だけのものだった。',
+      'それでも、会えた。',
+      'その事実だけが、胸の痛みの底で小さく光っていた。'
+    ]
+  },
+  3: { // 普通の関係（関係性40〜59）
+    line: '「……はじめまして。そうだよな」',
+    paragraph: [
+      '{partner}に悪気はない。',
+      '{player}を知らないのだから、知らない顔をするのは当たり前だった。',
+      '前の時間で何度か話した。助けられもしたし、助けもした。',
+      'それだけだ。',
+      'それだけのはずなのに、なかったことにされると、思ったより胸に来た。',
+      '記憶というものは、関係の名前よりもずっとしつこい。'
+    ]
+  },
+  4: { // 悪い関係（関係性0〜39）
+    line: '「……はじめまして。今度は、そう始まるんだな」',
+    paragraph: [
+      '前の{partner}は、最後まで{player}を疑っていた。',
+      '責められた言葉も、拒まれた視線も、まだ耳の奥に残っている。',
+      'なのに今の{partner}は、それすら持っていない。',
+      '警戒も、怒りも、失望もない。',
+      'ただの初対面として、まっさらな顔で{player}を見ている。',
+      '許されたわけではないのに、罰だけが消えたみたいで、気味が悪かった。'
+    ]
+  },
+  5: { // とても悪い関係（関係性20以下、かつ前回同僚の攻撃でENDになった場合）
+    line: '「……はじめまして。まだ、そう言えるんだな」',
+    paragraph: [
+      'その声で、前は{player}を罵った。',
+      'その手で、前は{player}を突き放した。',
+      'あるいは、{player}が{partner}を傷つけた。',
+      'それなのに今、{partner}は何も知らない顔で立っている。',
+      '憎しみも、恐怖も、後悔も、まだ生まれていない。',
+      '世界だけが、都合よく血の跡を拭き取っていた。',
+      '{player}の中には、まだ乾いていないのに。'
+    ]
+  }
+};
+
+function getPlayerPronoun(gender) {
+  return gender === 'female' ? '私' : '俺';
+}
+function getPartnerPronoun(partnerIcon) {
+  return partnerGenderById[partnerIcon] === 'female' ? '彼女' : '彼';
+}
+function fillReunionTemplate(text, playerPronoun, partnerPronoun) {
+  return text.split('{player}').join(playerPronoun).split('{partner}').join(partnerPronoun);
+}
+
+// 前回の信頼関係・終わり方から、再会シーンの段階（1〜5）を決める
+function getReunionSceneTier(lastRun) {
+  if (lastRun.relationship <= 20 && lastRun.endingType === 'bad-partner-shot') return 5;
+  if (lastRun.relationship >= 80) return 1;
+  if (lastRun.relationship >= 60) return 2;
+  if (lastRun.relationship >= 40) return 3;
+  return 4;
+}
+
+// 前回と全く同じ自機・同僚の組み合わせで始めた場合のみ、再会シーンを表示する
+function shouldShowReunionScene() {
+  const lastRun = dreamMemorySave.lastRun;
+  return !!(lastRun && lastRun.partnerIcon && selectedPartnerIcon &&
+    lastRun.playerGender === selectedGender && lastRun.partnerIcon === selectedPartnerIcon);
+}
+
+let reunionSceneActive = false;
+let reunionSceneLine = '';
+let reunionSceneParagraph = [];
+let reunionSceneOnComplete = null;
+
+// 自機が女性の場合、セリフの語尾を「だよな」→「だよね」「だな」→「だね」に和らげる
+function applyFemaleLineTone(text, gender) {
+  if (gender !== 'female') return text;
+  return text.replace(/だよな/g, 'だよね').replace(/だな/g, 'だね');
+}
+
+function openReunionScene(onComplete) {
+  const tier = getReunionSceneTier(dreamMemorySave.lastRun);
+  const data = reunionSceneTiers[tier];
+  const playerPronoun = getPlayerPronoun(selectedGender);
+  const partnerPronoun = getPartnerPronoun(selectedPartnerIcon);
+  reunionSceneLine = applyFemaleLineTone(
+    fillReunionTemplate(data.line, playerPronoun, partnerPronoun),
+    selectedGender
+  );
+  reunionSceneParagraph = data.paragraph.map(t => fillReunionTemplate(t, playerPronoun, partnerPronoun));
+  reunionSceneActive = true;
+  reunionSceneOnComplete = onComplete;
+}
+
+function closeReunionScene() {
+  reunionSceneActive = false;
+  const onComplete = reunionSceneOnComplete;
+  reunionSceneOnComplete = null;
+  if (onComplete) onComplete();
+}
+
+// 同僚選択後のひとことメッセージが終わったら、再会シーンを挟むかどうかを判定してから実際にゲームを始める
+function startGameAfterGreeting() {
+  if (shouldShowReunionScene()) {
+    openReunionScene(() => beginGameplay());
+  } else {
+    beginGameplay();
+  }
+}
 
 // ===== 同僚 =====
 const partnerMoveSpeed = 3.2;
@@ -2623,11 +2765,11 @@ function selectPartnerIcon(icon) {
   selectedPartnerIcon = icon;
   if (icon === null) {
     setupStep = null;
-    beginGameplay();
+    startGameAfterGreeting();
     return;
   }
   const line = partnerIconGreetingLines[Math.floor(Math.random() * partnerIconGreetingLines.length)];
-  startIconGreeting(icon, line, () => { setupStep = null; beginGameplay(); }, partnerIconImageElements[icon]);
+  startIconGreeting(icon, line, () => { setupStep = null; startGameAfterGreeting(); }, partnerIconImageElements[icon]);
 }
 
 // モード選択画面：通常速度(1)か3倍速(2)を選び、自機の性別選択画面へ進む
@@ -2688,6 +2830,8 @@ document.addEventListener("keydown", (event) => {
   }
   // アイコン選択後のひとことメッセージ演出中は、フェードして次へ進むまで入力を受け付けない
   if (iconGreetingPhase) return;
+  // 前回と同じ自機・同僚で始めた時の再会シーン中は、クリック／タップでのみ進める
+  if (reunionSceneActive) return;
   // 「同僚と遊ぶ」アドベンチャーパート中は、数字キーで選択肢を選ぶ
   if (adventureState) {
     const idx = Number(event.key) - 1;
@@ -2910,6 +3054,11 @@ canvas.addEventListener('click', (event) => {
     resumeFromAcknowledgement();
     return;
   }
+  // 再会シーン中は、どこをクリック／タップしてもゲームを始める
+  if (reunionSceneActive) {
+    closeReunionScene();
+    return;
+  }
   // 一日の終わりの演出で入力待ち中なら、どこをクリック／タップしても次の日へ進める
   // （ただし昇進・特殊スキルの選択画面が同時に開いている場合は、そちらの選択を優先する）
   if (dayTransitionPhase === 'waiting' && !rankSkillSelectionActive && !specialSkillSelectionActive) {
@@ -2999,6 +3148,9 @@ function update() {
     }
     return;
   }
+
+  // 前回と同じ自機・同僚で始めた時の再会シーン中は、クリック／タップされるまで進行を止める
+  if (reunionSceneActive) return;
 
   // 同僚の吹き出しの表示時間を減らす
   if (partnerSpeechBubble) {
@@ -3819,6 +3971,13 @@ function drawEndScreenButtons(baseY) {
     // クリア・ゲームオーバーを問わず、Scoreの一部を夢の記憶ポイントとして持ち越し、次周のタイトル画面で使えるようにする
     const earnedDreamMemoryPoints = Math.floor(score / dreamMemoryScoreDivisor);
     dreamMemorySave.points += earnedDreamMemoryPoints;
+    // 次に同じ自機・同僚で始めた時の再会シーンのため、今回の相手との関係を記録しておく
+    dreamMemorySave.lastRun = selectedPartnerIcon ? {
+      playerGender: selectedGender,
+      partnerIcon: selectedPartnerIcon,
+      relationship: partner.relationship,
+      endingType: endingType
+    } : null;
     saveDreamMemorySave();
     location.reload();
   });
@@ -4204,6 +4363,32 @@ function draw() {
     ctx.fillStyle = '#ffe082';
     ctx.fillText(iconGreetingText, canvas.width / 2, canvas.height / 2 + 60);
     ctx.restore();
+    ctx.textAlign = 'left';
+    return;
+  }
+
+  // 前回と同じ自機・同僚で始めた時、DAY1が始まる前に挟む短い再会シーン
+  if (reunionSceneActive) {
+    drawSetupBackground();
+    const partnerImg = partnerIconImageElements[selectedPartnerIcon];
+    if (partnerImg && partnerImg.complete && partnerImg.naturalWidth > 0) {
+      const imgSize = 150;
+      ctx.drawImage(partnerImg, canvas.width / 2 - imgSize / 2, 60, imgSize, imgSize);
+    }
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffe082';
+    ctx.font = 'bold 22px sans-serif';
+    ctx.fillText(reunionSceneLine, canvas.width / 2, 250);
+
+    ctx.fillStyle = '#e0e0e0';
+    ctx.font = '15px sans-serif';
+    reunionSceneParagraph.forEach((line, i) => {
+      ctx.fillText(line, canvas.width / 2, 296 + i * 24);
+    });
+
+    ctx.fillStyle = '#cfd8dc';
+    ctx.font = '14px sans-serif';
+    ctx.fillText('クリック / タップで続ける', canvas.width / 2, canvas.height - 40);
     ctx.textAlign = 'left';
     return;
   }
@@ -4939,17 +5124,19 @@ function draw() {
   const partnerTitle = selectedPartnerIcon === null
     ? '同僚なし'
     : (partner.active ? '同僚' : '同僚離脱');
-  drawHudProfilePanel(164, 12, 145, 190, partnerTitle,
+  drawHudProfilePanel(164, 12, 145, 204, partnerTitle,
     selectedPartnerIcon, '#80cbc4', partner.active ? [
       { text: `SAN: ${Math.floor(partner.san)} / ${maxSan}` },
       { text: `寿命: ${Math.ceil(partner.lifespan)} / ${maxLifespan}` },
       { text: `脳疲労: ${Math.floor(partner.fatigue)} / ${maxFatigue}` },
-      { text: '状態: 行動中' }
+      { text: '状態: 行動中' },
+      { text: `関係性: ${Math.floor(partner.relationship)} / ${partnerRelationshipMax}` }
     ] : [
       { text: 'SAN: —' },
       { text: '寿命: —' },
       { text: '脳疲労: —' },
-      { text: `状態: ${selectedPartnerIcon === null ? '不在' : '離脱'}` }
+      { text: `状態: ${selectedPartnerIcon === null ? '不在' : '離脱'}` },
+      { text: selectedPartnerIcon === null ? '関係性: —' : `関係性: ${Math.floor(partner.relationship)} / ${partnerRelationshipMax}` }
     ], partnerUnavailable,
     (partnerRelationshipMax - partner.relationship) / partnerRelationshipMax,
     selectedPartnerIcon !== null ? partnerIconImageElements[selectedPartnerIcon] : null,
