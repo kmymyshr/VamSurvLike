@@ -1766,7 +1766,7 @@ function wouldPartnerShotHitCurrentPlayer(angle, bulletRadius = 4) {
 }
 
 // 発射時点の同僚位置が、自機弾の進行方向上にあるかを調べる（自動攻撃モードの誤射回避に使う）
-function wouldPlayerShotHitPartner(angle, bulletRadius = 4) {
+function wouldPlayerShotHitPartner(angle, bulletRadius = 4, extraMargin = 0) {
   if (!partner.active) return false;
   const dx = partner.x - player.x;
   const dy = partner.y - player.y;
@@ -1775,7 +1775,7 @@ function wouldPlayerShotHitPartner(angle, bulletRadius = 4) {
   const forwardDistance = dx * directionX + dy * directionY;
   if (forwardDistance <= 0) return false;
   const perpendicularDistance = Math.abs(dx * directionY - dy * directionX);
-  return perpendicularDistance <= partner.radius + bulletRadius + 4;
+  return perpendicularDistance <= partner.radius + bulletRadius + 4 + extraMargin;
 }
 
 // 同僚の追従・ランダム移動・自律攻撃・被弾・寿命減少・退場判定をまとめて処理する
@@ -3260,6 +3260,8 @@ const fullAutoStuckVectorThreshold = 0.15; // 合成ベクトルの大きさが�
 const fullAutoEscapeDurationMs = 500; // 一度ランダムな方向へ逃げ始めたら、この間は同じ方向を保つ
 // 他に優先事項がない時、同僚とこれ以上近づかないようにする距離
 const fullAutoPartnerKeepDistance = 130;
+// 完全オートモードで発砲を控える際、射線ちょうどだけでなくこの余裕分だけ手前からも同僚を避ける
+const fullAutoPartnerLineOfFireMargin = 30;
 let fullAutoEscapeDirection = null;
 let fullAutoEscapeTimerMs = 0;
 
@@ -3896,8 +3898,10 @@ function update() {
     } else if (autoFireResting && fatigue <= Math.max(maxFatigue * 0.5, getFatigueRecoveryFloor())) {
       autoFireResting = false;
     }
-    // 自動攻撃モード・完全オートモードは、射線上に同僚がいる間は誤射を避けて撃たない
-    const autoFireBlockedByPartner = autoFiringActive && wouldPlayerShotHitPartner(player.angle);
+    // 自動攻撃モード・完全オートモードは、射線上に同僚がいる間は誤射を避けて撃たない。
+    // 完全オートモードはさらに、射線のすぐ近くに同僚がいる場合も余裕を持って撃つのを控える
+    const autoFireBlockedByPartner = autoFiringActive &&
+      wouldPlayerShotHitPartner(player.angle, 4, fullAutoModeEnabled ? fullAutoPartnerLineOfFireMargin : 0);
     const wantsToFire = (autoFiringActive && !autoFireResting && !autoFireBlockedByPartner) || mouseFireHeld;
     if (wantsToFire && !stunned) {
       if (now - lastFire >= currentFireRate) {
