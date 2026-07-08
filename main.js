@@ -6,6 +6,27 @@ const distortionCanvas = document.createElement('canvas');
 distortionCanvas.width = canvas.width;
 distortionCanvas.height = canvas.height;
 const distortionCtx = distortionCanvas.getContext('2d');
+
+// 力尽きた演出（寿命切れ／SAN切れ）で使うポートレート画像と、SAN切れ用の歪み合成に使うオフスクリーンCanvas
+function loadImage(src) {
+  const img = new Image();
+  img.src = src;
+  return img;
+}
+const deadIconImages = {
+  male: loadImage('images/self/dead/01_dead.png'),
+  female: loadImage('images/self/dead/02_dead.png')
+};
+const san0IconImages = {
+  male: loadImage('images/self/SAN0/01_SAN0.png'),
+  female: loadImage('images/self/SAN0/02_SAN0.png')
+};
+const deathPortraitSize = 260;
+const deathPortraitCanvas = document.createElement('canvas');
+deathPortraitCanvas.width = deathPortraitSize;
+deathPortraitCanvas.height = deathPortraitSize;
+const deathPortraitCtx = deathPortraitCanvas.getContext('2d');
+
 console.log('main.js loaded');
 const player = {
   x: 400,
@@ -618,12 +639,10 @@ const sanDistortionThreshold = 30;
 const sanLowDistortionAmplitude = 2;
 
 // ===== 力尽きた瞬間の演出（BADENDへ移る前の一時停止） =====
-// 'san'：画面・文字が歪みながらBADENDへ／'lifespan'：画面が停止し、徐々に白黒になってBADENDへ
+// 'san'：ポートレートが歪みながら消滅してBADENDへ／'lifespan'：ポートレートが徐々に真っ白になってBADENDへ
 let deathSequence = null; // { visualType, timer, duration, deathEndingType }
-const sanDeathSequenceDurationMs = 1800;
-const lifespanDeathSequenceDurationMs = 2200;
-const sanDeathDistortionMinAmplitude = 3;
-const sanDeathDistortionMaxAmplitude = 16;
+const sanDeathSequenceDurationMs = 5000;
+const lifespanDeathSequenceDurationMs = 5000;
 
 function startDeathSequence(visualType, deathEndingType) {
   if (gameOver || deathSequence) return;
@@ -3074,6 +3093,46 @@ function applyScreenDistortion(amplitude) {
   }
 }
 
+// 力尽きた演出（寿命切れ／SAN切れ）中の専用画面。
+// 寿命切れ：images/self/dead の画像が5秒ほどかけて真っ白になる。
+// SAN切れ：images/self/SAN0 の画像が5秒ほどかけて歪みながら消滅する。
+function drawDeathSequenceScene() {
+  const progress = Math.min(1, deathSequence.timer / deathSequence.duration);
+  ctx.fillStyle = 'black';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2 - 20;
+  const half = deathPortraitSize / 2;
+
+  if (deathSequence.visualType === 'lifespan') {
+    const img = deadIconImages[selectedPlayerIcon];
+    if (img && img.complete && img.naturalWidth > 0) {
+      ctx.drawImage(img, cx - half, cy - half, deathPortraitSize, deathPortraitSize);
+      ctx.fillStyle = `rgba(255, 255, 255, ${progress})`;
+      ctx.fillRect(cx - half, cy - half, deathPortraitSize, deathPortraitSize);
+    }
+  } else {
+    const img = san0IconImages[selectedPlayerIcon];
+    if (img && img.complete && img.naturalWidth > 0) {
+      // 画像をオフスクリーンに描き、フェードアウトさせながら横スライスを歪ませて消滅させる
+      deathPortraitCtx.clearRect(0, 0, deathPortraitCanvas.width, deathPortraitCanvas.height);
+      deathPortraitCtx.save();
+      deathPortraitCtx.globalAlpha = 1 - progress;
+      deathPortraitCtx.drawImage(img, 0, 0, deathPortraitSize, deathPortraitSize);
+      deathPortraitCtx.restore();
+
+      const amplitude = progress * 26;
+      const sliceHeight = 4;
+      for (let sy = 0; sy < deathPortraitSize; sy += sliceHeight) {
+        const offsetX = Math.sin(sy * 0.09 + gameClockMs / 140) * amplitude;
+        ctx.drawImage(deathPortraitCanvas, 0, sy, deathPortraitSize, sliceHeight,
+          cx - half + offsetX, cy - half + sy, deathPortraitSize, sliceHeight);
+      }
+    }
+  }
+}
+
 // HUD用プロフィール区画。選択した絵文字を仮の顔イラストとして使う。
 function drawHudProfilePanel(x, y, width, height, title, icon, accentColor, statLines, inactive = false, dangerLevel = 0, iconImage = null, portraitRadius = 23) {
   ctx.save();
@@ -3138,6 +3197,12 @@ function draw() {
   // タップ可能な矩形を、今フレームの表示内容に合わせて作り直す
   uiButtons = [];
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // 力尽きた演出中は、通常のゲーム画面は描かず専用の演出画面のみを表示する
+  if (deathSequence) {
+    drawDeathSequenceScene();
+    return;
+  }
 
   // アイコン選択直後のひとことメッセージ演出（表示→フェードアウト）
   if (iconGreetingPhase) {
@@ -3280,14 +3345,6 @@ function draw() {
     ctx.fillText('WASD・左スティック = 移動　マウス・ドラッグ / 右スティック = 照準・攻撃', canvas.width / 2, canvas.height / 2 + 118);
     ctx.textAlign = 'left';
     return;
-  }
-
-  // 寿命が尽きた演出中は、画面全体を徐々に白黒にしていく
-  if (deathSequence && deathSequence.visualType === 'lifespan') {
-    const progress = Math.min(1, deathSequence.timer / deathSequence.duration);
-    ctx.filter = `grayscale(${Math.round(progress * 100)}%)`;
-  } else {
-    ctx.filter = 'none';
   }
 
   drawBackground();
@@ -3902,15 +3959,8 @@ function draw() {
     ctx.textBaseline = 'alphabetic';
   }
 
-  ctx.filter = 'none';
-
-  // SANが尽きた演出中は、時間とともに画面全体（文字含む）の歪みを強めていく
-  if (deathSequence && deathSequence.visualType === 'san') {
-    const progress = Math.min(1, deathSequence.timer / deathSequence.duration);
-    applyScreenDistortion(sanDeathDistortionMinAmplitude +
-      progress * (sanDeathDistortionMaxAmplitude - sanDeathDistortionMinAmplitude));
-  } else if (!deathSequence && !gameOver && !gameClear && san <= sanDistortionThreshold) {
-    // 通常時、SANが低いときは文字が読める程度の軽い歪みをかける
+  // 通常時、SANが低いときは文字が読める程度の軽い歪みをかける
+  if (!gameOver && !gameClear && san <= sanDistortionThreshold) {
     applyScreenDistortion(sanLowDistortionAmplitude);
   }
 }
