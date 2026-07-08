@@ -3664,7 +3664,7 @@ function drawUiButton(x, y, w, h, label, action, options = {}) {
 function drawEndScreenButtons(baseY) {
   const btnW = 300, btnH = 48;
   const btnX = canvas.width / 2 - btnW / 2;
-  drawUiButton(btnX, baseY, btnW, btnH, '・・・という夢をみたんだ', () => location.reload());
+  drawUiButton(btnX, baseY, btnW, btnH, '・・・という夢をみました', () => location.reload());
   drawUiButton(btnX, baseY + 60, btnW, btnH, '終了する', () => { window.close(); },
     { fillStyle: 'rgba(84, 30, 30, 0.6)', strokeStyle: '#ef9a9a' });
   ctx.fillStyle = '#b0bec5';
@@ -3702,8 +3702,8 @@ const endingConfig = {
     labelColor: '#ce93d8',
     bgColor: 'rgba(30, 0, 40, 0.88)',
     description: [
-      '（仮）積み重なったストレスが、ついに心を壊してしまった。',
-      'もう、まともに働くことはできない…。'
+      '積み重なったストレスで、心が壊れてしまった。',
+    
     ]
   },
   'bad-lifespan': {
@@ -3712,9 +3712,8 @@ const endingConfig = {
     labelColor: '#90a4ae',
     bgColor: 'rgba(8, 8, 8, 0.92)',
     description: [
-      '（仮）気づかぬうちに蓄積した消耗が、静かに寿命を削りきった。',
-      '働きすぎは、命を削る。'
-    ]
+      '気づかぬうちに蓄積した消耗が、静かに寿命を削りきった。',
+         ]
   },
   'bad-partner-shot': {
     icon: '💔',
@@ -4141,10 +4140,18 @@ function draw() {
 
   if (startScreen) {
     drawSetupBackground();
-    ctx.fillStyle = 'white';
-    ctx.font = '48px sans-serif';
+    ctx.save();
+    ctx.font = 'bold 52px "Comic Sans MS", "Chalkboard SE", "Marker Felt", cursive, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('ワーキングデッド', canvas.width / 2, canvas.height / 2 - 130);
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+    ctx.shadowBlur = 6;
+    ctx.shadowOffsetY = 3;
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = '#ff8fab';
+    ctx.strokeText('Workin’ FunDead', canvas.width / 2, canvas.height / 2 - 130);
+    ctx.fillStyle = '#fffaf0';
+    ctx.fillText('Workin’ FunDead', canvas.width / 2, canvas.height / 2 - 130);
+    ctx.restore();
     ctx.textAlign = 'left';
 
     const btnW = 340, btnH = 54;
