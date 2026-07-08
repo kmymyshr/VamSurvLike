@@ -3131,6 +3131,21 @@ function mixHexColors(fromColor, toColor, ratio) {
   return `rgb(${mixed[0]}, ${mixed[1]}, ${mixed[2]})`;
 }
 
+// 自機・同僚の下に表示する、SAN・寿命・脳疲労の小さなステータスバー
+function drawMiniStatBars(centerX, topY, stats) {
+  const barWidth = 44, barHeight = 4, gap = 2;
+  ctx.save();
+  stats.forEach((stat, i) => {
+    const y = topY + i * (barHeight + gap);
+    const ratio = Math.max(0, Math.min(1, stat.value / stat.max));
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+    ctx.fillRect(centerX - barWidth / 2, y, barWidth, barHeight);
+    ctx.fillStyle = stat.color;
+    ctx.fillRect(centerX - barWidth / 2, y, barWidth * ratio, barHeight);
+  });
+  ctx.restore();
+}
+
 // 描き終えた1フレーム全体（文字・アイコン含む）を、横スライスごとに正弦波でずらして歪ませる。
 // 文字が判読できる程度になるよう、amplitudeは小さめの値を渡すこと。
 function applyScreenDistortion(amplitude) {
@@ -3424,6 +3439,12 @@ function draw() {
     ctx.textBaseline = 'alphabetic';
   }
   ctx.globalAlpha = 1;
+  // 自機の下にSAN・寿命・脳疲労の小さなバーを表示する
+  drawMiniStatBars(player.x, player.y + (player.radius * 4.8) / 2 + 6, [
+    { value: san, max: maxSan, color: '#ce93d8' },
+    { value: lifespan, max: maxLifespan, color: '#80cbc4' },
+    { value: fatigue, max: maxFatigue, color: '#ffb74d' }
+  ]);
   // 自分の正面方向を、機体を中心とした円軌道上の照準点で示す
   const aimDotOrbitRadius = player.radius + 18;
   const aimDotX = player.x + Math.cos(player.angle) * aimDotOrbitRadius;
@@ -3468,6 +3489,13 @@ function draw() {
       ctx.fillText('🧑', partner.x, partner.y);
     }
     ctx.restore();
+
+    // 同僚の下にSAN・寿命・脳疲労の小さなバーを表示する
+    drawMiniStatBars(partner.x, partner.y + (partner.radius * 4.8) / 2 + 6, [
+      { value: partner.san, max: maxSan, color: '#ce93d8' },
+      { value: partner.lifespan, max: maxLifespan, color: '#80cbc4' },
+      { value: partner.fatigue, max: maxFatigue, color: '#ffb74d' }
+    ]);
 
     // 同僚の吹き出し（一言セリフ）
     if (partnerSpeechBubble) {
