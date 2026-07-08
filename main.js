@@ -1101,9 +1101,9 @@ function updatePartner(dt) {
           bounces: 0,
           owner: 'partner'
         });
-        partner.fatigue = Math.min(maxFatigue,
-          partner.fatigue + partnerFiringFatiguePerShot * getTimeOfDayFatigueMultiplier());
-        partner.fireTimer = partnerBaseFireRate;
+        partner.fatigue = Math.min(maxFatigue, partner.fatigue + partnerFiringFatiguePerShot);
+        // 夜間は疲労そのものではなく発砲間隔を伸ばし、攻撃頻度を落とすことでパフォーマンス低下を表現する
+        partner.fireTimer = partnerBaseFireRate * getTimeOfDayFatigueMultiplier();
       }
     }
   }
