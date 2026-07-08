@@ -232,6 +232,7 @@ const dayEndHour = 18;
 const maxOvertimeHour = 24;
 const overtimeSanDrainPerSec = 2; // 残業中、1秒あたり減少するSAN
 const overtimeLifespanDrainPerSec = 0.6; // 残業中、1秒あたり減少する寿命
+const partnerOvertimeDrainRatio = 1.5; // 残業中の同僚のSAN・寿命減少は、自機の減少値のこの倍率
 const overtimeFailureVitalRatio = 1 / 3; // 24時になっても片付けられなかった場合、SAN・寿命をこの割合まで減らす
 let dayStartTime = Date.now();
 let lastHourTime = dayStartTime;
@@ -1838,9 +1839,12 @@ function update() {
   if (gameOver || gameClear || setupStep || startScreen || specialSkillSelectionActive) return;
 
   // 一時メッセージの残り表示時間を減らし、期限切れなら削除する
-  for (let mi = messages.length - 1; mi >= 0; mi--) {
-    messages[mi].ttl -= dt * 1000;
-    if (messages[mi].ttl <= 0) messages.splice(mi, 1);
+  // ただし「DAY～」演出中（暗転～クリック待ち）は、読み終える前に消えないよう時間を止める
+  if (dayTransitionPhase !== 'out' && dayTransitionPhase !== 'waiting') {
+    for (let mi = messages.length - 1; mi >= 0; mi--) {
+      messages[mi].ttl -= dt * 1000;
+      if (messages[mi].ttl <= 0) messages.splice(mi, 1);
+    }
   }
 
   // 一日の終わりの画面演出中は、フェードの進行だけを行い、他の処理はすべて止める
@@ -1893,6 +1897,10 @@ function update() {
   if (scheduledReport && currentHour >= dayEndHour) {
     san = Math.max(0, san - overtimeSanDrainPerSec * dt);
     lifespan = Math.max(0, lifespan - overtimeLifespanDrainPerSec * dt);
+    if (partner.active) {
+      partner.san = Math.max(0, partner.san - overtimeSanDrainPerSec * partnerOvertimeDrainRatio * dt);
+      partner.lifespan = Math.max(0, partner.lifespan - overtimeLifespanDrainPerSec * partnerOvertimeDrainRatio * dt);
+    }
     checkVitalsGameOver();
     if (gameOver) return;
   }
@@ -2320,6 +2328,26 @@ function update() {
 }
 // タップ／クリックしやすいよう、枠付きで塗りつぶした矩形ボタンとしてラベルを描画し、
 // 同じ矩形を uiButtons に登録する（マウスクリック・タップの両方で action が呼ばれる）
+// 一時メッセージを画面上部の中央に表示する（通常表示時と、DAY演出中に上書き表示する時の両方から呼ばれる）
+function drawPendingMessages() {
+  if (messages.length === 0) return;
+  let y = 242;
+  for (const m of messages) {
+    ctx.font = m.font || '20px sans-serif';
+    // 残り時間に応じてメッセージを徐々に透明にする（DAY演出中は時間停止中のため常に不透明）
+    let alpha = 1;
+    if (m.initialTtl && m.initialTtl > 0) alpha = Math.max(0, Math.min(1, m.ttl / m.initialTtl));
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = m.color || 'white';
+    ctx.textAlign = m.textAlign || 'center';
+    ctx.fillText(m.text, m.x ?? canvas.width / 2, m.y ?? y);
+    ctx.restore();
+    if (m.y === undefined) y += 28;
+  }
+  ctx.textAlign = 'left';
+}
+
 // 現在のctx.fontで指定幅に収まるよう、1文字ずつ計測しながら折り返す（日本語想定のため単語区切りなし）
 function wrapTextToWidth(text, maxWidth) {
   const lines = [];
@@ -2902,23 +2930,7 @@ function draw() {
   );
 
   // 一時メッセージを画面上部の中央に表示する
-  if (messages.length > 0) {
-    let y = 242;
-    for (const m of messages) {
-      ctx.font = m.font || '20px sans-serif';
-      // 残り時間に応じてメッセージを徐々に透明にする
-      let alpha = 1;
-      if (m.initialTtl && m.initialTtl > 0) alpha = Math.max(0, Math.min(1, m.ttl / m.initialTtl));
-      ctx.save();
-      ctx.globalAlpha = alpha;
-      ctx.fillStyle = m.color || 'white';
-      ctx.textAlign = m.textAlign || 'center';
-      ctx.fillText(m.text, m.x ?? canvas.width / 2, m.y ?? y);
-      ctx.restore();
-      if (m.y === undefined) y += 28;
-    }
-    ctx.textAlign = 'left';
-  }
+  drawPendingMessages();
   // 画面右上に日付・時刻・曜日を表示する
   const yName = weekdayNames[currentDate.getDay()];
   const holidayFlag = isHoliday(currentDate) || yName === '土' || yName === '日';
@@ -3084,6 +3096,10 @@ function draw() {
     }
     ctx.fillStyle = `rgba(0, 0, 0, ${alpha})`;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // 暗転で隠れてしまった一時メッセージ（イベント結果など）を、タップされるまで読めるよう上から描き直す
+    if (dayTransitionPhase === 'waiting') {
+      drawPendingMessages();
+    }
     if (alpha > 0.6) {
       ctx.fillStyle = `rgba(255, 255, 255, ${dayTransitionPhase === 'waiting' ? 1 : (alpha - 0.6) / 0.4})`;
       ctx.font = '36px sans-serif';
