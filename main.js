@@ -152,7 +152,7 @@ let score = 0;
 let gameOver = false;
 let gameClear = false;
 let startScreen = false;
-// 'gender' → 'player-icon' → 'partner-icon' → null（完了、startScreenへ）の順に進む起動時のセットアップ画面
+// 'gender' → 'partner-icon' → null（完了、startScreenへ）の順に進む起動時のセットアップ画面
 let setupStep = 'gender';
 
 // ===== アイコン選択後のひとことメッセージ演出（表示→フェードアウトして次の画面へ） =====
@@ -645,9 +645,10 @@ function checkVitalsGameOver(deathEndingType = null) {
 }
 
 // ===== 自機の性別選択（imagesフォルダの画像を使用） =====
+// ここで選んだ画像を、そのまま自機のアイコンとしても使用する
 const genderChoices = [
-  { id: 'male', label: '男性', src: 'images/sample_male_normal.gif' },
-  { id: 'female', label: '女性', src: 'images/sample_female_normal.gif' }
+  { id: 'male', label: '男性', src: 'images/self/icon_01.png' },
+  { id: 'female', label: '女性', src: 'images/self/icon_02.png' }
 ];
 const genderImageElements = {};
 genderChoices.forEach(choice => {
@@ -656,11 +657,7 @@ genderChoices.forEach(choice => {
   genderImageElements[choice.id] = img;
 });
 let selectedGender = null;
-
-// ===== 自分のアイコン選択 =====
-// 絵・画像は仮のプレースホルダー（著作権フリーの絵文字）として扱う
-const playerIconChoices = ['🧑‍💻', '🧑‍💼', '🥷', '🤖', '🦸', '🧙'];
-let selectedPlayerIcon = playerIconChoices[0];
+let selectedPlayerIcon = null; // 性別選択で選んだ画像（genderChoicesのid）をそのまま自機アイコンとして使う
 
 // ===== 同僚のアイコン選択（imagesフォルダの画像を使用） =====
 const partnerIconChoices = [
@@ -1753,17 +1750,13 @@ function explodeEnemy(enemyIndex) {
 }
 
 // ===== 各種選択の実行処理（キーボード・タップ両方から呼ばれる） =====
-// 自機の性別を選び、自分のアイコン選択画面へ進む
+// 自機の性別を選ぶ。選んだ画像をそのまま自機のアイコンとしても使い、
+// ひとことメッセージのあと同僚のアイコン選択画面へ進む
 function selectGender(genderId) {
   selectedGender = genderId;
-  setupStep = 'player-icon';
-}
-
-// 自分のアイコンを選び、ひとことメッセージのあと同僚のアイコン選択画面へ進む
-function selectPlayerIcon(icon) {
-  selectedPlayerIcon = icon;
+  selectedPlayerIcon = genderId;
   const line = playerIconGreetingLines[Math.floor(Math.random() * playerIconGreetingLines.length)];
-  startIconGreeting(icon, line, () => { setupStep = 'partner-icon'; });
+  startIconGreeting(genderId, line, () => { setupStep = 'partner-icon'; }, genderImageElements[genderId]);
 }
 
 // 同僚のアイコンを選ぶ（nullなら「同僚なし」）。選択後、ひとことメッセージを挟んでスタート画面へ進む
@@ -1833,12 +1826,6 @@ document.addEventListener("keydown", (event) => {
   if (setupStep === 'gender') {
     const idx = Number(event.key) - 1;
     if (idx >= 0 && idx < genderChoices.length) selectGender(genderChoices[idx].id);
-    return;
-  }
-  // 起動時のセットアップ画面（自分のアイコン→同僚のアイコンの順）では数字キーで選ぶ
-  if (setupStep === 'player-icon') {
-    const idx = Number(event.key) - 1;
-    if (idx >= 0 && idx < playerIconChoices.length) selectPlayerIcon(playerIconChoices[idx]);
     return;
   }
   if (setupStep === 'partner-icon') {
@@ -3047,33 +3034,6 @@ function draw() {
     return;
   }
 
-  if (setupStep === 'player-icon') {
-    ctx.fillStyle = 'black';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = 'white';
-    ctx.font = 'bold 32px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('自分のアイコンを選んでください', canvas.width / 2, 110);
-    ctx.textAlign = 'left';
-
-    const btnSize = 100, gap = 16;
-    const totalWidth = playerIconChoices.length * btnSize + (playerIconChoices.length - 1) * gap;
-    const startX = canvas.width / 2 - totalWidth / 2;
-    const btnY = 210;
-    playerIconChoices.forEach((icon, i) => {
-      drawUiButton(startX + i * (btnSize + gap), btnY, btnSize, btnSize, icon,
-        () => selectPlayerIcon(icon),
-        { font: '48px "Segoe UI Emoji", sans-serif' });
-    });
-
-    ctx.fillStyle = '#cfd8dc';
-    ctx.font = '16px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('数字キー 1〜6 / タップで選択', canvas.width / 2, btnY + btnSize + 50);
-    ctx.textAlign = 'left';
-    return;
-  }
-
   if (setupStep === 'partner-icon') {
     ctx.fillStyle = 'black';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -3167,13 +3127,19 @@ function draw() {
   } else {
     ctx.globalAlpha = 1;
   }
-  // 自分のアイコン（仮のプレースホルダー：選択した絵文字）
-  ctx.font = '30px "Segoe UI Emoji", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(selectedPlayerIcon, player.x, player.y);
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
+  // 自分のアイコン（性別選択で選んだimages/self内の画像を使用）
+  const selfImg = genderImageElements[selectedPlayerIcon];
+  if (selfImg && selfImg.complete && selfImg.naturalWidth > 0) {
+    const selfImgSize = player.radius * 4.8;
+    ctx.drawImage(selfImg, player.x - selfImgSize / 2, player.y - selfImgSize / 2, selfImgSize, selfImgSize);
+  } else {
+    ctx.font = '30px "Segoe UI Emoji", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('🧑', player.x, player.y);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+  }
   ctx.globalAlpha = 1;
   // 自分の正面方向を、機体を中心とした円軌道上の照準点で示す
   const aimDotOrbitRadius = player.radius + 18;
@@ -3446,15 +3412,15 @@ function draw() {
   ctx.shadowBlur = 0;
   ctx.shadowOffsetY = 0;
 
-  // 左上に自分と同僚のプロフィールを同じ高さで並べる。
-  drawHudProfilePanel(12, 12, 145, 168, '自分', selectedPlayerIcon, '#4dd0e1', [
+  // 左上に自分と同僚のプロフィールを同じ高さで並べる（アイコンは同僚と同じサイズで表示）。
+  drawHudProfilePanel(12, 12, 145, 225, '自分', selectedPlayerIcon, '#4dd0e1', [
     { text: `SAN: ${Math.floor(san)} / ${maxSan}` },
     { text: `寿命: ${Math.ceil(lifespan)} / ${maxLifespan}` },
     { text: `脳疲労: ${Math.floor(fatigue)} / ${maxFatigue}` },
     { text: `Score: ${score}` },
     { text: `Rank: ${rank} ${rankNames[rank - 1]}` },
     { text: `Skill:${skillLevel}  EXP:${Math.floor(exp)}` }
-  ]);
+  ], false, 0, genderImageElements[selectedPlayerIcon], 46);
 
   const partnerUnavailable = !partner.active;
   const partnerTitle = selectedPartnerIcon === null
@@ -3476,18 +3442,18 @@ function draw() {
     selectedPartnerIcon !== null ? partnerIconImageElements[selectedPartnerIcon] : null,
     46);
 
-  // 共通の進行情報は、2つのプロフィール区画の下へまとめる（同僚の円形アイコン拡大に合わせて位置を下げる）。
+  // 共通の進行情報は、2つのプロフィール区画の下へまとめる（自分・同僚とも円形アイコン拡大に合わせて位置を下げる）。
   ctx.font = '13px sans-serif';
   ctx.fillStyle = weeklyQuotaAchievedEarly ? '#69f0ae' : '#b0bec5';
   ctx.fillText(
     `週ノルマ: 撃破 ${weeklyKills}/${weeklyKillQuota}  Score ${weeklyScoreGained}/${weeklyScoreQuota}` +
     (weeklyQuotaAchievedEarly ? '（達成！）' : ''),
-    12, 220
+    12, 250
   );
   ctx.fillStyle = 'white';
   ctx.fillText(
     '攻撃モード: ' + (autoFireEnabled ? '自動' : '手動') + (stunned ? '（行動不能）' : ''),
-    12, 238
+    12, 268
   );
 
   // 一時メッセージを画面上部の中央に表示する
