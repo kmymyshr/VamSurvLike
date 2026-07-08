@@ -192,9 +192,9 @@ let lastFire = 0;
 let score = 0;
 let gameOver = false;
 let gameClear = false;
-let startScreen = false;
-// 'gender' → 'partner-icon' → null（完了、startScreenへ）の順に進む起動時のセットアップ画面
-let setupStep = 'gender';
+// 起動時はまずモード選択（startScreen）を表示し、その後 'gender' → 'partner-icon' → null（完了、ゲーム開始）と進む
+let startScreen = true;
+let setupStep = null;
 
 // ===== アイコン選択後のひとことメッセージ演出（表示→フェードアウトして次の画面へ） =====
 const playerIconGreetingLines = [
@@ -2487,22 +2487,27 @@ function selectGender(genderId) {
   startIconGreeting(genderId, line, () => { setupStep = 'partner-icon'; }, genderImageElements[genderId]);
 }
 
-// 同僚のアイコンを選ぶ（nullなら「同僚なし」）。選択後、ひとことメッセージを挟んでスタート画面へ進む
+// 同僚のアイコンを選ぶ（nullなら「同僚なし」）。選択後、ひとことメッセージを挟んでゲームを開始する
 function selectPartnerIcon(icon) {
   selectedPartnerIcon = icon;
   if (icon === null) {
     setupStep = null;
-    startScreen = true;
+    beginGameplay();
     return;
   }
   const line = partnerIconGreetingLines[Math.floor(Math.random() * partnerIconGreetingLines.length)];
-  startIconGreeting(icon, line, () => { setupStep = null; startScreen = true; }, partnerIconImageElements[icon]);
+  startIconGreeting(icon, line, () => { setupStep = null; beginGameplay(); }, partnerIconImageElements[icon]);
 }
 
-// スタート画面：通常速度(1)か3倍速(2)でゲームを開始する
-function startGame(timeScale) {
+// モード選択画面：通常速度(1)か3倍速(2)を選び、自機の性別選択画面へ進む
+function selectMode(timeScale) {
   gameTimeScale = timeScale;
   startScreen = false;
+  setupStep = 'gender';
+}
+
+// 性別・アイコンの選択が完了した時点で、実際にゲームを開始する
+function beginGameplay() {
   gameClockMs = 0;
   lastUpdate = Date.now();
   lastHourTime = 0;
@@ -2615,9 +2620,9 @@ document.addEventListener("keydown", (event) => {
   // スタート画面では通常開始か3倍加速開始を選ぶ
   if (startScreen) {
     if (event.key === '1' || event.key === 'Enter') {
-      startGame(1);
+      selectMode(1);
     } else if (event.key === '2') {
-      startGame(3);
+      selectMode(3);
     }
     return;
   }
@@ -3760,6 +3765,25 @@ const backgroundGradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
 backgroundGradient.addColorStop(0, '#12161f');
 backgroundGradient.addColorStop(1, '#05060a');
 
+// スタート画面～プレイ開始直前（モード選択・性別選択・同僚選択）で使う共通背景
+const startScreenBackgroundImage = (() => {
+  const img = new Image();
+  img.src = 'images/background/start_01.png';
+  return img;
+})();
+
+// モード選択・性別選択・同僚選択の各画面の背景を描く（画像＋文字を読みやすくする暗いオーバーレイ）
+function drawSetupBackground() {
+  if (startScreenBackgroundImage.complete && startScreenBackgroundImage.naturalWidth > 0) {
+    ctx.drawImage(startScreenBackgroundImage, 0, 0, canvas.width, canvas.height);
+  } else {
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
 // 朝・昼・夕方・夜の背景画像を読み込んでおく
 const backgroundTimeImages = {
   morning: (() => { const img = new Image(); img.src = 'images/background/01_morning.png'; return img; })(),
@@ -4026,8 +4050,7 @@ function draw() {
   }
 
   if (setupStep === 'gender') {
-    ctx.fillStyle = 'black';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    drawSetupBackground();
     ctx.fillStyle = 'white';
     ctx.font = 'bold 32px sans-serif';
     ctx.textAlign = 'center';
@@ -4069,8 +4092,7 @@ function draw() {
   }
 
   if (setupStep === 'partner-icon') {
-    ctx.fillStyle = 'black';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    drawSetupBackground();
     ctx.fillStyle = 'white';
     ctx.font = 'bold 32px sans-serif';
     ctx.textAlign = 'center';
@@ -4118,8 +4140,7 @@ function draw() {
   }
 
   if (startScreen) {
-    ctx.fillStyle = 'black';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    drawSetupBackground();
     ctx.fillStyle = 'white';
     ctx.font = '48px sans-serif';
     ctx.textAlign = 'center';
@@ -4129,9 +4150,9 @@ function draw() {
     const btnW = 340, btnH = 54;
     const btnX = canvas.width / 2 - btnW / 2;
     drawUiButton(btnX, canvas.height / 2 - 60, btnW, btnH, '通常開始 (1 / Enter)',
-      () => startGame(1));
+      () => selectMode(1));
     drawUiButton(btnX, canvas.height / 2 + 4, btnW, btnH, '3倍加速モード (2)',
-      () => startGame(3));
+      () => selectMode(3));
 
     ctx.fillStyle = '#cfd8dc';
     ctx.font = '16px sans-serif';
