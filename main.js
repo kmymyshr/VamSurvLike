@@ -151,8 +151,8 @@ let score = 0;
 let gameOver = false;
 let gameClear = false;
 let startScreen = false;
-// 'player-icon' → 'partner-icon' → null（完了、startScreenへ）の順に進む起動時のセットアップ画面
-let setupStep = 'player-icon';
+// 'gender' → 'player-icon' → 'partner-icon' → null（完了、startScreenへ）の順に進む起動時のセットアップ画面
+let setupStep = 'gender';
 
 // ===== アイコン選択後のひとことメッセージ演出（表示→フェードアウトして次の画面へ） =====
 const playerIconGreetingLines = [
@@ -605,6 +605,19 @@ function checkVitalsGameOver(deathEndingType = null) {
     sendScore(score);
   }
 }
+
+// ===== 自機の性別選択（imagesフォルダの画像を使用） =====
+const genderChoices = [
+  { id: 'male', label: '男性', src: 'images/sample_male_normal.gif' },
+  { id: 'female', label: '女性', src: 'images/sample_female_normal.gif' }
+];
+const genderImageElements = {};
+genderChoices.forEach(choice => {
+  const img = new Image();
+  img.src = choice.src;
+  genderImageElements[choice.id] = img;
+});
+let selectedGender = null;
 
 // ===== 自分・同僚のアイコン選択 =====
 // 絵・画像は仮のプレースホルダー（著作権フリーの絵文字）として扱う
@@ -1553,6 +1566,12 @@ function explodeEnemy(enemyIndex) {
 }
 
 // ===== 各種選択の実行処理（キーボード・タップ両方から呼ばれる） =====
+// 自機の性別を選び、自分のアイコン選択画面へ進む
+function selectGender(genderId) {
+  selectedGender = genderId;
+  setupStep = 'player-icon';
+}
+
 // 自分のアイコンを選び、ひとことメッセージのあと同僚のアイコン選択画面へ進む
 function selectPlayerIcon(icon) {
   selectedPlayerIcon = icon;
@@ -1616,6 +1635,12 @@ document.addEventListener("keydown", (event) => {
   }
   // アイコン選択後のひとことメッセージ演出中は、フェードして次へ進むまで入力を受け付けない
   if (iconGreetingPhase) return;
+  // 起動時のセットアップ画面：まず自機の性別を選ぶ
+  if (setupStep === 'gender') {
+    const idx = Number(event.key) - 1;
+    if (idx >= 0 && idx < genderChoices.length) selectGender(genderChoices[idx].id);
+    return;
+  }
   // 起動時のセットアップ画面（自分のアイコン→同僚のアイコンの順）では数字キーで選ぶ
   if (setupStep === 'player-icon') {
     const idx = Number(event.key) - 1;
@@ -2686,6 +2711,49 @@ function draw() {
     ctx.fillStyle = '#ffe082';
     ctx.fillText(iconGreetingText, canvas.width / 2, canvas.height / 2 + 60);
     ctx.restore();
+    ctx.textAlign = 'left';
+    return;
+  }
+
+  if (setupStep === 'gender') {
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 32px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('自機の性別を選んでください', canvas.width / 2, 110);
+    ctx.textAlign = 'left';
+
+    const cardW = 220, cardH = 260, gap = 40;
+    const totalWidth = genderChoices.length * cardW + (genderChoices.length - 1) * gap;
+    const startX = canvas.width / 2 - totalWidth / 2;
+    const cardY = 170;
+    genderChoices.forEach((choice, i) => {
+      const cardX = startX + i * (cardW + gap);
+      ctx.save();
+      ctx.fillStyle = 'rgba(103, 58, 183, 0.35)';
+      ctx.fillRect(cardX, cardY, cardW, cardH);
+      ctx.strokeStyle = '#ce93d8';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(cardX, cardY, cardW, cardH);
+      const img = genderImageElements[choice.id];
+      if (img && img.complete && img.naturalWidth > 0) {
+        const imgSize = 180;
+        ctx.drawImage(img, cardX + (cardW - imgSize) / 2, cardY + 16, imgSize, imgSize);
+      }
+      ctx.fillStyle = 'white';
+      ctx.font = 'bold 22px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${i + 1}. ${choice.label}`, cardX + cardW / 2, cardY + cardH - 20);
+      ctx.textAlign = 'left';
+      ctx.restore();
+      uiButtons.push({ x: cardX, y: cardY, w: cardW, h: cardH, action: () => selectGender(choice.id) });
+    });
+
+    ctx.fillStyle = '#cfd8dc';
+    ctx.font = '16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('数字キー 1〜2 / タップで選択', canvas.width / 2, cardY + cardH + 50);
     ctx.textAlign = 'left';
     return;
   }
