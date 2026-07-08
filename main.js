@@ -1273,7 +1273,7 @@ function shouldShowReunionScene() {
 let reunionSceneActive = false;
 // 'dim'（同僚アイコンが暗くなっていく演出）→ 'line'（自機のセリフ）→ 'paragraph'（地の文）の順に進む
 let reunionScenePhase = null;
-const reunionSceneDimDurationMs = 3000; // アイコンが暗くなりきるまでの時間
+const reunionSceneDimDurationMs = 2000; // アイコンが暗くなりきるまでの時間
 let reunionSceneDimTimer = 0;
 let reunionSceneLine = '';
 let reunionSceneParagraph = [];
@@ -4417,7 +4417,7 @@ function draw() {
     const dimProgress = reunionScenePhase === 'dim'
       ? 1 - Math.max(0, reunionSceneDimTimer / reunionSceneDimDurationMs)
       : 1;
-    ctx.fillStyle = `rgba(0, 0, 0, ${dimProgress * 0.75})`;
+    ctx.fillStyle = `rgba(0, 0, 0, ${dimProgress * 0.45})`;
     ctx.fillRect(imgX, imgY, imgSize, imgSize);
 
     ctx.textAlign = 'center';
