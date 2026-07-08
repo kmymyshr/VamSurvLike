@@ -28,6 +28,71 @@ deathPortraitCanvas.height = deathPortraitSize;
 const deathPortraitCtx = deathPortraitCanvas.getContext('2d');
 
 console.log('main.js loaded');
+
+// ===== 周回プレイの引き継ぎ（覚醒ポイント） =====
+// クリア・ゲームオーバーを問わず、「・・・という夢をみました」を選んだ時点のScoreの一部が
+// 「覚醒ポイント」としてブラウザに永続化され、次回以降のタイトル画面で初期パラメータの強化に使える
+const awakeningStorageKey = 'vamSurvLike_awakening_v1';
+const awakeningScoreDivisor = 10; // Scoreをこの値で割った分だけ覚醒ポイントを獲得する
+const awakeningUpgradeMaxLevel = 5;
+const awakeningUpgradeDefs = [
+  {
+    id: 'skillLevel', label: '初期特殊スキルレベル',
+    describeLevel: (lv) => `ゲーム開始時のスキルレベルが+${lv}される`
+  },
+  {
+    id: 'vitals', label: '初期SAN・寿命',
+    describeLevel: (lv) => `ゲーム開始時のSAN・寿命の上限が+${lv * 10}される`
+  },
+  {
+    id: 'fatigueCap', label: '初期脳疲労の上限緩和',
+    describeLevel: (lv) => `脳疲労の上限が+${lv * 10}され、疲労で動けなくなりにくくなる`
+  }
+];
+// 現在のレベルから次のレベルへ上げるのに必要な覚醒ポイント数
+function awakeningUpgradeCost(currentLevel) {
+  return 5 + currentLevel * 4;
+}
+
+function loadAwakeningSave() {
+  const fallback = { points: 0, upgrades: { skillLevel: 0, vitals: 0, fatigueCap: 0 } };
+  try {
+    const raw = localStorage.getItem(awakeningStorageKey);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    const upgrades = parsed.upgrades || {};
+    return {
+      points: Math.max(0, Math.floor(parsed.points) || 0),
+      upgrades: {
+        skillLevel: Math.max(0, Math.min(awakeningUpgradeMaxLevel, Math.floor(upgrades.skillLevel) || 0)),
+        vitals: Math.max(0, Math.min(awakeningUpgradeMaxLevel, Math.floor(upgrades.vitals) || 0)),
+        fatigueCap: Math.max(0, Math.min(awakeningUpgradeMaxLevel, Math.floor(upgrades.fatigueCap) || 0))
+      }
+    };
+  } catch (e) {
+    return fallback;
+  }
+}
+function saveAwakeningSave() {
+  try {
+    localStorage.setItem(awakeningStorageKey, JSON.stringify(awakeningSave));
+  } catch (e) {
+    // localStorageが使えない環境（プライベートブラウズ等）では、保存できなくても致命的ではないため無視する
+  }
+}
+let awakeningSave = loadAwakeningSave();
+
+// 覚醒ポイントを消費して、指定した強化を1レベル上げる
+function purchaseAwakeningUpgrade(id) {
+  const level = awakeningSave.upgrades[id];
+  if (level >= awakeningUpgradeMaxLevel) return;
+  const cost = awakeningUpgradeCost(level);
+  if (awakeningSave.points < cost) return;
+  awakeningSave.points -= cost;
+  awakeningSave.upgrades[id] = level + 1;
+  saveAwakeningSave();
+}
+
 const player = {
   x: 400,
   y: 300,
@@ -195,6 +260,7 @@ let gameClear = false;
 // 起動時はまずモード選択（startScreen）を表示し、その後 'gender' → 'partner-icon' → null（完了、ゲーム開始）と進む
 let startScreen = true;
 let setupStep = null;
+let awakeningShopActive = false; // タイトル画面から開く、覚醒ポイントでの強化画面
 
 // ===== アイコン選択後のひとことメッセージ演出（表示→フェードアウトして次の画面へ） =====
 const playerIconGreetingLines = [
@@ -227,6 +293,19 @@ function startIconGreeting(icon, text, onComplete, iconImage = null) {
   iconGreetingOnComplete = onComplete;
 }
 
+// ===== セットアップ画面（性別・同僚選択）の切り替え演出 =====
+// 選択直後、画面を暗転させてから次のページ（ひとことメッセージなど）へ進む
+let setupFadePhase = null; // null / 'out'
+let setupFadeTimer = 0;
+const setupFadeDurationMs = 350;
+let setupFadeOnComplete = null;
+
+function startSetupFadeOut(onComplete) {
+  setupFadePhase = 'out';
+  setupFadeTimer = setupFadeDurationMs;
+  setupFadeOnComplete = onComplete;
+}
+
 // ===== エンディング =====
 // 'true' | 'normal' | 'bad-san' | 'bad-lifespan' | 'bad-partner-shot' のいずれか。gameOver / gameClear になる瞬間に確定する
 let endingType = null;
@@ -248,8 +327,8 @@ let explosionShakeTimer = 0;
 let friendlyFireHitFlashTimer = 0;
 
 // ===== 脳疲労システム =====
-const maxFatigue = 100;
-let fatigue = 0; // 0が元気な状態、100が疲労の限界
+const maxFatigue = 100 + awakeningSave.upgrades.fatigueCap * 10; // 覚醒ポイントの「初期脳疲労の上限緩和」で底上げされる
+let fatigue = 0; // 0が元気な状態、maxFatigueが疲労の限界
 
 // 時間帯が進むほど、回復してもここより下がらなくなる「脳疲労の下限」。
 // 通常プレイなら夕方(終業時刻)には脳疲労が70～100前後を保つよう、この下限を利用してなかなか回復しきらないようにする。
@@ -964,7 +1043,7 @@ function endWorkday() {
   }
 }
 // ===== SAN（精神力）システム =====
-const maxSan = 100;
+const maxSan = 100 + awakeningSave.upgrades.vitals * 10; // 覚醒ポイントの「初期SAN・寿命」で底上げされる
 let san = maxSan;
 
 // SANが減少する量
@@ -984,7 +1063,7 @@ let friendlyFireInvincibleTimer = 0;
 // ===== 寿命（健康）システム =====
 // SANダメージの蓄積や、脳疲労・SANの悪い状態が長く続くことで少しずつ削れていく。
 // 0になったらSANとは別にゲームオーバーになる（＝一時的にSANを回復させても、慢性的な消耗の蓄積だけは元に戻らない）
-const maxLifespan = 100;
+const maxLifespan = 100 + awakeningSave.upgrades.vitals * 10; // 覚醒ポイントの「初期SAN・寿命」で底上げされる
 let lifespan = maxLifespan;
 const sanDamageToLifespanRatio = 0.15; // SANダメージを受けるたびに、その15%ぶん寿命も削れる
 const highFatigueThresholdRatio = 0.8; // 脳疲労がこの割合を超えている状態を「高疲労」とみなす
@@ -1761,7 +1840,7 @@ const rankThresholds = [0, 40, 120, 280, 550, 950, 1500, 2300, 3500, 6000]; // �
 let exp = 0;
 const baseExpPerLevel = 20; // 最初のレベルアップに必要な経験値（序盤が上がりやすいよう引き下げ）
 const expPerLevelGrowth = 6; // レベルが1上がるごとに、次のレベルアップに必要な経験値が増える量
-let skillLevel = 0;
+let skillLevel = awakeningSave.upgrades.skillLevel; // 覚醒ポイントの「初期特殊スキルレベル」で底上げされる
 
 // 指定レベルに到達するまでの累積必要経験値（レベルが上がるほど1レベルあたりの必要量が増える等差数列の和）
 function expThresholdForLevel(level) {
@@ -2505,10 +2584,13 @@ function defeatEnemyInstantly(enemyIndex) {
 // 自機の性別を選ぶ。選んだ画像をそのまま自機のアイコンとしても使い、
 // ひとことメッセージのあと同僚のアイコン選択画面へ進む
 function selectGender(genderId) {
+  if (setupFadePhase) return;
   selectedGender = genderId;
   selectedPlayerIcon = genderId;
-  const line = playerIconGreetingLines[Math.floor(Math.random() * playerIconGreetingLines.length)];
-  startIconGreeting(genderId, line, () => { setupStep = 'partner-icon'; }, genderImageElements[genderId]);
+  startSetupFadeOut(() => {
+    const line = playerIconGreetingLines[Math.floor(Math.random() * playerIconGreetingLines.length)];
+    startIconGreeting(genderId, line, () => { setupStep = 'partner-icon'; }, genderImageElements[genderId]);
+  });
 }
 
 // 同僚のアイコンを選ぶ（nullなら「同僚なし」）。選択後、ひとことメッセージを挟んでゲームを開始する
@@ -2641,13 +2723,17 @@ document.addEventListener("keydown", (event) => {
     goHomeFromWeekendWork();
     return;
   }
-  // スタート画面では通常開始か3倍加速開始を選ぶ
-  if (startScreen) {
+  // スタート画面では通常開始か3倍加速開始を選ぶ（覚醒ポイントの強化画面を開いている間は無効）
+  if (startScreen && !awakeningShopActive) {
     if (event.key === '1' || event.key === 'Enter') {
       selectMode(1);
     } else if (event.key === '2') {
       selectMode(3);
     }
+    return;
+  }
+  if (awakeningShopActive && event.key === 'Escape') {
+    awakeningShopActive = false;
     return;
   }
 
@@ -2849,6 +2935,18 @@ function update() {
     return;
   }
   gameClockMs = now;
+
+  // セットアップ画面の切り替え演出：暗転しきったら次の画面へ進む
+  if (setupFadePhase === 'out') {
+    setupFadeTimer -= dt * 1000;
+    if (setupFadeTimer <= 0) {
+      setupFadePhase = null;
+      const onComplete = setupFadeOnComplete;
+      setupFadeOnComplete = null;
+      if (onComplete) onComplete();
+    }
+    return;
+  }
 
   // 力尽きた演出中は、画面を停止したまま演出用のタイマーだけを進める
   if (deathSequence) {
@@ -3700,7 +3798,13 @@ function drawUiButton(x, y, w, h, label, action, options = {}) {
 function drawEndScreenButtons(baseY) {
   const btnW = 300, btnH = 48;
   const btnX = canvas.width / 2 - btnW / 2;
-  drawUiButton(btnX, baseY, btnW, btnH, '・・・という夢をみました', () => location.reload());
+  drawUiButton(btnX, baseY, btnW, btnH, '・・・という夢をみました', () => {
+    // クリア・ゲームオーバーを問わず、Scoreの一部を覚醒ポイントとして持ち越し、次周のタイトル画面で使えるようにする
+    const earnedAwakeningPoints = Math.floor(score / awakeningScoreDivisor);
+    awakeningSave.points += earnedAwakeningPoints;
+    saveAwakeningSave();
+    location.reload();
+  });
   drawUiButton(btnX, baseY + 60, btnW, btnH, '終了する', () => { window.close(); },
     { fillStyle: 'rgba(84, 30, 30, 0.6)', strokeStyle: '#ef9a9a' });
   ctx.fillStyle = '#b0bec5';
@@ -3786,12 +3890,16 @@ function drawEndingScreen() {
   ctx.font = 'bold 18px sans-serif';
   ctx.fillStyle = 'white';
   ctx.fillText(`Final Score: ${score}`, canvas.width / 2, canvas.height / 2 + 54);
+  ctx.font = '15px sans-serif';
+  ctx.fillStyle = '#ce93d8';
+  ctx.fillText(`「・・・という夢をみました」を選ぶと、覚醒ポイント +${Math.floor(score / awakeningScoreDivisor)} を次周に持ち越せます`,
+    canvas.width / 2, canvas.height / 2 + 76);
   ctx.font = 'bold 26px sans-serif';
   ctx.fillStyle = cfg.labelColor;
-  ctx.fillText('E N D', canvas.width / 2, canvas.height / 2 + 86);
+  ctx.fillText('E N D', canvas.width / 2, canvas.height / 2 + 104);
 
   ctx.textAlign = 'left';
-  drawEndScreenButtons(canvas.height / 2 + 108);
+  drawEndScreenButtons(canvas.height / 2 + 128);
 }
 
 // ===== 背景（imagesフォルダの時間帯画像） =====
@@ -4097,11 +4205,13 @@ function draw() {
     const cardY = 170;
     genderChoices.forEach((choice, i) => {
       const cardX = startX + i * (cardW + gap);
+      const isHovered = mousePosition.x >= cardX && mousePosition.x <= cardX + cardW &&
+        mousePosition.y >= cardY && mousePosition.y <= cardY + cardH;
       ctx.save();
-      ctx.fillStyle = 'rgba(103, 58, 183, 0.35)';
+      ctx.fillStyle = isHovered ? 'rgba(156, 107, 230, 0.55)' : 'rgba(103, 58, 183, 0.35)';
       ctx.fillRect(cardX, cardY, cardW, cardH);
-      ctx.strokeStyle = '#ce93d8';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = isHovered ? '#f3e5f5' : '#ce93d8';
+      ctx.lineWidth = isHovered ? 3 : 2;
       ctx.strokeRect(cardX, cardY, cardW, cardH);
       const img = genderImageElements[choice.id];
       if (img && img.complete && img.naturalWidth > 0) {
@@ -4144,11 +4254,13 @@ function draw() {
       const row = Math.floor(i / cols);
       const cellX = startX + col * (cellSize + gap);
       const cellY = startY + row * (cellSize + gap);
+      const isHovered = mousePosition.x >= cellX && mousePosition.x <= cellX + cellSize &&
+        mousePosition.y >= cellY && mousePosition.y <= cellY + cellSize;
       ctx.save();
-      ctx.fillStyle = 'rgba(103, 58, 183, 0.35)';
+      ctx.fillStyle = isHovered ? 'rgba(156, 107, 230, 0.55)' : 'rgba(103, 58, 183, 0.35)';
       ctx.fillRect(cellX, cellY, cellSize, cellSize);
-      ctx.strokeStyle = '#ce93d8';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = isHovered ? '#f3e5f5' : '#ce93d8';
+      ctx.lineWidth = isHovered ? 3 : 2;
       ctx.strokeRect(cellX, cellY, cellSize, cellSize);
       const img = partnerIconImageElements[id];
       if (img && img.complete && img.naturalWidth > 0) {
@@ -4170,6 +4282,77 @@ function draw() {
     ctx.fillText('タップで選択（キー1〜9でも一部選択可）　0キーで同僚なし',
       canvas.width / 2, gridBottom + 30 + noneBtnH + 30);
     ctx.textAlign = 'left';
+    return;
+  }
+
+  if (awakeningShopActive) {
+    drawSetupBackground();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffd54f';
+    ctx.font = 'bold 30px sans-serif';
+    ctx.fillText('覚醒ポイントで強化', canvas.width / 2, 64);
+    ctx.fillStyle = '#e1bee7';
+    ctx.font = 'bold 18px sans-serif';
+    ctx.fillText(`保有ポイント: ${awakeningSave.points}`, canvas.width / 2, 96);
+    ctx.textAlign = 'left';
+
+    const cardX = 90;
+    const cardWidth = canvas.width - 180;
+    const cardHeight = 110;
+    const cardGap = 16;
+    let cardY = 125;
+    awakeningUpgradeDefs.forEach((def) => {
+      const level = awakeningSave.upgrades[def.id];
+      const maxed = level >= awakeningUpgradeMaxLevel;
+      const cost = maxed ? null : awakeningUpgradeCost(level);
+      const affordable = !maxed && awakeningSave.points >= cost;
+
+      ctx.fillStyle = 'rgba(103, 58, 183, 0.35)';
+      ctx.fillRect(cardX, cardY, cardWidth, cardHeight);
+      ctx.strokeStyle = '#ce93d8';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(cardX, cardY, cardWidth, cardHeight);
+
+      ctx.fillStyle = 'white';
+      ctx.font = 'bold 20px sans-serif';
+      ctx.fillText(`${def.label}  Lv.${level} / ${awakeningUpgradeMaxLevel}`, cardX + 20, cardY + 32);
+      ctx.fillStyle = '#e0e0e0';
+      ctx.font = '15px sans-serif';
+      ctx.fillText(
+        maxed ? '既に最大レベルまで強化済み' : `次のレベル: ${def.describeLevel(level + 1)}`,
+        cardX + 20, cardY + 58
+      );
+
+      const btnW = 150, btnH = 40;
+      const btnX = cardX + cardWidth - btnW - 20;
+      const btnY = cardY + (cardHeight - btnH) / 2;
+      if (maxed) {
+        ctx.fillStyle = 'rgba(60, 60, 60, 0.6)';
+        ctx.fillRect(btnX, btnY, btnW, btnH);
+        ctx.strokeStyle = '#757575';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(btnX, btnY, btnW, btnH);
+        ctx.fillStyle = '#9e9e9e';
+        ctx.font = 'bold 16px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('MAX', btnX + btnW / 2, btnY + btnH / 2);
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+      } else {
+        drawUiButton(btnX, btnY, btnW, btnH, `強化する (${cost}P)`,
+          () => purchaseAwakeningUpgrade(def.id),
+          affordable
+            ? { fillStyle: 'rgba(103, 58, 183, 0.7)', strokeStyle: '#ce93d8', font: 'bold 14px sans-serif' }
+            : { fillStyle: 'rgba(60, 60, 60, 0.5)', strokeStyle: '#616161', textColor: '#9e9e9e', font: 'bold 14px sans-serif' });
+      }
+      cardY += cardHeight + cardGap;
+    });
+
+    const backBtnW = 200, backBtnH = 44;
+    drawUiButton(canvas.width / 2 - backBtnW / 2, cardY + 10, backBtnW, backBtnH,
+      'タイトルへ戻る', () => { awakeningShopActive = false; },
+      { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
     return;
   }
 
@@ -4195,12 +4378,15 @@ function draw() {
       () => selectMode(1));
     drawUiButton(btnX, canvas.height / 2 + 4, btnW, btnH, '3倍加速モード (2)',
       () => selectMode(3));
+    drawUiButton(btnX, canvas.height / 2 + 68, btnW, 40,
+      `覚醒ポイントで強化 (P: ${awakeningSave.points})`, () => { awakeningShopActive = true; },
+      { fillStyle: 'rgba(74, 20, 140, 0.55)', strokeStyle: '#ce93d8', font: 'bold 15px sans-serif' });
 
     ctx.fillStyle = '#cfd8dc';
     ctx.font = '16px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('P = 一時停止 / 再開　F = 自動攻撃切替', canvas.width / 2, canvas.height / 2 + 92);
-    ctx.fillText('WASD・左スティック = 移動　マウス・ドラッグ / 右スティック = 照準・攻撃', canvas.width / 2, canvas.height / 2 + 118);
+    ctx.fillText('P = 一時停止 / 再開　F = 自動攻撃切替', canvas.width / 2, canvas.height / 2 + 134);
+    ctx.fillText('WASD・左スティック = 移動　マウス・ドラッグ / 右スティック = 照準・攻撃', canvas.width / 2, canvas.height / 2 + 160);
     ctx.textAlign = 'left';
     return;
   }
@@ -5128,6 +5314,13 @@ function draw() {
   // 通常時、SANが低いときは文字が読める程度の軽い歪みをかける
   if (!gameOver && !gameClear && san <= sanDistortionThreshold) {
     applyScreenDistortion(sanLowDistortionAmplitude);
+  }
+
+  // セットアップ画面の切り替え演出：選択直後、画面全体を暗転させて次のページへ切り替える
+  if (setupFadePhase === 'out') {
+    const fadeAlpha = 1 - Math.max(0, Math.min(1, setupFadeTimer / setupFadeDurationMs));
+    ctx.fillStyle = `rgba(0, 0, 0, ${fadeAlpha})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
 }
 // ===== メインループ =====
