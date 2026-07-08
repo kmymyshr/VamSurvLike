@@ -3280,6 +3280,7 @@ function performBulletParry(bullet, fromX, fromY, actorAngle) {
 
 // ===== ラスボス（自機・同僚のSANが同時に20を切ると出現する、名状しがたい巨大な敵） =====
 // 通常の敵は出現を止め、パリィで打ち返した弾だけが有効打になる特別な戦闘に切り替わる
+const bossImage = loadImage('images/dreamcatcher/last_boss.png');
 const bossSanTriggerThreshold = 20;
 const bossWidthRatio = 0.7; // 画面幅に対するラスボスの幅の割合
 const bossHeight = 210; // ラスボスが窓を覆う高さ
@@ -3290,14 +3291,23 @@ const bossBulletSpeed = 4.2;
 const bossBulletDamageSan = 12;
 const bossBulletDamageLifespan = 3;
 const bossMaxHp = 500;
+// 本体が上下左右にゆっくり動き回る範囲と、目標地点を変える間隔
+const bossMoveRangeX = 50;
+const bossMoveRangeY = 26;
+const bossMoveEaseFactor = 1.2;
+// 本体（画像）に自機・同僚が接触した時のダメージ
+const bossContactSanDamage = 20;
+const bossContactLifespanDamage = 6;
 let bossEventOnCooldown = false; // 一度発生したら、両者のSANが閾値を上回るまで再発生しない
-let bossEvent = null; // null、または { phase: 'descending'|'active', descendProgress, hp, maxHp, fireTimerMs, savedEnemies }
+let bossEvent = null; // null、または { phase, descendProgress, hp, maxHp, fireTimerMs, savedEnemies, offsetX, offsetY, moveTargetX, moveTargetY, moveTimerMs }
 
 function getBossGeometry() {
   const width = canvas.width * bossWidthRatio;
-  const x = (canvas.width - width) / 2;
+  const offsetX = bossEvent ? bossEvent.offsetX : 0;
+  const offsetY = (bossEvent && bossEvent.phase === 'active') ? bossEvent.offsetY : 0;
+  const x = (canvas.width - width) / 2 + offsetX;
   const descendProgress = bossEvent ? bossEvent.descendProgress : 0;
-  const topY = -bossHeight + bossHeight * descendProgress;
+  const topY = -bossHeight + bossHeight * descendProgress + offsetY;
   return { x, y: topY, width, height: bossHeight };
 }
 
@@ -3320,7 +3330,12 @@ function startBossEvent() {
     hp: bossMaxHp,
     maxHp: bossMaxHp,
     fireTimerMs: bossFireIntervalMs,
-    savedEnemies: enemies.slice()
+    savedEnemies: enemies.slice(),
+    offsetX: 0,
+    offsetY: 0,
+    moveTargetX: 0,
+    moveTargetY: 0,
+    moveTimerMs: 0
   };
   enemies.length = 0; // 通常の敵は一時的に退避させ、ラスボス戦の間は出現しない
   showMessage('……何かが、窓の向こうから降りてくる。', 3400, '#ff1744', '26px sans-serif');
@@ -3329,16 +3344,63 @@ function startBossEvent() {
 function updateBossEvent(dt) {
   if (bossEvent.phase === 'descending') {
     bossEvent.descendProgress = Math.min(1, bossEvent.descendProgress + dt / bossDescendDurationSec);
+    // 降りてくる途中も、左右にゆっくり揺れながら近づいてくるようにする
+    bossEvent.offsetX = Math.sin(gameClockMs / 900) * bossMoveRangeX * 0.5;
     if (bossEvent.descendProgress >= 1) {
       bossEvent.phase = 'active';
       showMessage('ラスボスが姿を現した！ パリィで弾を打ち返せ！', 3600, '#ff1744', '24px sans-serif');
     }
     return;
   }
+
+  // 本体が上下左右にゆっくり動き回る。一定時間ごとに新しい目標地点を選び、なめらかに近づく
+  bossEvent.moveTimerMs -= dt * 1000;
+  if (bossEvent.moveTimerMs <= 0) {
+    bossEvent.moveTargetX = (Math.random() * 2 - 1) * bossMoveRangeX;
+    bossEvent.moveTargetY = (Math.random() * 2 - 1) * bossMoveRangeY;
+    bossEvent.moveTimerMs = 1500 + Math.random() * 1800;
+  }
+  const moveEase = Math.min(1, dt * bossMoveEaseFactor);
+  bossEvent.offsetX += (bossEvent.moveTargetX - bossEvent.offsetX) * moveEase;
+  bossEvent.offsetY += (bossEvent.moveTargetY - bossEvent.offsetY) * moveEase;
+
+  checkBossContactDamage();
+
   bossEvent.fireTimerMs -= dt * 1000;
   if (bossEvent.fireTimerMs <= 0) {
     bossEvent.fireTimerMs = bossFireIntervalMs;
     fireBossBullets();
+  }
+}
+
+// ラスボスの本体（見た目の範囲）に自機・同僚が触れていたら、直接ダメージを与える
+function checkBossContactDamage() {
+  const geo = getBossGeometry();
+  const overlaps = (entity) => (
+    entity.x + entity.radius >= geo.x && entity.x - entity.radius <= geo.x + geo.width &&
+    entity.y + entity.radius >= geo.y && entity.y - entity.radius <= geo.y + geo.height
+  );
+
+  if (!invincible && overlaps(player)) {
+    if (playerBarrierCharges > 0) {
+      playerBarrierCharges--;
+    } else {
+      san = Math.max(0, san - bossContactSanDamage * specialSkillEffects.sanDamageMultiplier);
+      lifespan = Math.max(0, lifespan - bossContactLifespanDamage);
+      checkVitalsGameOver();
+    }
+    invincible = true;
+    invincibleTimer = invincibleDuration;
+  }
+
+  if (partner.active && partner.friendlyFireInvincibleTimer <= 0 && overlaps(partner)) {
+    if (partner.barrierCharges > 0) {
+      partner.barrierCharges--;
+    } else {
+      partner.san = Math.max(0, partner.san - bossContactSanDamage);
+      partner.lifespan = Math.max(0, partner.lifespan - bossContactLifespanDamage);
+    }
+    partner.friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
   }
 }
 
@@ -3837,6 +3899,7 @@ function update() {
   checkBossEventTrigger();
   if (bossEvent) {
     updateBossEvent(dt);
+    if (gameOver || deathSequence) return;
   } else {
   // ゲーム内時刻を進める
   if (now - lastHourTime >= hourMs) {
@@ -4871,50 +4934,30 @@ function drawBossEvent() {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.restore();
 
-  // ラスボス本体（正式な画像を用意するまでの仮の見た目）：
-  // 不定形にうごめく暗いかたまり＋ゆらぐ触手＋赤く光る眼（穴）
+  // ラスボス本体：last_boss.png を、目・口のあたりが見えるように下寄りを切り出して表示する
   ctx.save();
-  ctx.fillStyle = 'rgba(12, 4, 22, 0.96)';
-  const bumps = 7;
-  ctx.beginPath();
-  ctx.moveTo(geo.x, geo.y);
-  for (let i = 0; i <= bumps; i++) {
-    const t = i / bumps;
-    const bx = geo.x + geo.width * t;
-    const wob = Math.sin(gameClockMs / 400 + i * 1.7) * 10;
-    const by = geo.y + geo.height * 0.85 + wob;
-    ctx.lineTo(bx, by);
-  }
-  ctx.lineTo(geo.x + geo.width, geo.y);
-  ctx.closePath();
-  ctx.fill();
-
-  // 触手：下端からゆらゆら垂れ下がる線
-  ctx.strokeStyle = 'rgba(12, 4, 22, 0.9)';
-  ctx.lineWidth = 10;
-  ctx.lineCap = 'round';
-  for (let i = 0; i < bossHoleCount + 2; i++) {
-    const tx = geo.x + (geo.width / (bossHoleCount + 1)) * i;
-    const sway = Math.sin(gameClockMs / 350 + i * 2.1) * 18;
-    ctx.beginPath();
-    ctx.moveTo(tx, geo.y + geo.height * 0.85);
-    ctx.quadraticCurveTo(tx + sway, geo.y + geo.height + 20, tx + sway * 1.4, geo.y + geo.height + 46);
-    ctx.stroke();
+  ctx.fillStyle = 'rgba(6, 2, 10, 0.9)';
+  ctx.fillRect(geo.x, geo.y, geo.width, geo.height);
+  if (bossImage.complete && bossImage.naturalWidth > 0) {
+    const scale = geo.width / bossImage.naturalWidth;
+    const sourceHeight = Math.min(bossImage.naturalHeight, geo.height / scale);
+    const sourceY = Math.max(0, bossImage.naturalHeight * 0.42);
+    const clampedSourceHeight = Math.min(sourceHeight, bossImage.naturalHeight - sourceY);
+    ctx.drawImage(
+      bossImage,
+      0, sourceY, bossImage.naturalWidth, clampedSourceHeight,
+      geo.x, geo.y, geo.width, clampedSourceHeight * scale
+    );
   }
 
-  // 弾を撃ってくる「穴」の位置に、赤く脈打つ眼を描く
+  // 弾を撃ってくる「穴」の位置に、赤く脈打つ光を重ねる
   for (const hole of getBossHolePositions()) {
     const pulse = 0.6 + 0.4 * Math.sin(gameClockMs / 220 + hole.x);
     ctx.beginPath();
-    ctx.fillStyle = `rgba(255, 30, 30, ${0.7 * pulse})`;
+    ctx.fillStyle = `rgba(255, 30, 30, ${0.55 * pulse})`;
     ctx.shadowColor = '#ff1744';
-    ctx.shadowBlur = 14;
-    ctx.arc(hole.x, hole.y, 12, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
-    ctx.beginPath();
-    ctx.arc(hole.x, hole.y, 5, 0, Math.PI * 2);
+    ctx.shadowBlur = 16;
+    ctx.arc(hole.x, hole.y, 14, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.restore();
