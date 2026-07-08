@@ -66,7 +66,7 @@ const dreamMemoryUpgradeDefs = [
   },
   {
     id: 'barrierCharges', label: '初期「心の壁」バリア',
-    describeLevel: (lv) => `ゲーム開始時から、誤射・接触ダメージを${lv}回防ぐバリアを持つ`
+    describeLevel: (lv) => `毎日の始まりに、誤射・接触ダメージを${lv}回防ぐバリアが新たに張られる`
   },
   {
     id: 'partnerBond', label: '同僚との初期関係性',
@@ -684,6 +684,7 @@ function triggerCaffeineCollapse() {
 function skipCollapseRestDay() {
   currentDate.setDate(currentDate.getDate() + 1);
   dayNumber++;
+  applyDailyBarrierRenewal();
   resetPlayerAndPartnerPositionForNewDay();
   if (currentDate.getDay() === 1) {
     startNewWeek();
@@ -732,6 +733,12 @@ const heartWallBarrierCharges = 3; // 1個取得するごとに、お互いの�
 let heartWall = null;
 let heartWallSpawnTimerMs = getRandomHeartWallSpawnDelay();
 let playerBarrierCharges = 0; // 残っている間は同僚の誤射を防ぐ
+
+// 夢の記憶ポイントの「初期『心の壁』バリア」は、毎日の始まりにスキルレベル分のバリアが新たに張られる
+// （前日の残りが多ければそちらを優先し、減ることはない）
+function applyDailyBarrierRenewal() {
+  playerBarrierCharges = Math.max(playerBarrierCharges, dreamMemorySave.upgrades.barrierCharges);
+}
 
 // チョコレート・栄養ドリンクの約20%の頻度でしか出現しない、希少アイテム
 function getRandomHeartWallSpawnDelay() {
@@ -2518,6 +2525,7 @@ function applyDayEndRecovery() {
 function autoAdvanceDay() {
   currentDate.setDate(currentDate.getDate() + 1);
   applyDayEndRecovery();
+  applyDailyBarrierRenewal();
   resetPlayerAndPartnerPositionForNewDay();
   // 終わった一日に5本以上飲んでいたら、翌朝（＝今から始まる日）の判定だけ確率を倍にする
   if (energyDrinkDailyCount + coffeeDailyCount >= caffeineHeavyDayThreshold) {
@@ -2545,6 +2553,7 @@ function autoAdvanceDay() {
 function jumpToNextMondayAndResetWeek() {
   currentDate = nextMonday(currentDate);
   eveningDrinkRecoveryPenalty = false; // 休日を挟むため、このペナルティは持ち越さない
+  applyDailyBarrierRenewal();
   resetPlayerAndPartnerPositionForNewDay();
   // 終わった一日に5本以上飲んでいたら、翌朝（＝今から始まる日）の判定だけ確率を倍にする
   if (energyDrinkDailyCount + coffeeDailyCount >= caffeineHeavyDayThreshold) {
@@ -2904,7 +2913,7 @@ function beginGameplay() {
   lastHourTime = 0;
   dayStartTime = 0;
   dayNumber = 1;
-  playerBarrierCharges = dreamMemorySave.upgrades.barrierCharges; // 夢の記憶ポイントの「初期『心の壁』バリア」で底上げされる
+  applyDailyBarrierRenewal();
   resetWeeklyQuotaForNewWeek();
   initPartner();
   // 前回と同じ自機・同僚で始めた場合、関係性は前回終了時の値+20から始まる
@@ -4892,7 +4901,7 @@ function draw() {
 
     const backBtnW = 200, backBtnH = 36;
     drawUiButton(canvas.width / 2 - backBtnW / 2, rowY + 8, backBtnW, backBtnH,
-      'タイトルへ戻る', () => { dreamMemoryShopActive = false; },
+      '強化終了', () => { dreamMemoryShopActive = false; },
       { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
     return;
   }
