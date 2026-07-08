@@ -3025,9 +3025,9 @@ function updateMousePosition(event) {
   );
 }
 
-// タッチでの移動・照準は画面外の専用スティック（#moveJoystick / #aimJoystick）が担当するため、
+// タッチでの移動・攻撃は画面外の専用ボタン（#moveDpad / #btnMobileFire）が担当するため、
 // キャンバス上のポインタ操作はマウスのときだけ従来通り扱う（タップはメニュー用のclickイベントで別途処理する）
-const touchMoveVector = { x: 0, y: 0 }; // 画面外の移動スティックの入力方向（-1〜1）
+const touchMoveVector = { x: 0, y: 0 }; // 十字キーの入力方向（-1〜1、斜めは正規化する）
 
 canvas.addEventListener('pointermove', (event) => {
   if (event.pointerType === 'mouse') updateMousePosition(event);
@@ -3046,84 +3046,81 @@ canvas.addEventListener('pointercancel', (event) => {
 });
 canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 
-// ===== 画面外の移動スティック（#moveJoystick） =====
-// プレイ画面（キャンバス）の外に固定表示し、ドラッグ量を touchMoveVector に反映する
-const moveJoystickEl = document.getElementById('moveJoystick');
-const moveJoystickKnobEl = document.getElementById('moveJoystickKnob');
-const moveJoystickMaxRadius = 40; // CSS上のピクセル単位でのドラッグ可能半径
-let moveJoystickPointerId = null;
-let moveJoystickOrigin = { x: 0, y: 0 };
-
-function setMoveJoystickVector(dx, dy) {
-  const dist = Math.hypot(dx, dy);
-  if (dist > moveJoystickMaxRadius) {
-    dx = (dx / dist) * moveJoystickMaxRadius;
-    dy = (dy / dist) * moveJoystickMaxRadius;
+// ===== 画面外の移動ボタン（#moveDpad、上下左右のデジタル入力） =====
+// ボタンの押下状態から touchMoveVector を求める（斜め押しは正規化して速度が変わらないようにする）
+const moveDpadState = { up: false, down: false, left: false, right: false };
+function updateTouchMoveVectorFromDpad() {
+  let x = 0, y = 0;
+  if (moveDpadState.left) x -= 1;
+  if (moveDpadState.right) x += 1;
+  if (moveDpadState.up) y -= 1;
+  if (moveDpadState.down) y += 1;
+  if (x !== 0 && y !== 0) {
+    x *= Math.SQRT1_2;
+    y *= Math.SQRT1_2;
   }
-  touchMoveVector.x = dx / moveJoystickMaxRadius;
-  touchMoveVector.y = dy / moveJoystickMaxRadius;
-  moveJoystickKnobEl.style.transform = `translate(${dx}px, ${dy}px)`;
+  touchMoveVector.x = x;
+  touchMoveVector.y = y;
 }
-
-moveJoystickEl.addEventListener('pointerdown', (event) => {
-  moveJoystickPointerId = event.pointerId;
-  moveJoystickOrigin = { x: event.clientX, y: event.clientY };
-  moveJoystickEl.setPointerCapture(event.pointerId);
-  event.preventDefault();
-});
-moveJoystickEl.addEventListener('pointermove', (event) => {
-  if (event.pointerId !== moveJoystickPointerId) return;
-  setMoveJoystickVector(event.clientX - moveJoystickOrigin.x, event.clientY - moveJoystickOrigin.y);
-});
-function releaseMoveJoystick(event) {
-  if (event.pointerId !== moveJoystickPointerId) return;
-  moveJoystickPointerId = null;
-  touchMoveVector.x = 0;
-  touchMoveVector.y = 0;
-  moveJoystickKnobEl.style.transform = 'translate(0px, 0px)';
+function bindMoveDpadButton(elementId, directionKey) {
+  const el = document.getElementById(elementId);
+  const press = (event) => {
+    moveDpadState[directionKey] = true;
+    updateTouchMoveVectorFromDpad();
+    event.preventDefault();
+  };
+  const release = () => {
+    moveDpadState[directionKey] = false;
+    updateTouchMoveVectorFromDpad();
+  };
+  el.addEventListener('pointerdown', press);
+  el.addEventListener('pointerup', release);
+  el.addEventListener('pointercancel', release);
+  el.addEventListener('pointerleave', release);
 }
-moveJoystickEl.addEventListener('pointerup', releaseMoveJoystick);
-moveJoystickEl.addEventListener('pointercancel', releaseMoveJoystick);
+bindMoveDpadButton('btnMoveUp', 'up');
+bindMoveDpadButton('btnMoveDown', 'down');
+bindMoveDpadButton('btnMoveLeft', 'left');
+bindMoveDpadButton('btnMoveRight', 'right');
 
-// ===== 画面外の照準・攻撃スティック（#aimJoystick） =====
-// 倒した方向へ自分の向きを変え、触れている間は自動的に攻撃し続ける
-const aimJoystickEl = document.getElementById('aimJoystick');
-const aimJoystickKnobEl = document.getElementById('aimJoystickKnob');
-const aimJoystickMaxRadius = 40; // CSS上のピクセル単位でのドラッグ可能半径
-const aimJoystickDeadZone = 6; // これより小さい動きは向きの変更に反映しない（微細なブレ対策）
-let aimJoystickPointerId = null;
-let aimJoystickOrigin = { x: 0, y: 0 };
-
-function setAimJoystickVector(dx, dy) {
-  const dist = Math.hypot(dx, dy);
-  const clampedDist = Math.min(dist, aimJoystickMaxRadius);
-  const nx = dist > 0 ? dx / dist : 0;
-  const ny = dist > 0 ? dy / dist : 0;
-  aimJoystickKnobEl.style.transform = `translate(${nx * clampedDist}px, ${ny * clampedDist}px)`;
-  if (dist > aimJoystickDeadZone) {
-    player.angle = Math.atan2(dy, dx);
-  }
-}
-
-aimJoystickEl.addEventListener('pointerdown', (event) => {
-  aimJoystickPointerId = event.pointerId;
-  aimJoystickOrigin = { x: event.clientX, y: event.clientY };
-  aimJoystickEl.setPointerCapture(event.pointerId);
+// ===== 画面外の攻撃ボタン（#btnMobileFire） =====
+// 押している間だけ連射する、単純なボタン（向きはスマホ用の自動照準設定で決まる）
+const mobileFireEl = document.getElementById('btnMobileFire');
+mobileFireEl.addEventListener('pointerdown', (event) => {
   mouseFireHeld = true;
   event.preventDefault();
 });
-aimJoystickEl.addEventListener('pointermove', (event) => {
-  if (event.pointerId !== aimJoystickPointerId) return;
-  setAimJoystickVector(event.clientX - aimJoystickOrigin.x, event.clientY - aimJoystickOrigin.y);
-});
-function releaseAimJoystick(event) {
-  if (event.pointerId !== aimJoystickPointerId) return;
-  aimJoystickPointerId = null;
+function releaseMobileFireButton() {
   mouseFireHeld = false;
-  aimJoystickKnobEl.style.transform = 'translate(0px, 0px)';
 }
-aimJoystickEl.addEventListener('pointerup', releaseAimJoystick);
-aimJoystickEl.addEventListener('pointercancel', releaseAimJoystick);
+mobileFireEl.addEventListener('pointerup', releaseMobileFireButton);
+mobileFireEl.addEventListener('pointercancel', releaseMobileFireButton);
+mobileFireEl.addEventListener('pointerleave', releaseMobileFireButton);
+
+// ===== スマホ用：自動で最寄りの敵の方に向く設定（タイトル画面のボタンで切り替え、端末に保存する） =====
+const mobileAutoAimStorageKey = 'vamSurvLike_mobileAutoAim_v1';
+let mobileAutoAimEnabled = (() => {
+  try {
+    return localStorage.getItem(mobileAutoAimStorageKey) === '1';
+  } catch (e) {
+    return false;
+  }
+})();
+function setMobileAutoAimEnabled(enabled) {
+  mobileAutoAimEnabled = enabled;
+  try {
+    localStorage.setItem(mobileAutoAimStorageKey, enabled ? '1' : '0');
+  } catch (e) {
+    // localStorageが使えない環境では、切り替えのみ有効にして保存は諦める
+  }
+}
+// 自機から最も近い敵を返す（いなければnull）
+function findNearestEnemyToPlayer() {
+  return enemies.reduce((closest, candidate) => {
+    const d = Math.hypot(candidate.x - player.x, candidate.y - player.y);
+    return (!closest || d < closest.d) ? { en: candidate, d } : closest;
+  }, null);
+}
 
 // ===== メニュー選択のタップ／クリック対応 =====
 // draw()が毎フレーム、現在表示中のメニューに応じて再構築する
@@ -3655,9 +3652,12 @@ function update() {
       fatigue = Math.max(fatigueFloor, fatigue - idleRecoveryPerSec * specialSkillEffects.idleRecoveryMultiplier * dt);
     }
 
-    // 攻撃モードに関係なく、自分は常にマウスカーソルの方向を向く
-    // （画面外の照準スティックを操作中は、そちらで設定した向きを優先する）
-    if (aimJoystickPointerId === null) {
+    // 攻撃モードに関係なく、自分は常にマウスカーソルの方向を向く。
+    // スマホ用の自動照準設定が有効な間は、代わりに最も近い敵の方向を向く
+    const autoAimTarget = mobileAutoAimEnabled ? findNearestEnemyToPlayer() : null;
+    if (autoAimTarget) {
+      player.angle = Math.atan2(autoAimTarget.en.y - player.y, autoAimTarget.en.x - player.x);
+    } else {
       player.angle = Math.atan2(
         mousePosition.y - player.y,
         mousePosition.x - player.x
@@ -4702,19 +4702,27 @@ function draw() {
 
     // 前回プレイした自機・同僚の組み合わせが記録されている時だけ、選択画面を省略するボタンを出す
     const hasLastRunCombo = !!(dreamMemorySave.lastRun && dreamMemorySave.lastRun.partnerIcon);
-    let helpTextY = canvas.height / 2 + 134;
+    let nextButtonY = canvas.height / 2 + 116;
     if (hasLastRunCombo) {
-      drawUiButton(btnX, canvas.height / 2 + 116, btnW, 40,
+      drawUiButton(btnX, nextButtonY, btnW, 40,
         '夢と同じ設定で進める', startWithLastRunSettings,
         { fillStyle: 'rgba(20, 70, 90, 0.55)', strokeStyle: '#80deea', font: 'bold 15px sans-serif' });
-      helpTextY = canvas.height / 2 + 178;
+      nextButtonY += 46;
     }
+    // スマホ用：自動で最寄りの敵に向く設定のON/OFF切り替え（端末に保存される）
+    drawUiButton(btnX, nextButtonY, btnW, 40,
+      `スマホ用 自動照準: ${mobileAutoAimEnabled ? 'ON' : 'OFF'}`,
+      () => setMobileAutoAimEnabled(!mobileAutoAimEnabled),
+      mobileAutoAimEnabled
+        ? { fillStyle: 'rgba(56, 142, 60, 0.55)', strokeStyle: '#a5d6a7', font: 'bold 15px sans-serif' }
+        : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 15px sans-serif' });
+    const helpTextY = nextButtonY + 62;
 
     ctx.fillStyle = '#cfd8dc';
     ctx.font = '16px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('P = 一時停止 / 再開　F = 自動攻撃切替', canvas.width / 2, helpTextY);
-    ctx.fillText('WASD・左スティック = 移動　マウス・ドラッグ / 右スティック = 照準・攻撃', canvas.width / 2, helpTextY + 26);
+    ctx.fillText('WASD・十字ボタン = 移動　マウス・ドラッグ / 連射ボタン = 照準・攻撃', canvas.width / 2, helpTextY + 26);
     ctx.textAlign = 'left';
     return;
   }
