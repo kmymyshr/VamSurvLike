@@ -65,7 +65,7 @@ const dreamMemoryUpgradeDefs = [
     describeLevel: (lv) => `自機の移動速度が+${(lv * 0.3).toFixed(1)}される`
   },
   {
-    id: 'barrierCharges', label: '初期「心の壁」バリア',
+    id: 'barrierCharges', label: '初期「ファイヤーウォール」バリア',
     describeLevel: (lv) => `毎日の始まりに、誤射・接触ダメージを${lv}回防ぐバリアが新たに張られる`
   },
   {
@@ -740,7 +740,7 @@ function spawnCoffee() {
 // その日の終業時（自然回復）のSAN・脳疲労回復量が半分になる
 let eveningDrinkRecoveryPenalty = false;
 
-// ===== レアアイテム（心の壁・仮称） =====
+// ===== レアアイテム（ファイヤーウォール・仮称） =====
 // 取得すると、自機・同僚それぞれに「お互いの誤射を防ぐバリア」が張られる（重ね掛け可能）
 const heartWallLifetimeMs = 10000; // 出現してから消えるまでの時間（10秒）
 const heartWallBlinkMs = 3000; // 消える3秒前から点滅する
@@ -750,7 +750,7 @@ let heartWall = null;
 let heartWallSpawnTimerMs = getRandomHeartWallSpawnDelay();
 let playerBarrierCharges = 0; // 残っている間は同僚の誤射を防ぐ
 
-// 夢の記憶ポイントの「初期『心の壁』バリア」は、毎日の始まりにスキルレベル分のバリアが新たに張られる
+// 夢の記憶ポイントの「初期『ファイヤーウォール』バリア」は、毎日の始まりにスキルレベル分のバリアが新たに張られる
 // （前日の残りが多ければそちらを優先し、減ることはない）
 function applyDailyBarrierRenewal() {
   playerBarrierCharges = Math.max(playerBarrierCharges, dreamMemorySave.upgrades.barrierCharges);
@@ -849,7 +849,7 @@ function getRandomEventPosition(radius = 24) {
   };
 }
 
-// 既に置かれている他のアイテム（チョコレート・栄養ドリンク・コーヒー・心の壁）と
+// 既に置かれている他のアイテム（チョコレート・栄養ドリンク・コーヒー・ファイヤーウォール）と
 // 重ならない出現位置を探す。20回試しても見つからなければ最後の候補をそのまま使う
 function getNonOverlappingEventPosition(radius, minGap = 70) {
   let position;
@@ -1657,7 +1657,7 @@ const partner = {
   lowSanTimerMs: 0,
   fatigueResting: false, // 脳疲労が100に達し、50まで下がるまで攻撃を控えている状態
   friendlyFireInvincibleTimer: 0,
-  barrierCharges: 0, // 「心の壁」の効果。残っている間は自機の誤射を防ぐ
+  barrierCharges: 0, // 「ファイヤーウォール」の効果。残っている間は自機の誤射を防ぐ
   chocolateDailyCount: 0, // 本日すでに食べたチョコレートの個数。日付が変わるとリセットする
   relationship: partnerRelationshipInitial, // 非表示。0～100で、低いほど自分へ反撃しやすい
   // 賢さ（0〜1、初期はランダム）：高いほど的が正確で、疲労時に無駄撃ちを避けやすい
@@ -1980,7 +1980,7 @@ function updatePartner(dt) {
     for (const en of enemies) {
       const d = Math.hypot(en.x - partner.x, en.y - partner.y);
       if (d <= en.radius + partner.radius) {
-        // 「心の壁」が残っていれば、SANダメージを無効化する
+        // 「ファイヤーウォール」が残っていれば、SANダメージを無効化する
         if (partner.barrierCharges > 0) {
           partner.barrierCharges--;
         } else {
@@ -3312,7 +3312,7 @@ function computeFullAutoDodgeVector(dt) {
   return { x: vx / len, y: vy / len };
 }
 
-// 優先度3〜6：食事（近い順）→チョコレート→心の壁→クイズの回答（ランダムに選んだもの）の順で、拾いに行く対象を返す
+// 優先度3〜6：食事（近い順）→チョコレート→ファイヤーウォール→クイズの回答（ランダムに選んだもの）の順で、拾いに行く対象を返す
 function findFullAutoSeekTarget() {
   if (lunchState && lunchState.items.length > 0) {
     return lunchState.items.reduce((closest, item) => {
@@ -3358,7 +3358,7 @@ function computeFullAutoEnemyAvoidanceVector() {
 
 // 完全オートモード中の移動方向（-1〜1に正規化済み）を、優先度順に1つだけ選んで決める
 // （複数の意図を混ぜず、優先度が高いものだけに従うことで振動を防ぐ）
-// 優先度1: 同僚弾の回避 → 優先度2: 近い敵からの回避 → 優先度3〜6: 食事・チョコレート・心の壁・クイズ
+// 優先度1: 同僚弾の回避 → 優先度2: 近い敵からの回避 → 優先度3〜6: 食事・チョコレート・ファイヤーウォール・クイズ
 // → 優先度7: 同僚との距離を置く
 // 敵の反発がほぼ打ち消し合って板挟みになった時、振動せずランダムな方向へ抜け出すための状態
 const fullAutoStuckVectorThreshold = 0.15; // 合成ベクトルの大きさがこれ未満なら「板挟み」とみなす
@@ -3401,7 +3401,7 @@ function computeFullAutoMoveVector(dt) {
   }
   fullAutoEscapeTimerMs = 0;
 
-  // 優先度3〜6：避けるべきものがなければ、食事・チョコレート・心の壁・クイズの順で拾いに行く
+  // 優先度3〜6：避けるべきものがなければ、食事・チョコレート・ファイヤーウォール・クイズの順で拾いに行く
   const seekTarget = findFullAutoSeekTarget();
   if (seekTarget) {
     const dx = seekTarget.x - player.x;
@@ -3848,7 +3848,7 @@ function update() {
     }
   }
 
-  // 「心の壁」の出現待ち、取得判定、時間切れを処理する
+  // 「ファイヤーウォール」の出現待ち、取得判定、時間切れを処理する
   if (heartWall && !heartWall.landed) {
     // 画面上部から落下してくる演出。着地するまでは取得判定を行わない
     heartWall.fallSpeed += chocolateFallGravityPerSec2 * dt;
@@ -3868,7 +3868,7 @@ function update() {
       playerBarrierCharges += heartWallBarrierCharges;
       if (partner.active) partner.barrierCharges += heartWallBarrierCharges;
       showMessage(
-        `心の壁を手に入れた！ 誤射・敵の接触ダメージを${heartWallBarrierCharges}回まで防ぐバリアを展開`,
+        `ファイヤーウォールを手に入れた！ 誤射・敵の接触ダメージを${heartWallBarrierCharges}回まで防ぐバリアを展開`,
         2200, '#b39ddb'
       );
       heartWall = null;
@@ -4314,7 +4314,7 @@ function update() {
     const sanMultiplier = Math.max(0.5, 1 - skillLevel * 0.04);
     let defeated = false;
     if (!en.touching) {
-      // 「心の壁」が残っていれば、この接触の間ずっとSANダメージを無効化する
+      // 「ファイヤーウォール」が残っていれば、この接触の間ずっとSANダメージを無効化する
       if (playerBarrierCharges > 0) {
         playerBarrierCharges--;
         en.barrierBlockedContact = true;
@@ -4651,7 +4651,7 @@ function drawMiniStatBars(centerX, topY, stats) {
   ctx.restore();
 }
 
-// 「心の壁」の効果が残っている間、対象の周りに点線の破魔円を表示し、残り回数をバッジで示す
+// 「ファイヤーウォール」の効果が残っている間、対象の周りに点線の破魔円を表示し、残り回数をバッジで示す
 function drawBarrierShield(x, y, radius, charges) {
   if (charges <= 0) return;
   const pulse = 0.5 + 0.5 * Math.sin(gameClockMs / 130);
@@ -5145,7 +5145,7 @@ function draw() {
     ctx.stroke();
     ctx.restore();
   }
-  // 「心の壁」の効果が残っている間、自機の周りにバリアを表示する
+  // 「ファイヤーウォール」の効果が残っている間、自機の周りにバリアを表示する
   drawBarrierShield(player.x, player.y, player.radius, playerBarrierCharges);
   // 自分のアイコン（性別選択で選んだimages/self内の画像を使用）
   const selfImg = genderImageElements[selectedPlayerIcon];
@@ -5212,7 +5212,7 @@ function draw() {
     }
     ctx.restore();
 
-    // 「心の壁」の効果が残っている間、同僚の周りにバリアを表示する
+    // 「ファイヤーウォール」の効果が残っている間、同僚の周りにバリアを表示する
     drawBarrierShield(partner.x, partner.y, partner.radius, partner.barrierCharges);
 
     // 同僚の下にSAN・寿命・脳疲労の小さなバーを表示する
@@ -5452,7 +5452,7 @@ function draw() {
     ctx.restore();
   }
 
-  // 「心の壁」を描く。消滅直前は一定間隔で表示を切り替えて点滅させる
+  // 「ファイヤーウォール」を描く。消滅直前は一定間隔で表示を切り替えて点滅させる
   if (heartWall) {
     const shouldShowHeartWall = heartWall.remainingMs > heartWallBlinkMs ||
       Math.floor(heartWall.remainingMs / 200) % 2 === 0;
