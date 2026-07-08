@@ -441,6 +441,54 @@ function spawnEnergyDrink() {
   };
 }
 
+// ===== 回復アイテム（コーヒー） =====
+// 栄養ドリンクよりマイルドな強化アイテム。効果切れの反動はない
+const coffeeLifetimeMs = 10000; // 出現してから消えるまでの時間（10秒）
+const coffeeBlinkMs = 3000; // 消える3秒前から点滅する
+const coffeeRadius = 22;
+const coffeeSanRecovery = 10; // SAN値を10回復する
+const coffeeLifespanCost = 2; // その代わり寿命を2消費する
+const coffeeBuffDurationMs = energyDrinkBuffDurationMs; // 持続時間は栄養ドリンクと同じ長さ
+const coffeeMoveSpeedBuffMultiplier = 1.2; // 効果中の移動速度倍率
+const coffeeFireRateBuffMultiplier = 1 / 1.2; // 効果中の発射間隔倍率（連射速度120%）
+const coffeeCrossDrinkLifespanCost = 5; // 栄養ドリンクの効果中にコーヒーを飲む（またはその逆）と、追加で寿命を消費する
+let coffee = null;
+let coffeeSpawnTimerMs = getRandomCoffeeSpawnDelay();
+let coffeeBuffTimerMs = 0; // 残り時間。0より大きい間は移動・発射が強化される（効果切れによる反動はない）
+
+// コーヒーによる移動速度の倍率
+function getCoffeeMoveSpeedMultiplier() {
+  return coffeeBuffTimerMs > 0 ? coffeeMoveSpeedBuffMultiplier : 1;
+}
+
+// コーヒーによる発射間隔の倍率
+function getCoffeeFireRateMultiplier() {
+  return coffeeBuffTimerMs > 0 ? coffeeFireRateBuffMultiplier : 1;
+}
+
+// 次のコーヒーは8～15秒後に出現する（チョコレートと同程度の頻度）
+function getRandomCoffeeSpawnDelay() {
+  return 8000 + Math.random() * 7000;
+}
+
+// マップ上部から落ちてきて、窓の範囲を避けた床の上に着地する
+function spawnCoffee() {
+  const target = getRandomEventPosition(coffeeRadius);
+  coffee = {
+    x: target.x,
+    y: -coffeeRadius - 20,
+    targetY: target.y,
+    radius: coffeeRadius,
+    fallSpeed: 0,
+    landed: false,
+    remainingMs: coffeeLifetimeMs
+  };
+}
+
+// ===== コーヒー・栄養ドリンクを夕方以降に飲んだ場合のペナルティ =====
+// その日の終業時（自然回復）のSAN・脳疲労回復量が半分になる
+let eveningDrinkRecoveryPenalty = false;
+
 // ===== レアアイテム（心の壁・仮称） =====
 // 取得すると、自機・同僚それぞれに「お互いの誤射を防ぐバリア」が張られる（重ね掛け可能）
 const heartWallLifetimeMs = 10000; // 出現してから消えるまでの時間（10秒）
@@ -1955,10 +2003,18 @@ function repositionRemainingEnemies() {
 }
 
 // 通常の平日（または休日出勤中の土日）の終業処理。続行確認なしで自動的に翌日へ進む
+// 一日の終わりの自然回復（脳疲労・SAN）を適用する。
+// その日の夕方以降にコーヒー・栄養ドリンクを飲んでいた場合は、回復量が半分になる
+function applyDayEndRecovery() {
+  const recoveryRatio = eveningDrinkRecoveryPenalty ? 0.5 : 1;
+  fatigue = Math.max(0, fatigue - dayFatigueRecover * recoveryRatio);
+  san = Math.min(maxSan, san + daySanRecover * recoveryRatio);
+  eveningDrinkRecoveryPenalty = false;
+}
+
 function autoAdvanceDay() {
   currentDate.setDate(currentDate.getDate() + 1);
-  fatigue = Math.max(0, fatigue - dayFatigueRecover);
-  san = Math.min(maxSan, san + daySanRecover);
+  applyDayEndRecovery();
   dayStartTime = gameClockMs;
   lastHourTime = gameClockMs;
   currentHour = dayStartHour;
@@ -1975,6 +2031,7 @@ function autoAdvanceDay() {
 // 週末（土日祝日）を飛ばして次の月曜から新しい週を始める
 function jumpToNextMondayAndResetWeek() {
   currentDate = nextMonday(currentDate);
+  eveningDrinkRecoveryPenalty = false; // 休日を挟むため、このペナルティは持ち越さない
   dayStartTime = gameClockMs;
   lastHourTime = gameClockMs;
   currentHour = dayStartHour;
@@ -2851,17 +2908,20 @@ function update() {
     if (distanceToEnergyDrink <= player.radius + energyDrink.radius) {
       energyDrinkDailyCount++;
       const isSecondOrLater = energyDrinkDailyCount >= 2;
+      const isCrossDrink = coffeeBuffTimerMs > 0;
       const totalLifespanCost = energyDrinkLifespanCost +
-        (isSecondOrLater ? energyDrinkSecondDrinkLifespanCost : 0);
+        (isSecondOrLater ? energyDrinkSecondDrinkLifespanCost : 0) +
+        (isCrossDrink ? coffeeCrossDrinkLifespanCost : 0);
       const reducedFatigue = Math.min(fatigue, energyDrinkFatigueReduction);
       fatigue -= reducedFatigue;
       san = Math.min(maxSan, san + energyDrinkSanRecovery);
       lifespan = Math.max(0, lifespan - totalLifespanCost);
       energyDrinkBuffTimerMs = energyDrinkBuffDurationMs;
       energyDrinkCrashTimerMs = 0; // 反動状態が残っていても、新たに飲めば打ち消してすぐ強化状態に入る
+      if (currentHour >= dayEndHour) eveningDrinkRecoveryPenalty = true;
       showMessage(
         `栄養ドリンク取得！ 脳疲労 -${Math.ceil(reducedFatigue)} / SAN +${energyDrinkSanRecovery} / 寿命 -${totalLifespanCost}` +
-        (isSecondOrLater ? '（本日2本目以降…）' : ''),
+        (isSecondOrLater ? '（本日2本目以降…）' : '') + (isCrossDrink ? '（コーヒーとの飲み合わせ…）' : ''),
         1800, '#80deea'
       );
       checkVitalsGameOver();
@@ -2876,6 +2936,52 @@ function update() {
     energyDrinkSpawnTimerMs -= dt * 1000;
     if (energyDrinkSpawnTimerMs <= 0) {
       spawnEnergyDrink();
+    }
+  }
+
+  // コーヒーの効果時間を減らす（効果切れによる反動はない）
+  coffeeBuffTimerMs = Math.max(0, coffeeBuffTimerMs - dt * 1000);
+
+  // コーヒーの出現待ち、取得判定、時間切れを処理する
+  if (coffee && !coffee.landed) {
+    // 画面上部から落下してくる演出。着地するまでは取得判定を行わない
+    coffee.fallSpeed += chocolateFallGravityPerSec2 * dt;
+    coffee.y += coffee.fallSpeed * dt;
+    if (coffee.y >= coffee.targetY) {
+      coffee.y = coffee.targetY;
+      coffee.landed = true;
+    }
+  } else if (coffee) {
+    coffee.remainingMs -= dt * 1000;
+    const distanceToCoffee = Math.hypot(
+      player.x - coffee.x,
+      player.y - coffee.y
+    );
+
+    if (distanceToCoffee <= player.radius + coffee.radius) {
+      const isCrossDrink = energyDrinkBuffTimerMs > 0;
+      const totalLifespanCost = coffeeLifespanCost + (isCrossDrink ? coffeeCrossDrinkLifespanCost : 0);
+      san = Math.min(maxSan, san + coffeeSanRecovery);
+      lifespan = Math.max(0, lifespan - totalLifespanCost);
+      coffeeBuffTimerMs = coffeeBuffDurationMs;
+      if (currentHour >= dayEndHour) eveningDrinkRecoveryPenalty = true;
+      showMessage(
+        `コーヒー取得！ SAN +${coffeeSanRecovery} / 寿命 -${totalLifespanCost}` +
+        (isCrossDrink ? '（栄養ドリンクとの飲み合わせ…）' : ''),
+        1800, '#a1887f'
+      );
+      checkVitalsGameOver();
+      coffee = null;
+      coffeeSpawnTimerMs = getRandomCoffeeSpawnDelay();
+      if (gameOver || deathSequence) return;
+    } else if (coffee.remainingMs <= 0) {
+      coffee = null;
+      coffeeSpawnTimerMs = getRandomCoffeeSpawnDelay();
+    }
+  } else {
+    coffeeSpawnTimerMs -= dt * 1000;
+    if (coffeeSpawnTimerMs <= 0) {
+      spawnCoffee();
     }
   }
 
@@ -2978,7 +3084,7 @@ function update() {
     // WASDキーによるプレイヤー移動
     let moving = false;
     const currentMoveSpeed = player.speed * specialSkillEffects.moveSpeedMultiplier *
-      getEnergyDrinkMoveSpeedMultiplier();
+      getEnergyDrinkMoveSpeedMultiplier() * getCoffeeMoveSpeedMultiplier();
     if (keys["w"]) { player.y -= currentMoveSpeed; moving = true; }
     if (keys["s"]) { player.y += currentMoveSpeed; moving = true; }
     if (keys["a"]) { player.x -= currentMoveSpeed; moving = true; }
@@ -3024,7 +3130,8 @@ function update() {
     const fatigueRatio = Math.max(0, Math.min(1, fatigue / maxFatigue));
     const conditionRatio = 1 - fatigueRatio;
     const currentFireRate = baseFireRate * (1 + fatigueRatio * fireRateMultiplier) *
-      specialSkillEffects.fireRateMultiplier * getEnergyDrinkFireRateMultiplier() * getRankSkillFireRateMultiplier();
+      specialSkillEffects.fireRateMultiplier * getEnergyDrinkFireRateMultiplier() *
+      getCoffeeFireRateMultiplier() * getRankSkillFireRateMultiplier();
     const wantsToFire = autoFireEnabled || mouseFireHeld;
     if (wantsToFire && !stunned) {
       if (now - lastFire >= currentFireRate) {
@@ -3912,6 +4019,28 @@ function draw() {
     ctx.stroke();
     ctx.restore();
   }
+  // コーヒーの効果が有効な間は、自機の周りに淡い光るエフェクトを表示する
+  if (coffeeBuffTimerMs > 0) {
+    const coffeePulse = 0.5 + 0.5 * Math.sin(gameClockMs / 150);
+    const coffeeGlowRadius = player.radius * 2.2 + coffeePulse * 4;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, coffeeGlowRadius, 0, Math.PI * 2);
+    const coffeeGlowGradient = ctx.createRadialGradient(
+      player.x, player.y, player.radius * 0.4,
+      player.x, player.y, coffeeGlowRadius
+    );
+    coffeeGlowGradient.addColorStop(0, 'rgba(161, 136, 127, 0.4)');
+    coffeeGlowGradient.addColorStop(1, 'rgba(161, 136, 127, 0)');
+    ctx.fillStyle = coffeeGlowGradient;
+    ctx.fill();
+    ctx.strokeStyle = `rgba(161, 136, 127, ${0.5 + coffeePulse * 0.3})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, player.radius * 1.6, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
   // 「心の壁」の効果が残っている間、自機の周りにバリアを表示する
   drawBarrierShield(player.x, player.y, player.radius, playerBarrierCharges);
   // 自分のアイコン（性別選択で選んだimages/self内の画像を使用）
@@ -4125,6 +4254,37 @@ function draw() {
           `${Math.max(0, energyDrink.remainingMs / 1000).toFixed(1)}秒`,
           energyDrink.x,
           energyDrink.y + energyDrink.radius + 12
+        );
+      }
+      ctx.restore();
+    }
+  }
+
+  // コーヒーを描く。消滅直前は一定間隔で表示を切り替えて点滅させる
+  if (coffee) {
+    const shouldShowCoffee = coffee.remainingMs > coffeeBlinkMs ||
+      Math.floor(coffee.remainingMs / 200) % 2 === 0;
+
+    if (shouldShowCoffee) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(coffee.x, coffee.y, coffee.radius, 0, Math.PI * 2);
+      ctx.fillStyle = '#2b1e14';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(161, 136, 127, 0.85)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.font = '32px "Segoe UI Emoji", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('☕', coffee.x, coffee.y);
+      if (coffee.landed) {
+        ctx.font = '12px sans-serif';
+        ctx.fillStyle = '#a1887f';
+        ctx.fillText(
+          `${Math.max(0, coffee.remainingMs / 1000).toFixed(1)}秒`,
+          coffee.x,
+          coffee.y + coffee.radius + 12
         );
       }
       ctx.restore();
