@@ -314,23 +314,32 @@ const partnerIconGreetingLinesMale = [
   'はじめまして！俺も気合入れていくから、よろしくな！',
   'はじめまして。頼りにしてくれ、全力でサポートするぞ！'
 ];
-const iconGreetingHoldMs = 1400; // ひとことを表示し続ける時間
+const iconGreetingHoldMs = 1400; // 全文表示後、フェードアウトを始めるまで待つ時間
 const iconGreetingFadeMs = 500; // フェードアウトにかける時間
-let iconGreetingPhase = null; // null / 'hold' / 'fadeout'
-let iconGreetingTimer = 0;
+// 読み上げのテンポに近づけた、セリフを1文字ずつ表示する間隔（ミリ秒）
+const typewriterCharIntervalMs = 90;
+// 経過時間から、何文字目まで表示すべきかを返す（textの全長を超えない）
+function getTypewriterRevealedCount(elapsedMs, text) {
+  return Math.max(0, Math.min(text.length, Math.floor(elapsedMs / typewriterCharIntervalMs)));
+}
+
+let iconGreetingPhase = null; // null / 'typing' / 'hold' / 'fadeout'
+let iconGreetingTimer = 0; // 'typing'中は経過時間、'hold'/'fadeout'中は残り時間として使う
+let iconGreetingRevealedCount = 0; // 'typing'中、現在何文字目まで表示しているか
 let iconGreetingIcon = '';
 let iconGreetingImage = null; // 画像（同僚アイコンなど）を表示する場合はImage要素を入れる
 let iconGreetingText = '';
 let iconGreetingOnComplete = null;
 
-// アイコンの下にひとことを表示し、少し経ったらフェードアウトしてonCompleteへ進む
+// アイコンの下にひとことを1文字ずつ表示し、全文表示後少し経ったらフェードアウトしてonCompleteへ進む
 // iconImageを渡した場合は絵文字の代わりに画像を表示する
 function startIconGreeting(icon, text, onComplete, iconImage = null) {
   iconGreetingIcon = icon;
   iconGreetingImage = iconImage;
   iconGreetingText = text;
-  iconGreetingPhase = 'hold';
-  iconGreetingTimer = iconGreetingHoldMs;
+  iconGreetingRevealedCount = 0;
+  iconGreetingPhase = text.length > 0 ? 'typing' : 'hold';
+  iconGreetingTimer = text.length > 0 ? 0 : iconGreetingHoldMs;
   iconGreetingOnComplete = onComplete;
 }
 
@@ -1263,11 +1272,13 @@ function shouldShowReunionScene() {
 }
 
 let reunionSceneActive = false;
-// 'dim'（同僚アイコンが暗くなっていく演出）→ 'line'（自機のセリフ）→ 'paragraph'（地の文）の順に進む
+// 'dim'（同僚アイコンが暗くなっていく演出）→ 'line'（自機のセリフ、1文字ずつ表示）→ 'paragraph'（地の文）の順に進む
 let reunionScenePhase = null;
 const reunionSceneDimDurationMs = 2000; // アイコンが暗くなりきるまでの時間
 let reunionSceneDimTimer = 0;
 let reunionSceneLine = '';
+let reunionSceneLineRevealedCount = 0; // 'line'フェーズ中、セリフを何文字目まで表示しているか
+let reunionSceneLineTypeTimerMs = 0;
 let reunionSceneParagraph = [];
 let reunionSceneOnComplete = null;
 
@@ -1286,6 +1297,8 @@ function openReunionScene(onComplete) {
     fillReunionTemplate(data.line, playerPronoun, partnerPronoun),
     selectedGender
   );
+  reunionSceneLineRevealedCount = 0;
+  reunionSceneLineTypeTimerMs = 0;
   reunionSceneParagraph = data.paragraph.map(t => fillReunionTemplate(t, playerPronoun, partnerPronoun));
   reunionSceneActive = true;
   reunionScenePhase = 'dim';
@@ -1293,10 +1306,14 @@ function openReunionScene(onComplete) {
   reunionSceneOnComplete = onComplete;
 }
 
-// 暗転中はクリックを無視し、セリフ表示中→地の文表示中の順に、クリック／タップで進める
+// 暗転中はクリックを無視し、セリフ表示中（タイプ中なら先に全文表示）→地の文表示中の順に、クリック／タップで進める
 function advanceReunionScene() {
   if (reunionScenePhase === 'dim') return;
   if (reunionScenePhase === 'line') {
+    if (reunionSceneLineRevealedCount < reunionSceneLine.length) {
+      reunionSceneLineRevealedCount = reunionSceneLine.length;
+      return;
+    }
     reunionScenePhase = 'paragraph';
     return;
   }
@@ -3368,8 +3385,17 @@ function update() {
     return;
   }
 
-  // アイコン選択後のひとことメッセージ演出：表示→フェードアウト→次の画面へ
+  // アイコン選択後のひとことメッセージ演出：1文字ずつ表示→フェードアウト→次の画面へ
   if (iconGreetingPhase) {
+    if (iconGreetingPhase === 'typing') {
+      iconGreetingTimer += dt * 1000;
+      iconGreetingRevealedCount = getTypewriterRevealedCount(iconGreetingTimer, iconGreetingText);
+      if (iconGreetingRevealedCount >= iconGreetingText.length) {
+        iconGreetingPhase = 'hold';
+        iconGreetingTimer = iconGreetingHoldMs;
+      }
+      return;
+    }
     iconGreetingTimer -= dt * 1000;
     if (iconGreetingPhase === 'hold' && iconGreetingTimer <= 0) {
       iconGreetingPhase = 'fadeout';
@@ -3390,7 +3416,12 @@ function update() {
       if (reunionSceneDimTimer <= 0) {
         reunionSceneDimTimer = 0;
         reunionScenePhase = 'line';
+        reunionSceneLineRevealedCount = 0;
+        reunionSceneLineTypeTimerMs = 0;
       }
+    } else if (reunionScenePhase === 'line' && reunionSceneLineRevealedCount < reunionSceneLine.length) {
+      reunionSceneLineTypeTimerMs += dt * 1000;
+      reunionSceneLineRevealedCount = getTypewriterRevealedCount(reunionSceneLineTypeTimerMs, reunionSceneLine);
     }
     return;
   }
@@ -4637,7 +4668,7 @@ function draw() {
     }
     ctx.font = 'bold 26px sans-serif';
     ctx.fillStyle = '#ffe082';
-    ctx.fillText(iconGreetingText, canvas.width / 2, canvas.height / 2 + 60);
+    ctx.fillText(iconGreetingText.slice(0, iconGreetingRevealedCount), canvas.width / 2, canvas.height / 2 + 60);
     ctx.restore();
     ctx.textAlign = 'left';
     return;
@@ -4665,7 +4696,7 @@ function draw() {
     if (reunionScenePhase === 'line' || reunionScenePhase === 'paragraph') {
       ctx.fillStyle = '#ffe082';
       ctx.font = 'bold 22px sans-serif';
-      ctx.fillText(reunionSceneLine, canvas.width / 2, 250);
+      ctx.fillText(reunionSceneLine.slice(0, reunionSceneLineRevealedCount), canvas.width / 2, 250);
     }
 
     if (reunionScenePhase === 'paragraph') {
