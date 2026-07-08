@@ -2786,7 +2786,8 @@ canvas.addEventListener('click', (event) => {
     return;
   }
   // 一日の終わりの演出で入力待ち中なら、どこをクリック／タップしても次の日へ進める
-  if (dayTransitionPhase === 'waiting') {
+  // （ただし昇進・特殊スキルの選択画面が同時に開いている場合は、そちらの選択を優先する）
+  if (dayTransitionPhase === 'waiting' && !rankSkillSelectionActive && !specialSkillSelectionActive) {
     dayTransitionPhase = 'in';
     dayTransitionTimer = dayTransitionDurationMs;
     lastUpdate = Date.now();
@@ -4714,17 +4715,33 @@ function draw() {
     { text: `Skill:${skillLevel}  EXP:${Math.floor(exp)}` }
   ], false, 0, genderImageElements[selectedPlayerIcon], 46);
 
-  // 役職スキル「連携力」が有効な場合、プロフィール区画内に点滅する小さなアイコンで状態を示す
+  // 役職スキル「連携力」やコーヒー・栄養ドリンクの効果が有効な間、プロフィール区画内に
+  // 点滅する小さなアイコンで状態を示す（複数同時に有効な場合は縦に並べる）
+  const activeBuffIcons = [];
   if (rankSkillLevels.has('synergy')) {
     const remainingSynergyUses = synergyDailyLimit - synergyUsesToday;
-    const synergyBlinkOn = Math.floor(gameClockMs / 500) % 2 === 0;
+    activeBuffIcons.push({
+      text: `🔗連携力 残${Math.max(0, remainingSynergyUses)}`,
+      color: remainingSynergyUses > 0 ? '#ffd54f' : '#757575'
+    });
+  }
+  if (energyDrinkBuffTimerMs > 0) {
+    activeBuffIcons.push({ text: '⚡栄養ドリンク効果中', color: '#80deea' });
+  }
+  if (coffeeBuffTimerMs > 0) {
+    activeBuffIcons.push({ text: '☕コーヒー効果中', color: '#a1887f' });
+  }
+  if (activeBuffIcons.length > 0) {
+    const buffBlinkOn = Math.floor(gameClockMs / 500) % 2 === 0;
     ctx.save();
-    ctx.globalAlpha = synergyBlinkOn ? 1 : 0.35;
+    ctx.globalAlpha = buffBlinkOn ? 1 : 0.35;
     ctx.font = '13px sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
-    ctx.fillStyle = remainingSynergyUses > 0 ? '#ffd54f' : '#757575';
-    ctx.fillText(`🔗連携力 残${Math.max(0, remainingSynergyUses)}`, 21, 222);
+    activeBuffIcons.forEach((buff, index) => {
+      ctx.fillStyle = buff.color;
+      ctx.fillText(buff.text, 21, 222 + index * 16);
+    });
     ctx.restore();
   }
 
@@ -4897,7 +4914,80 @@ function draw() {
     ctx.textAlign = 'left';
   }
 
+  // 爆発直後は画面全体へ白い半透明レイヤーを重ねてフラッシュさせる
+  if (explosionFlashTimer > 0) {
+    const flashAlpha = 0.75 * (explosionFlashTimer / explosionEffectDuration);
+    ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  // 同僚弾の被弾直後は赤いフラッシュを重ねる
+  if (friendlyFireHitFlashTimer > 0) {
+    const hitFlashAlpha = 0.45 * (friendlyFireHitFlashTimer / friendlyFireHitEffectDuration);
+    ctx.fillStyle = `rgba(255, 60, 80, ${hitFlashAlpha})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  // 一日の終わりの演出：黒くフェードアウト→（この間に敵を再配置）→クリック/タップ待ち→フェードイン
+  if (dayTransitionPhase) {
+    let alpha;
+    if (dayTransitionPhase === 'out') {
+      const t = Math.max(0, Math.min(1, dayTransitionTimer / dayTransitionDurationMs));
+      alpha = 1 - t;
+    } else if (dayTransitionPhase === 'waiting') {
+      alpha = 1;
+    } else {
+      const t = Math.max(0, Math.min(1, dayTransitionTimer / dayTransitionDurationMs));
+      alpha = t;
+    }
+    ctx.fillStyle = `rgba(0, 0, 0, ${alpha})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // 暗転で隠れてしまった一時メッセージ（イベント結果など）を、タップされるまで読めるよう上から描き直す
+    if (dayTransitionPhase === 'waiting') {
+      drawPendingMessages();
+    }
+    if (alpha > 0.6) {
+      ctx.fillStyle = `rgba(255, 255, 255, ${dayTransitionPhase === 'waiting' ? 1 : (alpha - 0.6) / 0.4})`;
+      ctx.font = '36px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(`DAY ${dayNumber}`, canvas.width / 2, canvas.height / 2);
+      if (dayTransitionPhase === 'waiting') {
+        ctx.font = '20px sans-serif';
+        ctx.fillText('クリック / タップで次の日へ', canvas.width / 2, canvas.height / 2 + 40);
+      }
+      ctx.textAlign = 'left';
+    }
+  }
+
+  // 重要通知は最前面に表示し、クリック／タップされるまでゲームを停止する。
+  if (acknowledgementNotice) {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.72)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const noticeX = 130, noticeY = 175, noticeW = 540, noticeH = 210;
+    ctx.fillStyle = 'rgba(12, 20, 34, 0.96)';
+    ctx.fillRect(noticeX, noticeY, noticeW, noticeH);
+    ctx.strokeStyle = acknowledgementNotice.color;
+    ctx.lineWidth = 3;
+    ctx.strokeRect(noticeX, noticeY, noticeW, noticeH);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = acknowledgementNotice.color;
+    ctx.font = 'bold 30px sans-serif';
+    ctx.fillText(acknowledgementNotice.text, canvas.width / 2, noticeY + 68);
+    if (acknowledgementNotice.detail) {
+      ctx.fillStyle = '#eceff1';
+      ctx.font = '17px sans-serif';
+      ctx.fillText(acknowledgementNotice.detail, canvas.width / 2, noticeY + 112);
+    }
+    ctx.fillStyle = '#fff59d';
+    ctx.font = '16px sans-serif';
+    ctx.fillText('クリック / タップで再開', canvas.width / 2, noticeY + 166);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+  }
+
   // 特殊スキルの3択画面。数字キー1～3で取得する
+  // （日付が変わる演出の暗転と昇進が重なることがあるため、それらより前面に描画する）
   if (specialSkillSelectionActive) {
     const selectionLocked = Date.now() < specialSkillSelectionUnlockAt;
 
@@ -5019,78 +5109,6 @@ function draw() {
       canvas.width / 2, 115 + (rankSkillChoices.length) * 130
     );
     ctx.textAlign = 'left';
-  }
-
-  // 爆発直後は画面全体へ白い半透明レイヤーを重ねてフラッシュさせる
-  if (explosionFlashTimer > 0) {
-    const flashAlpha = 0.75 * (explosionFlashTimer / explosionEffectDuration);
-    ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-  }
-
-  // 同僚弾の被弾直後は赤いフラッシュを重ねる
-  if (friendlyFireHitFlashTimer > 0) {
-    const hitFlashAlpha = 0.45 * (friendlyFireHitFlashTimer / friendlyFireHitEffectDuration);
-    ctx.fillStyle = `rgba(255, 60, 80, ${hitFlashAlpha})`;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-  }
-
-  // 一日の終わりの演出：黒くフェードアウト→（この間に敵を再配置）→クリック/タップ待ち→フェードイン
-  if (dayTransitionPhase) {
-    let alpha;
-    if (dayTransitionPhase === 'out') {
-      const t = Math.max(0, Math.min(1, dayTransitionTimer / dayTransitionDurationMs));
-      alpha = 1 - t;
-    } else if (dayTransitionPhase === 'waiting') {
-      alpha = 1;
-    } else {
-      const t = Math.max(0, Math.min(1, dayTransitionTimer / dayTransitionDurationMs));
-      alpha = t;
-    }
-    ctx.fillStyle = `rgba(0, 0, 0, ${alpha})`;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    // 暗転で隠れてしまった一時メッセージ（イベント結果など）を、タップされるまで読めるよう上から描き直す
-    if (dayTransitionPhase === 'waiting') {
-      drawPendingMessages();
-    }
-    if (alpha > 0.6) {
-      ctx.fillStyle = `rgba(255, 255, 255, ${dayTransitionPhase === 'waiting' ? 1 : (alpha - 0.6) / 0.4})`;
-      ctx.font = '36px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(`DAY ${dayNumber}`, canvas.width / 2, canvas.height / 2);
-      if (dayTransitionPhase === 'waiting') {
-        ctx.font = '20px sans-serif';
-        ctx.fillText('クリック / タップで次の日へ', canvas.width / 2, canvas.height / 2 + 40);
-      }
-      ctx.textAlign = 'left';
-    }
-  }
-
-  // 重要通知は最前面に表示し、クリック／タップされるまでゲームを停止する。
-  if (acknowledgementNotice) {
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.72)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    const noticeX = 130, noticeY = 175, noticeW = 540, noticeH = 210;
-    ctx.fillStyle = 'rgba(12, 20, 34, 0.96)';
-    ctx.fillRect(noticeX, noticeY, noticeW, noticeH);
-    ctx.strokeStyle = acknowledgementNotice.color;
-    ctx.lineWidth = 3;
-    ctx.strokeRect(noticeX, noticeY, noticeW, noticeH);
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = acknowledgementNotice.color;
-    ctx.font = 'bold 30px sans-serif';
-    ctx.fillText(acknowledgementNotice.text, canvas.width / 2, noticeY + 68);
-    if (acknowledgementNotice.detail) {
-      ctx.fillStyle = '#eceff1';
-      ctx.font = '17px sans-serif';
-      ctx.fillText(acknowledgementNotice.detail, canvas.width / 2, noticeY + 112);
-    }
-    ctx.fillStyle = '#fff59d';
-    ctx.font = '16px sans-serif';
-    ctx.fillText('クリック / タップで再開', canvas.width / 2, noticeY + 166);
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'alphabetic';
   }
 
   // 通常時、SANが低いときは文字が読める程度の軽い歪みをかける
