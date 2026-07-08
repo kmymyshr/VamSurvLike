@@ -398,7 +398,7 @@ function getRandomChocolateSpawnDelay() {
 
 // マップ上部から落ちてきて、窓の範囲を避けた床の上に着地する
 function spawnChocolate() {
-  const target = getRandomEventPosition(chocolateRadius);
+  const target = getNonOverlappingEventPosition(chocolateRadius);
   chocolate = {
     x: target.x,
     y: -chocolateRadius - 20,
@@ -609,7 +609,7 @@ function getRandomHeartWallSpawnDelay() {
 
 // マップ上部から落ちてきて、窓の範囲を避けた床の上に着地する
 function spawnHeartWall() {
-  const target = getRandomEventPosition(heartWallRadius);
+  const target = getNonOverlappingEventPosition(heartWallRadius);
   heartWall = {
     x: target.x,
     y: -heartWallRadius - 20,
@@ -691,6 +691,20 @@ function getRandomEventPosition(radius = 24) {
     // 窓の範囲を避け、プレイ領域の中央より下へ配置する
     y: eventSpawnMinY + Math.random() * (canvas.height - eventSpawnMinY - margin)
   };
+}
+
+// 既に置かれている他のアイテム（チョコレート・栄養ドリンク・コーヒー・心の壁）と
+// 重ならない出現位置を探す。20回試しても見つからなければ最後の候補をそのまま使う
+function getNonOverlappingEventPosition(radius, minGap = 70) {
+  let position;
+  let attempts = 0;
+  do {
+    position = getRandomEventPosition(radius);
+    attempts++;
+  } while (attempts < 20 && [chocolate, energyDrink, coffee, heartWall].some(item =>
+    item && Math.hypot(item.x - position.x, (item.targetY ?? item.y) - position.y) < minGap
+  ));
+  return position;
 }
 
 // --- 定時報告：3日ごとの16時に現れる、移動しない高耐久ターゲット ---
