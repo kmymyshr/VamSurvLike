@@ -2197,6 +2197,7 @@ function getDefaultSpecialSkillEffects() {
     idleRecoveryMultiplier: 1,
     contactScorePenaltyMultiplier: 1,
     supportFireChance: 0,
+    autoParryChance: 0,
     bulletScatterChance: 0,
     enemyApproachSpeedMultiplier: 1,
     bulletBounceCount: 0,
@@ -2248,7 +2249,8 @@ const specialSkills = [
   { id: 'network-specialist', name: 'ネットワークスペシャリスト', description: '弾が画面端でレベルごとに1回多く跳ね返る' },
   { id: 'trust-relationship', name: '信頼関係', description: '同僚との信頼関係が深まり、同僚の攻撃力+20%・被SANダメージ-15%' },
   { id: 'teamwork', name: 'チームワーク', description: '自分と同僚の弾が互いに当たった時の被ダメージが50%軽減される' },
-  { id: 'meal-foresight', name: '先読み力', description: '昼食に登場する料理に、出現する順番の番号が表示されるようになる（習得は1回のみ）', maxLevel: 1 }
+  { id: 'meal-foresight', name: '先読み力', description: '昼食に登場する料理に、出現する順番の番号が表示されるようになる（習得は1回のみ）', maxLevel: 1 },
+  { id: 'auto-parry', name: 'オートパリィ', description: '被弾しそうな弾・敵の接触を、レベルごとに10%の確率で自動的にパリィする', maxLevel: 5 }
 ];
 
 // スキルIDと取得レベルを対応させて保存する（これが唯一の正となる状態）
@@ -2344,6 +2346,7 @@ function applySkillEffectDelta(skillId) {
       break;
     case 'teamwork': specialSkillEffects.friendlyFireDamageMultiplier *= 0.5; break;
     case 'meal-foresight': specialSkillEffects.mealOrderVisible = true; break;
+    case 'auto-parry': specialSkillEffects.autoParryChance += 0.10; break;
   }
 }
 
@@ -4234,6 +4237,13 @@ function update() {
       continue;
     } else if (b.owner === 'partner' &&
         Math.hypot(b.x - player.x, b.y - player.y) <= b.radius + player.radius) {
+      // 特殊スキル「オートパリィ」：被弾しそうな瞬間、一定確率で自動的にパリィする
+      if (Math.random() < specialSkillEffects.autoParryChance) {
+        performBulletParry(b, player.x, player.y, player.angle);
+        spawnSlashEffect(player.x, player.y, player.angle, player.radius);
+        showMessage('オートパリィ発動！', 1400, '#fff176');
+        continue;
+      }
       damagePlayerByFriendlyFire();
       bullets.splice(i, 1);
       if (gameOver || deathSequence) return;
@@ -4328,8 +4338,14 @@ function update() {
     const sanMultiplier = Math.max(0.5, 1 - skillLevel * 0.04);
     let defeated = false;
     if (!en.touching) {
+      // 特殊スキル「オートパリィ」：接触の瞬間、一定確率で自動的にパリィし、SANダメージを無効化する
+      const autoParried = Math.random() < specialSkillEffects.autoParryChance;
       // 「ファイヤーウォール」が残っていれば、この接触の間ずっとSANダメージを無効化する
-      if (playerBarrierCharges > 0) {
+      if (autoParried) {
+        en.barrierBlockedContact = true;
+        spawnSlashEffect(player.x, player.y, player.angle, player.radius);
+        showMessage('オートパリィ発動！', 1400, '#fff176');
+      } else if (playerBarrierCharges > 0) {
         playerBarrierCharges--;
         en.barrierBlockedContact = true;
       } else {
@@ -4344,9 +4360,12 @@ function update() {
       en.touching = true;
       invincible = true;
       invincibleTimer = invincibleDuration;
-      // 最初の接触時、敵にも弾1発相当のダメージを与える
+      // 最初の接触時、敵にも弾1発相当のダメージを与える（パリィが決まった場合は2倍のダメージを返す）
       const contactConditionRatio = 1 - Math.max(0, Math.min(1, fatigue / maxFatigue));
-      const contactDamage = Math.max(1, Math.round(baseBulletDamage * contactConditionRatio * (1 + skillLevel * 0.08)));
+      const contactDamage = Math.max(1, Math.round(
+        baseBulletDamage * contactConditionRatio * (1 + skillLevel * 0.08) *
+        (autoParried ? deflectDamageMultiplier : 1)
+      ));
       en.hp = (en.hp || 1) - contactDamage;
       if (en.hp <= 0) defeated = true;
     } else if (!en.barrierBlockedContact) {
