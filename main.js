@@ -1069,6 +1069,8 @@ function resolveTimedSystemsAtDayEnd() {
 function endWorkday() {
   resolveTimedSystemsAtDayEnd();
   if (gameOver || deathSequence) return;
+  // 一日の終わりに、同僚との関係性が少し回復する
+  if (partner.active) adjustPartnerRelationship(partnerRelationshipDailyRecovery);
   // 昇進判定は翌週の開始時に行うため、ここでは月末（クリア判定の直前）のみ判定する
   if (isLastDayOfMonth(currentDate)) {
     rankUpAtWeekEnd();
@@ -1357,6 +1359,7 @@ const partnerRelationshipInitial = Math.min(partnerRelationshipMax, 50 + dreamMe
 const partnerRelationshipSafeFireThreshold = 50;
 const partnerRelationshipDamagePerHit = 15;
 const partnerRelationshipRetaliationThreshold = 40;
+const partnerRelationshipDailyRecovery = 5; // 一日が終了するたびに回復する関係性の量
 
 // ===== 同僚の吹き出し（一言セリフ） =====
 let partnerSpeechBubble = null; // { text, color, timer }
