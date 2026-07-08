@@ -523,6 +523,7 @@ function triggerCaffeineCollapse() {
 function skipCollapseRestDay() {
   currentDate.setDate(currentDate.getDate() + 1);
   dayNumber++;
+  resetPlayerAndPartnerPositionForNewDay();
   if (currentDate.getDay() === 1) {
     startNewWeek();
   }
@@ -641,6 +642,16 @@ const eventSpawnMinY = windowZoneBottomY + 40;
 function clampToPlayableFloor(entity) {
   entity.x = Math.max(entity.radius, Math.min(canvas.width - entity.radius, entity.x));
   entity.y = Math.max(Math.max(entity.radius, windowZoneBottomY), Math.min(canvas.height - entity.radius, entity.y));
+}
+
+// 新しい日が始まるタイミングで、自機・同僚の位置を画面中央付近に戻す
+function resetPlayerAndPartnerPositionForNewDay() {
+  player.x = canvas.width / 2;
+  player.y = canvas.height / 2;
+  clampToPlayableFloor(player);
+  partner.x = player.x + partnerFollowOffsetX;
+  partner.y = player.y + partnerFollowOffsetY;
+  clampToPlayableFloor(partner);
 }
 
 // ===== 時刻イベント（定時報告・昼食・クイズ） =====
@@ -2093,6 +2104,7 @@ function applyDayEndRecovery() {
 function autoAdvanceDay() {
   currentDate.setDate(currentDate.getDate() + 1);
   applyDayEndRecovery();
+  resetPlayerAndPartnerPositionForNewDay();
   dayStartTime = gameClockMs;
   lastHourTime = gameClockMs;
   currentHour = dayStartHour;
@@ -2115,6 +2127,7 @@ function autoAdvanceDay() {
 function jumpToNextMondayAndResetWeek() {
   currentDate = nextMonday(currentDate);
   eveningDrinkRecoveryPenalty = false; // 休日を挟むため、このペナルティは持ち越さない
+  resetPlayerAndPartnerPositionForNewDay();
   dayStartTime = gameClockMs;
   lastHourTime = gameClockMs;
   currentHour = dayStartHour;
@@ -3643,7 +3656,7 @@ const endingConfig = {
   },
   'bad-san': {
     icon: '🌀',
-    label: 'BAD END',
+    label: 'END',
     labelColor: '#ce93d8',
     bgColor: 'rgba(30, 0, 40, 0.88)',
     description: [
@@ -3653,7 +3666,7 @@ const endingConfig = {
   },
   'bad-lifespan': {
     icon: '⚰️',
-    label: 'BAD END',
+    label: 'END',
     labelColor: '#90a4ae',
     bgColor: 'rgba(8, 8, 8, 0.92)',
     description: [
@@ -3663,7 +3676,7 @@ const endingConfig = {
   },
   'bad-partner-shot': {
     icon: '💔',
-    label: 'BAD END',
+    label: 'END',
     labelColor: '#ef9a9a',
     bgColor: 'rgba(35, 5, 12, 0.92)',
     description: [
