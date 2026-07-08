@@ -303,10 +303,16 @@ const playerIconGreetingLines = [
   '負けてられない、やってやるぞ！',
   '今日も一日、全力でいこう！'
 ];
-const partnerIconGreetingLines = [
-  'よろしくお願いします！一緒に頑張りましょう！',
-  '私も負けていられません！全力で支えます！',
-  '頼りにしてます。一緒に乗り越えましょう！'
+// 同僚アイコンの性別に応じて、口調の異なる「はじめまして」を含む挨拶からランダムで選ぶ
+const partnerIconGreetingLinesFemale = [
+  'はじめまして。よろしくお願いします、一緒に頑張りましょうね！',
+  'はじめまして！至らないところもあると思いますが、頼りにしてます！',
+  'はじめまして。私、精一杯支えますね！'
+];
+const partnerIconGreetingLinesMale = [
+  'はじめまして。よろしく頼む、一緒に頑張ろう！',
+  'はじめまして！俺も気合入れていくから、よろしくな！',
+  'はじめまして。頼りにしてくれ、全力でサポートするぞ！'
 ];
 const iconGreetingHoldMs = 1400; // ひとことを表示し続ける時間
 const iconGreetingFadeMs = 500; // フェードアウトにかける時間
@@ -1265,6 +1271,10 @@ function shouldShowReunionScene() {
 }
 
 let reunionSceneActive = false;
+// 'dim'（同僚アイコンが暗くなっていく演出）→ 'line'（自機のセリフ）→ 'paragraph'（地の文）の順に進む
+let reunionScenePhase = null;
+const reunionSceneDimDurationMs = 3000; // アイコンが暗くなりきるまでの時間
+let reunionSceneDimTimer = 0;
 let reunionSceneLine = '';
 let reunionSceneParagraph = [];
 let reunionSceneOnComplete = null;
@@ -1286,11 +1296,24 @@ function openReunionScene(onComplete) {
   );
   reunionSceneParagraph = data.paragraph.map(t => fillReunionTemplate(t, playerPronoun, partnerPronoun));
   reunionSceneActive = true;
+  reunionScenePhase = 'dim';
+  reunionSceneDimTimer = reunionSceneDimDurationMs;
   reunionSceneOnComplete = onComplete;
+}
+
+// 暗転中はクリックを無視し、セリフ表示中→地の文表示中の順に、クリック／タップで進める
+function advanceReunionScene() {
+  if (reunionScenePhase === 'dim') return;
+  if (reunionScenePhase === 'line') {
+    reunionScenePhase = 'paragraph';
+    return;
+  }
+  closeReunionScene();
 }
 
 function closeReunionScene() {
   reunionSceneActive = false;
+  reunionScenePhase = null;
   const onComplete = reunionSceneOnComplete;
   reunionSceneOnComplete = null;
   if (onComplete) onComplete();
@@ -2768,7 +2791,10 @@ function selectPartnerIcon(icon) {
     startGameAfterGreeting();
     return;
   }
-  const line = partnerIconGreetingLines[Math.floor(Math.random() * partnerIconGreetingLines.length)];
+  const greetingLines = partnerGenderById[icon] === 'female'
+    ? partnerIconGreetingLinesFemale
+    : partnerIconGreetingLinesMale;
+  const line = greetingLines[Math.floor(Math.random() * greetingLines.length)];
   startIconGreeting(icon, line, () => { setupStep = null; startGameAfterGreeting(); }, partnerIconImageElements[icon]);
 }
 
@@ -3054,9 +3080,9 @@ canvas.addEventListener('click', (event) => {
     resumeFromAcknowledgement();
     return;
   }
-  // 再会シーン中は、どこをクリック／タップしてもゲームを始める
+  // 再会シーン中は、クリック／タップで暗転→セリフ→地の文の順に進める
   if (reunionSceneActive) {
-    closeReunionScene();
+    advanceReunionScene();
     return;
   }
   // 一日の終わりの演出で入力待ち中なら、どこをクリック／タップしても次の日へ進める
@@ -3149,8 +3175,17 @@ function update() {
     return;
   }
 
-  // 前回と同じ自機・同僚で始めた時の再会シーン中は、クリック／タップされるまで進行を止める
-  if (reunionSceneActive) return;
+  // 前回と同じ自機・同僚で始めた時の再会シーン：アイコンが暗くなりきったら自動でセリフへ進む
+  if (reunionSceneActive) {
+    if (reunionScenePhase === 'dim') {
+      reunionSceneDimTimer -= dt * 1000;
+      if (reunionSceneDimTimer <= 0) {
+        reunionSceneDimTimer = 0;
+        reunionScenePhase = 'line';
+      }
+    }
+    return;
+  }
 
   // 同僚の吹き出しの表示時間を減らす
   if (partnerSpeechBubble) {
@@ -4368,27 +4403,43 @@ function draw() {
   }
 
   // 前回と同じ自機・同僚で始めた時、DAY1が始まる前に挟む短い再会シーン
+  // （同僚アイコンが暗くなる演出 → 自機のセリフ → 地の文、の順に進む）
   if (reunionSceneActive) {
     drawSetupBackground();
+    const imgSize = 150;
+    const imgX = canvas.width / 2 - imgSize / 2;
+    const imgY = 60;
     const partnerImg = partnerIconImageElements[selectedPartnerIcon];
     if (partnerImg && partnerImg.complete && partnerImg.naturalWidth > 0) {
-      const imgSize = 150;
-      ctx.drawImage(partnerImg, canvas.width / 2 - imgSize / 2, 60, imgSize, imgSize);
+      ctx.drawImage(partnerImg, imgX, imgY, imgSize, imgSize);
     }
+    // 'dim'の間は徐々に、'line'以降は完全に暗くなった状態を保つ
+    const dimProgress = reunionScenePhase === 'dim'
+      ? 1 - Math.max(0, reunionSceneDimTimer / reunionSceneDimDurationMs)
+      : 1;
+    ctx.fillStyle = `rgba(0, 0, 0, ${dimProgress * 0.75})`;
+    ctx.fillRect(imgX, imgY, imgSize, imgSize);
+
     ctx.textAlign = 'center';
-    ctx.fillStyle = '#ffe082';
-    ctx.font = 'bold 22px sans-serif';
-    ctx.fillText(reunionSceneLine, canvas.width / 2, 250);
+    if (reunionScenePhase === 'line' || reunionScenePhase === 'paragraph') {
+      ctx.fillStyle = '#ffe082';
+      ctx.font = 'bold 22px sans-serif';
+      ctx.fillText(reunionSceneLine, canvas.width / 2, 250);
+    }
 
-    ctx.fillStyle = '#e0e0e0';
-    ctx.font = '15px sans-serif';
-    reunionSceneParagraph.forEach((line, i) => {
-      ctx.fillText(line, canvas.width / 2, 296 + i * 24);
-    });
+    if (reunionScenePhase === 'paragraph') {
+      ctx.fillStyle = '#e0e0e0';
+      ctx.font = '15px sans-serif';
+      reunionSceneParagraph.forEach((line, i) => {
+        ctx.fillText(line, canvas.width / 2, 296 + i * 24);
+      });
+    }
 
-    ctx.fillStyle = '#cfd8dc';
-    ctx.font = '14px sans-serif';
-    ctx.fillText('クリック / タップで続ける', canvas.width / 2, canvas.height - 40);
+    if (reunionScenePhase === 'line' || reunionScenePhase === 'paragraph') {
+      ctx.fillStyle = '#cfd8dc';
+      ctx.font = '14px sans-serif';
+      ctx.fillText('クリック / タップで続ける', canvas.width / 2, canvas.height - 40);
+    }
     ctx.textAlign = 'left';
     return;
   }
