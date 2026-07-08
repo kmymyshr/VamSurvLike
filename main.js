@@ -508,29 +508,34 @@ let coffeeStunImmunityCharges = 0; // コーヒー1杯につき1回分。脳疲�
 let coffeeStunImmunityTimerMs = 0; // stunを回避している間、通常通り行動できる残り時間
 
 // ===== カフェイン（栄養ドリンク・コーヒー）過剰摂取イベント =====
-const caffeineOverdoseThreshold = 5; // 栄養ドリンク・コーヒーの合計本数がこれを超えると、倒れる可能性が生じる
-const caffeineOverdoseBaseChance = 0.2; // 超過1本目の基本確率
-const caffeineOverdoseChancePerExtra = 0.05; // 超過本数が増えるごとに加算する確率（最大50%まで）
-const caffeineOverdoseMaxChance = 0.5;
-let pendingCaffeineCollapse = false; // 翌日の開始時に「倒れる」イベントが発生するか
+// プレイ全体を通した通算本数で判定する（日ごとにはリセットしない）
+const caffeineOverdoseThreshold = 10; // 通算本数がこれを超えると、倒れる可能性が生じる
+const caffeineOverdoseBaseChance = 0.1; // 超過1本目の基本確率
+const caffeineOverdoseChancePerExtra = 0.02; // 通算本数が1本増えるごとに加算する確率
+const caffeineOverdoseMaxChance = 0.9; // 確率の上限（倍率がかかった場合も含む）
+const caffeineHeavyDayThreshold = 5; // 一日の合計摂取本数がこれ以上だと「飲みすぎた日」とみなす
+let energyDrinkTotalCount = 0; // 栄養ドリンクの通算摂取本数（リセットしない）
+let coffeeTotalCount = 0; // コーヒーの通算摂取本数（リセットしない）
+let caffeineHeavyDayDoubleChance = false; // 前日が「飲みすぎた日」だった場合、翌朝の判定だけ確率を倍にする
 
-// 栄養ドリンク・コーヒーを飲むたびに呼び出す。本日の合計本数が閾値を超えていたら、
-// 超過量に応じた確率で「翌日の開始時に倒れる」イベントを予約する
-function checkCaffeineOverdose() {
-  if (pendingCaffeineCollapse) return;
-  const totalToday = energyDrinkDailyCount + coffeeDailyCount;
-  if (totalToday <= caffeineOverdoseThreshold) return;
-  const extra = totalToday - caffeineOverdoseThreshold;
-  const chance = Math.min(caffeineOverdoseMaxChance,
-    caffeineOverdoseBaseChance + (extra - 1) * caffeineOverdoseChancePerExtra);
+// 新しい日が始まるタイミングで呼び出す。通算本数が閾値を超えていれば、
+// 超過量に応じた確率（前日に飲みすぎていた場合は倍率）で「倒れる」イベントを発生させる
+function checkCaffeineOverdoseAtDayStart() {
+  const totalSoFar = energyDrinkTotalCount + coffeeTotalCount;
+  const doubled = caffeineHeavyDayDoubleChance;
+  caffeineHeavyDayDoubleChance = false;
+  if (totalSoFar <= caffeineOverdoseThreshold) return;
+  const extra = totalSoFar - caffeineOverdoseThreshold;
+  let chance = caffeineOverdoseBaseChance + (extra - 1) * caffeineOverdoseChancePerExtra;
+  if (doubled) chance *= 2;
+  chance = Math.min(caffeineOverdoseMaxChance, chance);
   if (Math.random() < chance) {
-    pendingCaffeineCollapse = true;
+    triggerCaffeineCollapse();
   }
 }
 
 // 「カフェインの摂り過ぎで倒れる」イベント：寿命・SAN・同僚のSANを半分にし、丸一日休みにする
 function triggerCaffeineCollapse() {
-  pendingCaffeineCollapse = false;
   lifespan = Math.max(0, Math.floor(lifespan / 2));
   san = Math.max(0, Math.floor(san / 2));
   if (partner.active) partner.san = Math.max(0, Math.floor(partner.san / 2));
@@ -552,6 +557,7 @@ function skipCollapseRestDay() {
     startNewWeek();
   }
   lastUpdate = Date.now();
+  checkCaffeineOverdoseAtDayStart();
 }
 
 // コーヒーによる移動速度の倍率
@@ -2128,6 +2134,10 @@ function autoAdvanceDay() {
   currentDate.setDate(currentDate.getDate() + 1);
   applyDayEndRecovery();
   resetPlayerAndPartnerPositionForNewDay();
+  // 終わった一日に5本以上飲んでいたら、翌朝（＝今から始まる日）の判定だけ確率を倍にする
+  if (energyDrinkDailyCount + coffeeDailyCount >= caffeineHeavyDayThreshold) {
+    caffeineHeavyDayDoubleChance = true;
+  }
   dayStartTime = gameClockMs;
   lastHourTime = gameClockMs;
   currentHour = dayStartHour;
@@ -2143,7 +2153,7 @@ function autoAdvanceDay() {
     startNewWeek();
   }
   lastUpdate = Date.now();
-  if (pendingCaffeineCollapse) triggerCaffeineCollapse();
+  checkCaffeineOverdoseAtDayStart();
 }
 
 // 週末（土日祝日）を飛ばして次の月曜から新しい週を始める
@@ -2151,6 +2161,10 @@ function jumpToNextMondayAndResetWeek() {
   currentDate = nextMonday(currentDate);
   eveningDrinkRecoveryPenalty = false; // 休日を挟むため、このペナルティは持ち越さない
   resetPlayerAndPartnerPositionForNewDay();
+  // 終わった一日に5本以上飲んでいたら、翌朝（＝今から始まる日）の判定だけ確率を倍にする
+  if (energyDrinkDailyCount + coffeeDailyCount >= caffeineHeavyDayThreshold) {
+    caffeineHeavyDayDoubleChance = true;
+  }
   dayStartTime = gameClockMs;
   lastHourTime = gameClockMs;
   currentHour = dayStartHour;
@@ -2164,7 +2178,7 @@ function jumpToNextMondayAndResetWeek() {
   if (partner.active) partner.chocolateDailyCount = 0;
   startNewWeek();
   lastUpdate = Date.now();
-  if (pendingCaffeineCollapse) triggerCaffeineCollapse();
+  checkCaffeineOverdoseAtDayStart();
 }
 
 // 週の終わりを迎えたときの、週末の過ごし方選択画面の見出し文。状況に応じて呼び分ける
@@ -3040,6 +3054,7 @@ function update() {
 
     if (distanceToEnergyDrink <= player.radius + energyDrink.radius) {
       energyDrinkDailyCount++;
+      energyDrinkTotalCount++;
       const isSecondOrLater = energyDrinkDailyCount >= 2;
       const isCrossDrink = coffeeBuffTimerMs > 0;
       const totalLifespanCost = energyDrinkLifespanCost +
@@ -3052,7 +3067,6 @@ function update() {
       energyDrinkBuffTimerMs = energyDrinkBuffDurationMs;
       energyDrinkCrashTimerMs = 0; // 反動状態が残っていても、新たに飲めば打ち消してすぐ強化状態に入る
       if (currentHour >= dayEndHour) eveningDrinkRecoveryPenalty = true;
-      checkCaffeineOverdose();
       showMessage(
         `栄養ドリンク取得！ 脳疲労 -${Math.ceil(reducedFatigue)} / SAN +${energyDrinkSanRecovery} / 寿命 -${totalLifespanCost}` +
         (isSecondOrLater ? '（本日2本目以降…）' : '') + (isCrossDrink ? '（コーヒーとの飲み合わせ…）' : ''),
@@ -3096,6 +3110,7 @@ function update() {
 
     if (distanceToCoffee <= player.radius + coffee.radius) {
       coffeeDailyCount++;
+      coffeeTotalCount++;
       coffeeStunImmunityCharges++;
       const isCrossDrink = energyDrinkBuffTimerMs > 0;
       const totalLifespanCost = coffeeLifespanCost + (isCrossDrink ? coffeeCrossDrinkLifespanCost : 0);
@@ -3103,7 +3118,6 @@ function update() {
       lifespan = Math.max(0, lifespan - totalLifespanCost);
       coffeeBuffTimerMs = coffeeBuffDurationMs;
       if (currentHour >= dayEndHour) eveningDrinkRecoveryPenalty = true;
-      checkCaffeineOverdose();
       showMessage(
         `コーヒー取得！ SAN +${coffeeSanRecovery} / 寿命 -${totalLifespanCost}` +
         (isCrossDrink ? '（栄養ドリンクとの飲み合わせ…）' : ''),
