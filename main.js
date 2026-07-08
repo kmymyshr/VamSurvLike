@@ -1102,6 +1102,16 @@ const partnerNeglectStressedLines = [
   'こっちはもう、余裕ないんです！！'
 ];
 
+// ===== 全く攻撃せず長時間経過すると、同僚が叱咤しながら自機を攻撃してくる仕組み =====
+const partnerScoldAttackThresholdMs = 15000; // これだけ一切攻撃しないと叱咤攻撃が発生する
+const partnerScoldAttackIntervalMs = 8000; // 発生後、まだ攻撃していなければこの間隔で繰り返す
+let partnerScoldAttackTimerMs = 0;
+const partnerScoldAttackLines = [
+  'いい加減にしてください！目、覚まさせますよ！',
+  'ちゃんと働いてください！これでも喰らえ！',
+  'サボってる暇はないんです！しっかりしてください！'
+];
+
 // ===== 同僚が当てた敵を自機が倒すと、お礼を言ってくれる仕組み =====
 const partnerThanksRelationshipChance = 0.3; // お礼と共に好感度が+1する確率
 const partnerThanksLines = [
@@ -1327,7 +1337,7 @@ function damagePartnerSan(amount) {
   partner.san = Math.max(0, partner.san - amount * specialSkillEffects.partnerSanDamageMultiplier);
 }
 // 味方の弾はSANと寿命を直接削る。連続被弾は専用の短い無敵時間で抑える。
-function damagePlayerByFriendlyFire() {
+function damagePlayerByFriendlyFire(lines = partnerHitPlayerLines, stressedLines = partnerHitPlayerStressedLines, color = '#ffab91') {
   if (friendlyFireInvincibleTimer > 0) return false;
   if (playerBarrierCharges > 0) {
     playerBarrierCharges--;
@@ -1341,7 +1351,7 @@ function damagePlayerByFriendlyFire() {
   friendlyFireHitFlashTimer = friendlyFireHitEffectDuration;
   explosionShakeTimer = Math.max(explosionShakeTimer, friendlyFireHitEffectDuration);
   checkVitalsGameOver('bad-partner-shot');
-  showRandomPartnerSpeechBubble(partnerHitPlayerLines, '#ffab91', partnerHitPlayerStressedLines);
+  showRandomPartnerSpeechBubble(lines, color, stressedLines);
   return true;
 }
 
@@ -3383,6 +3393,17 @@ function update() {
     partnerNeglectTimerMs = 0;
   }
 
+  // 全く弾を撃たずに一定時間が経過すると、同僚が叱咤しながら自機に攻撃してくる
+  if (partner.active && (now - lastFire) >= partnerScoldAttackThresholdMs) {
+    partnerScoldAttackTimerMs += dt * 1000;
+    if (partnerScoldAttackTimerMs >= partnerScoldAttackIntervalMs) {
+      partnerScoldAttackTimerMs = 0;
+      damagePlayerByFriendlyFire(partnerScoldAttackLines, null, '#ff8a65');
+    }
+  } else {
+    partnerScoldAttackTimerMs = 0;
+  }
+
   // 時々ランダムで、SAN・寿命の状態を反映した一言を同僚が呟く
   partnerStatusCommentTimerMs += dt * 1000;
   if (partnerStatusCommentTimerMs >= partnerStatusCommentIntervalMs) {
@@ -4024,8 +4045,7 @@ function draw() {
 
   // アイコン選択直後のひとことメッセージ演出（表示→フェードアウト）
   if (iconGreetingPhase) {
-    ctx.fillStyle = 'black';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    drawSetupBackground();
     const alpha = iconGreetingPhase === 'fadeout'
       ? Math.max(0, Math.min(1, iconGreetingTimer / iconGreetingFadeMs))
       : 1;
