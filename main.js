@@ -105,7 +105,7 @@ function dreamMemoryUpgradeCost(currentLevel) {
 function loadDreamMemorySave() {
   const fallbackUpgrades = {};
   dreamMemoryUpgradeDefs.forEach(def => { fallbackUpgrades[def.id] = 0; });
-  const fallback = { points: 0, upgrades: fallbackUpgrades, lastRun: null };
+  const fallback = { points: 0, upgrades: fallbackUpgrades, lastRun: null, trueEndCleared: false };
   try {
     const raw = localStorage.getItem(dreamMemoryStorageKey);
     if (!raw) return fallback;
@@ -124,7 +124,12 @@ function loadDreamMemorySave() {
       relationship: Math.max(0, Math.min(100, Math.floor(rawLastRun.relationship) || 0)),
       endingType: rawLastRun.endingType || null
     } : null;
-    return { points: Math.max(0, Math.floor(parsed.points) || 0), upgrades, lastRun };
+    return {
+      points: Math.max(0, Math.floor(parsed.points) || 0),
+      upgrades,
+      lastRun,
+      trueEndCleared: !!parsed.trueEndCleared
+    };
   } catch (e) {
     return fallback;
   }
@@ -3333,12 +3338,24 @@ const bossSanTriggerThreshold = 20;
 const bossWidthRatio = 0.7; // 画面幅に対するラスボスの幅の割合
 const bossHeight = 210; // ラスボスが窓を覆う高さ
 const bossDescendDurationSec = 4.5; // 降りてくるのにかかる時間
-const bossHoleCount = 5; // 弾を撃ってくる「穴」の数
 const bossFireIntervalMs = 1300;
 const bossBulletSpeed = 4.2;
 const bossBulletDamageSan = 12;
 const bossBulletDamageLifespan = 3;
-const bossMaxHp = 500;
+// 段階ごとの発射口（穴）の数：5個すべて破壊→7個をランダム配置→10個がランダムに動き回る
+const bossHoleCountsByStage = [5, 7, 10];
+const bossHoleRadius = 16;
+const bossHoleFlashDurationMs = 220; // 命中した瞬間、穴を光らせて着弾を示す時間
+// 全体で「1万発当てないと壊れない」程度の耐久力になるよう、穴1個あたりの必要命中数を割り出す
+const bossTotalHitsToDefeat = 10000;
+const bossHitsPerHole = Math.round(
+  bossTotalHitsToDefeat / bossHoleCountsByStage.reduce((a, b) => a + b, 0)
+);
+// 段階2・3のランダム配置の間隔と、段階3の移動先を変える間隔
+const bossHoleMinSpacing = 0.16; // 相対座標（0〜1）での最低距離
+const bossHoleWanderIntervalMinMs = 900;
+const bossHoleWanderIntervalMaxMs = 1600;
+const bossHoleWanderEaseFactor = 2.2;
 // 本体が上下左右にゆっくり動き回る範囲と、目標地点を変える間隔
 const bossMoveRangeX = 50;
 const bossMoveRangeY = 26;
@@ -3347,7 +3364,7 @@ const bossMoveEaseFactor = 1.2;
 const bossContactSanDamage = 20;
 const bossContactLifespanDamage = 6;
 let bossEventOnCooldown = false; // 一度発生したら、両者のSANが閾値を上回るまで再発生しない
-let bossEvent = null; // null、または { phase, descendProgress, hp, maxHp, fireTimerMs, savedEnemies, offsetX, offsetY, moveTargetX, moveTargetY, moveTimerMs }
+let bossEvent = null; // null、または { phase, stage, holes, totalHitsLanded, descendProgress, fireTimerMs, savedEnemies, offsetX, offsetY, moveTargetX, moveTargetY, moveTimerMs }
 
 function getBossGeometry() {
   const width = canvas.width * bossWidthRatio;
@@ -3371,12 +3388,53 @@ function checkBossEventTrigger() {
   }
 }
 
+// 段階に応じた発射口を生成する（相対座標 relX/relY で持ち、ラスボス本体の動きに追従させる）
+function generateBossHoles(stage) {
+  const count = bossHoleCountsByStage[stage - 1];
+  const holes = [];
+  if (stage === 1) {
+    // 第1段階は、既存の見た目に合わせて横一列に均等配置する
+    for (let i = 0; i < count; i++) {
+      holes.push({
+        relX: (i + 1) / (count + 1), relY: 0.65,
+        hitsTaken: 0, destroyed: false, flashTimerMs: 0
+      });
+    }
+    return holes;
+  }
+  // 第2・3段階は、ある程度の間隔を保ちつつランダムな位置に配置する
+  for (let i = 0; i < count; i++) {
+    let relX, relY, attempts = 0;
+    do {
+      relX = 0.08 + Math.random() * 0.84;
+      relY = 0.25 + Math.random() * 0.65;
+      attempts++;
+    } while (attempts < 20 && holes.some(h => Math.hypot(h.relX - relX, h.relY - relY) < bossHoleMinSpacing));
+    const hole = { relX, relY, hitsTaken: 0, destroyed: false, flashTimerMs: 0 };
+    if (stage === 3) {
+      // 第3段階の穴は、ラスボス上をランダムに動き回る
+      hole.wanderTargetRelX = relX;
+      hole.wanderTargetRelY = relY;
+      hole.wanderTimerMs = bossHoleWanderIntervalMinMs + Math.random() * (bossHoleWanderIntervalMaxMs - bossHoleWanderIntervalMinMs);
+    }
+    holes.push(hole);
+  }
+  return holes;
+}
+
+// 発射口の相対座標を、ラスボスの現在位置に基づく画面座標へ変換する
+function getBossHoleAbsolutePosition(hole) {
+  const geo = getBossGeometry();
+  return { x: geo.x + geo.width * hole.relX, y: geo.y + geo.height * hole.relY };
+}
+
 function startBossEvent() {
   bossEvent = {
     phase: 'descending',
+    stage: 1,
+    holes: generateBossHoles(1),
+    totalHitsLanded: 0,
     descendProgress: 0,
-    hp: bossMaxHp,
-    maxHp: bossMaxHp,
     fireTimerMs: bossFireIntervalMs,
     savedEnemies: enemies.slice(),
     offsetX: 0,
@@ -3414,11 +3472,59 @@ function updateBossEvent(dt) {
 
   checkBossContactDamage();
 
+  // 発射口の点滅（被弾エフェクト）を減衰させ、第3段階なら穴自体もランダムに動かす
+  for (const hole of bossEvent.holes) {
+    if (hole.flashTimerMs > 0) hole.flashTimerMs = Math.max(0, hole.flashTimerMs - dt * 1000);
+    if (hole.destroyed || bossEvent.stage !== 3) continue;
+    hole.wanderTimerMs -= dt * 1000;
+    if (hole.wanderTimerMs <= 0) {
+      hole.wanderTargetRelX = 0.08 + Math.random() * 0.84;
+      hole.wanderTargetRelY = 0.25 + Math.random() * 0.65;
+      hole.wanderTimerMs = bossHoleWanderIntervalMinMs + Math.random() * (bossHoleWanderIntervalMaxMs - bossHoleWanderIntervalMinMs);
+    }
+    const wanderEase = Math.min(1, dt * bossHoleWanderEaseFactor);
+    hole.relX += (hole.wanderTargetRelX - hole.relX) * wanderEase;
+    hole.relY += (hole.wanderTargetRelY - hole.relY) * wanderEase;
+  }
+
   bossEvent.fireTimerMs -= dt * 1000;
   if (bossEvent.fireTimerMs <= 0) {
     bossEvent.fireTimerMs = bossFireIntervalMs;
     fireBossBullets();
   }
+}
+
+// 発射口に命中した弾を処理する。破壊しきい値に達したら穴を破壊し、
+// 段階の全ての穴が破壊されたら次の段階へ進める（最終段階なら撃破演出を開始する）
+function registerBossHoleHit(hole, hitX, hitY) {
+  hole.hitsTaken++;
+  hole.flashTimerMs = bossHoleFlashDurationMs;
+  bossEvent.totalHitsLanded++;
+  spawnHitSpark(hitX, hitY, false);
+  if (hole.hitsTaken < bossHitsPerHole) return;
+  hole.destroyed = true;
+  if (!bossEvent.holes.every(h => h.destroyed)) return;
+  if (bossEvent.stage < bossHoleCountsByStage.length) {
+    bossEvent.stage++;
+    bossEvent.holes = generateBossHoles(bossEvent.stage);
+    showMessage(
+      `発射口をすべて破壊した！ さらに${bossEvent.holes.length}個の発射口が現れた……`,
+      3200, '#ff1744', '22px sans-serif'
+    );
+  } else {
+    startBossFinalSequence();
+  }
+}
+
+// 自機の狙いが発射口に重なっているかを調べ、重なっていればその穴を返す
+function findHitBossHole(x, y) {
+  if (!bossEvent || bossEvent.phase !== 'active') return null;
+  for (const hole of bossEvent.holes) {
+    if (hole.destroyed) continue;
+    const pos = getBossHoleAbsolutePosition(hole);
+    if (Math.hypot(x - pos.x, y - pos.y) <= bossHoleRadius + 6) return hole;
+  }
+  return null;
 }
 
 // ラスボスの本体（見た目の範囲）に自機・同僚が触れていたら、直接ダメージを与える
@@ -3453,25 +3559,16 @@ function checkBossContactDamage() {
 }
 
 // ラスボスの「穴」の位置（画面座標）を配列で返す
-function getBossHolePositions() {
-  const geo = getBossGeometry();
-  const holes = [];
-  for (let i = 0; i < bossHoleCount; i++) {
-    const hx = geo.x + (geo.width / (bossHoleCount + 1)) * (i + 1);
-    const hy = geo.y + geo.height * 0.65;
-    holes.push({ x: hx, y: hy });
-  }
-  return holes;
-}
-
 function fireBossBullets() {
-  for (const hole of getBossHolePositions()) {
+  for (const hole of bossEvent.holes) {
+    if (hole.destroyed) continue;
+    const pos = getBossHoleAbsolutePosition(hole);
     // 穴ごとに、自機・同僚のどちらを狙うかをランダムに決める（同僚も直接狙われる）
     const target = (partner.active && Math.random() < 0.5) ? partner : player;
-    const angle = Math.atan2(target.y - hole.y, target.x - hole.x) + (Math.random() - 0.5) * 0.35;
+    const angle = Math.atan2(target.y - pos.y, target.x - pos.x) + (Math.random() - 0.5) * 0.35;
     bullets.push({
-      x: hole.x,
-      y: hole.y,
+      x: pos.x,
+      y: pos.y,
       vx: Math.cos(angle) * bossBulletSpeed,
       vy: Math.sin(angle) * bossBulletSpeed,
       radius: 7,
@@ -3480,13 +3577,6 @@ function fireBossBullets() {
       owner: 'boss'
     });
   }
-}
-
-// ラスボスの当たり判定は、見た目の矩形に対する単純な範囲判定にする
-function isPointInBossHitbox(x, y) {
-  if (!bossEvent || bossEvent.phase !== 'active') return false;
-  const geo = getBossGeometry();
-  return x >= geo.x && x <= geo.x + geo.width && y >= geo.y && y <= geo.y + geo.height;
 }
 
 // 同僚と同じ誤射ダメージ量で、ラスボス弾による被弾を処理する（パリィ成功時はここに来ない）
@@ -3518,11 +3608,67 @@ function damagePartnerByBossBullet() {
   partner.friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
 }
 
-function defeatBossEvent() {
-  showMessage('ラスボスを退けた！ 日常が戻ってくる……', 3800, '#69f0ae', '26px sans-serif');
-  enemies.push(...bossEvent.savedEnemies);
-  score += 200;
-  bossEvent = null;
+// ===== ラスボス撃破後の演出（真エンドへ至る一連のカットシーン） =====
+// 'retreat'：本体が振動・フェードアウトしながら退場する（同時に画面が不規則にフラッシュ）
+// 'bgRestore'：暗く沈んでいたトーンが晴れ、いつもの背景に戻る
+// 'whiteFade'：画面全体がゆっくり白くなる
+// 'whiteWait'：白いまま少し待つ
+// 'trueEnd'：真エンドの文章とENDを表示し、最後にタイトルへ戻る
+const bossFinalFlashDurationMs = 2000; // フラッシュが不規則に入る時間（retreatの前半）
+const bossFinalRetreatDurationMs = 4500; // 振動・フェードアウト・後退にかかる全体の時間
+const bossFinalBgRestoreDurationMs = 1800;
+const bossFinalWhiteFadeDurationMs = 1800;
+const bossFinalWhiteWaitDurationMs = 3000;
+// 真エンドの文章・ENDの表示タイミング（trueEndフェーズ開始からの経過ミリ秒とフェード時間）
+const bossTrueEndCues = [
+  { start: 0, fadeMs: 1500 }, // 1行目
+  { start: 2700, fadeMs: 1500 }, // 2行目
+  { start: 5700, fadeMs: 800 } // END
+];
+const bossTrueEndReturnAtMs = 9500; // このタイミングでタイトルへ戻る
+const bossTrueEndLines = [
+  '「なんだか長い夢を見ていた気がする。」',
+  '・・・職業訓練期間がもうすぐ終わるから、早く就職活動を始めないと。'
+];
+let bossFinalSequence = null; // null、または { phase, phaseTimerMs }
+
+function startBossFinalSequence() {
+  bossFinalSequence = { phase: 'retreat', phaseTimerMs: 0 };
+}
+
+function updateBossFinalSequence(dt) {
+  const seq = bossFinalSequence;
+  seq.phaseTimerMs += dt * 1000;
+  if (seq.phase === 'retreat' && seq.phaseTimerMs >= bossFinalRetreatDurationMs) {
+    seq.phase = 'bgRestore';
+    seq.phaseTimerMs = 0;
+  } else if (seq.phase === 'bgRestore' && seq.phaseTimerMs >= bossFinalBgRestoreDurationMs) {
+    seq.phase = 'whiteFade';
+    seq.phaseTimerMs = 0;
+  } else if (seq.phase === 'whiteFade' && seq.phaseTimerMs >= bossFinalWhiteFadeDurationMs) {
+    seq.phase = 'whiteWait';
+    seq.phaseTimerMs = 0;
+  } else if (seq.phase === 'whiteWait' && seq.phaseTimerMs >= bossFinalWhiteWaitDurationMs) {
+    seq.phase = 'trueEnd';
+    seq.phaseTimerMs = 0;
+  } else if (seq.phase === 'trueEnd' && seq.phaseTimerMs >= bossTrueEndReturnAtMs) {
+    finishBossTrueEnd();
+  }
+}
+
+// 真エンドに到達した時点のScoreを夢の記憶ポイントへ変換し、クリア済フラグを保存してタイトルへ戻る
+function finishBossTrueEnd() {
+  const earnedDreamMemoryPoints = Math.floor(score / dreamMemoryScoreDivisor);
+  dreamMemorySave.points += earnedDreamMemoryPoints;
+  dreamMemorySave.trueEndCleared = true;
+  dreamMemorySave.lastRun = selectedPartnerIcon ? {
+    playerGender: selectedGender,
+    partnerIcon: selectedPartnerIcon,
+    relationship: partner.relationship,
+    endingType: 'true'
+  } : null;
+  saveDreamMemorySave();
+  location.reload();
 }
 
 // ===== パリィ（バットのように、タイミングよく振ると同僚弾を最寄りの敵へ打ち返す） =====
@@ -3806,6 +3952,12 @@ function update() {
       sendScore(score);
       deathSequence = null;
     }
+    return;
+  }
+
+  // ラスボス撃破後の演出中は、この処理だけを進め、他の一切（自機・同僚・時間経過など）を停止する
+  if (bossFinalSequence) {
+    updateBossFinalSequence(dt);
     return;
   }
 
@@ -4564,14 +4716,15 @@ function update() {
       if (gameOver || deathSequence) return;
       continue;
     }
-    // ラスボスへの命中判定。パリィで打ち返した弾（'deflected'）だけが有効打になり、通常の弾は素通りする
-    if (bossEvent && bossEvent.phase === 'active' && b.owner === 'deflected' &&
-        isPointInBossHitbox(b.x, b.y)) {
-      bossEvent.hp -= (b.damage || 1);
-      spawnHitSpark(b.x, b.y, true);
-      bullets.splice(i, 1);
-      if (bossEvent.hp <= 0) defeatBossEvent();
-      continue;
+    // ラスボスへの命中判定。パリィで打ち返した弾（'deflected'）が発射口に当たった時だけ有効打になる。
+    // 発射口以外に当たった弾や、通常の弾はそのまま素通りする
+    if (bossEvent && b.owner === 'deflected') {
+      const hitHole = findHitBossHole(b.x, b.y);
+      if (hitHole) {
+        registerBossHoleHit(hitHole, b.x, b.y);
+        bullets.splice(i, 1);
+        continue;
+      }
     }
     // 固定ターゲット「定時報告」への命中判定
     if (scheduledReport &&
@@ -4982,6 +5135,15 @@ function drawBossEvent() {
   if (!bossEvent) return;
   const geo = getBossGeometry();
 
+  // 撃破後の退場演出中は、振動しながら・透明になりながら画面上へ完全に引き下がる
+  const retreating = bossFinalSequence && bossFinalSequence.phase === 'retreat';
+  const retreatProgress = retreating
+    ? Math.min(1, bossFinalSequence.phaseTimerMs / bossFinalRetreatDurationMs)
+    : 0;
+  const retreatAlpha = 1 - retreatProgress;
+  const retreatOffsetY = -retreatProgress * (bossHeight + 400);
+  const retreatShakeX = retreating ? Math.sin(gameClockMs / 35) * 10 * (1 - retreatProgress * 0.3) : 0;
+
   // 画面全体を、赤黒く沈んだ夜のような色合いに染める
   ctx.save();
   const dusk = ctx.createLinearGradient(0, 0, 0, canvas.height);
@@ -4994,8 +5156,11 @@ function drawBossEvent() {
 
   // ラスボス本体：last_boss.png を、目・口のあたりが見えるように下寄りを切り出して表示する
   ctx.save();
+  ctx.globalAlpha = retreatAlpha;
+  const bodyX = geo.x + retreatShakeX;
+  const bodyY = geo.y + retreatOffsetY;
   ctx.fillStyle = 'rgba(6, 2, 10, 0.9)';
-  ctx.fillRect(geo.x, geo.y, geo.width, geo.height);
+  ctx.fillRect(bodyX, bodyY, geo.width, geo.height);
   if (bossImage.complete && bossImage.naturalWidth > 0) {
     const scale = geo.width / bossImage.naturalWidth;
     const sourceHeight = Math.min(bossImage.naturalHeight, geo.height / scale);
@@ -5004,28 +5169,56 @@ function drawBossEvent() {
     ctx.drawImage(
       bossImage,
       0, sourceY, bossImage.naturalWidth, clampedSourceHeight,
-      geo.x, geo.y, geo.width, clampedSourceHeight * scale
+      bodyX, bodyY, geo.width, clampedSourceHeight * scale
     );
   }
 
-  // 弾を撃ってくる「穴」の位置に、赤く脈打つ光を重ねる
-  for (const hole of getBossHolePositions()) {
-    const pulse = 0.6 + 0.4 * Math.sin(gameClockMs / 220 + hole.x);
+  // 発射口を描く：健在なら赤く脈打つ光（被弾直後は白く点滅）、破壊済みなら黒く焼け落ちた見た目にする
+  for (const hole of bossEvent.holes) {
+    const pos = getBossHoleAbsolutePosition(hole);
+    const hx = pos.x + retreatShakeX;
+    const hy = pos.y + retreatOffsetY;
+    if (hole.destroyed) {
+      ctx.beginPath();
+      ctx.fillStyle = 'rgba(15, 15, 15, 0.85)';
+      ctx.arc(hx, hy, bossHoleRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(90, 90, 90, 0.6)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      continue;
+    }
+    const pulse = 0.6 + 0.4 * Math.sin(gameClockMs / 220 + pos.x);
+    const damageRatio = hole.hitsTaken / bossHitsPerHole;
     ctx.beginPath();
-    ctx.fillStyle = `rgba(255, 30, 30, ${0.55 * pulse})`;
+    ctx.fillStyle = `rgba(255, ${Math.round(30 + damageRatio * 140)}, 30, ${0.55 * pulse})`;
     ctx.shadowColor = '#ff1744';
     ctx.shadowBlur = 16;
-    ctx.arc(hole.x, hole.y, 14, 0, Math.PI * 2);
+    ctx.arc(hx, hy, bossHoleRadius, 0, Math.PI * 2);
     ctx.fill();
+    // 命中した瞬間、穴を白く点滅させて着弾したことが分かるようにする
+    if (hole.flashTimerMs > 0) {
+      ctx.shadowBlur = 0;
+      ctx.beginPath();
+      ctx.fillStyle = `rgba(255, 255, 255, ${hole.flashTimerMs / bossHoleFlashDurationMs})`;
+      ctx.arc(hx, hy, bossHoleRadius * 1.35, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
   ctx.restore();
 
-  // HPバー（降りきって本格的な戦闘が始まってから表示する）
-  if (bossEvent.phase === 'active') {
+  // 退場演出の最初の2秒は、画面全体を不規則にフラッシュさせる
+  if (retreating && bossFinalSequence.phaseTimerMs < bossFinalFlashDurationMs && Math.random() < 0.15) {
+    ctx.fillStyle = `rgba(255, 255, 255, ${0.3 + Math.random() * 0.5})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  // HPバー（降りきって本格的な戦闘が始まってから、撃破演出が始まるまで表示する）
+  if (bossEvent.phase === 'active' && !bossFinalSequence) {
     const barW = canvas.width * 0.6;
     const barX = (canvas.width - barW) / 2;
     const barY = geo.y + geo.height + 60;
-    const hpRatio = Math.max(0, bossEvent.hp / bossEvent.maxHp);
+    const hpRatio = Math.max(0, 1 - bossEvent.totalHitsLanded / bossTotalHitsToDefeat);
     ctx.save();
     ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
     ctx.fillRect(barX, barY, barW, 16);
@@ -5037,10 +5230,58 @@ function drawBossEvent() {
     ctx.fillStyle = 'white';
     ctx.font = 'bold 14px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('ラスボス', canvas.width / 2, barY - 8);
+    const destroyedHoles = bossEvent.holes.filter(h => h.destroyed).length;
+    ctx.fillText(
+      `ラスボス（第${bossEvent.stage}段階：発射口 ${destroyedHoles}/${bossEvent.holes.length} 破壊）`,
+      canvas.width / 2, barY - 8
+    );
     ctx.textAlign = 'left';
     ctx.restore();
   }
+}
+
+// ラスボス撃破後、本体の退場が終わってからタイトルへ戻るまでの一連の画面演出
+function drawBossFinalTransition() {
+  const seq = bossFinalSequence;
+  drawBackground();
+
+  if (seq.phase === 'bgRestore') {
+    // 暗く沈んでいたトーンが晴れて、いつもの背景に戻っていく
+    const p = Math.min(1, seq.phaseTimerMs / bossFinalBgRestoreDurationMs);
+    ctx.fillStyle = `rgba(10, 0, 5, ${(1 - p) * 0.5})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    return;
+  }
+
+  // whiteFade以降は、画面が白くなり、真エンドの文章を表示する
+  const whiteAlpha = seq.phase === 'whiteFade'
+    ? Math.min(1, seq.phaseTimerMs / bossFinalWhiteFadeDurationMs)
+    : 1;
+  ctx.fillStyle = `rgba(255, 255, 255, ${whiteAlpha})`;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (seq.phase !== 'trueEnd') return;
+
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#333333';
+  ctx.font = '22px sans-serif';
+  bossTrueEndLines.forEach((line, i) => {
+    const cue = bossTrueEndCues[i];
+    const alpha = Math.max(0, Math.min(1, (seq.phaseTimerMs - cue.start) / cue.fadeMs));
+    if (alpha <= 0) return;
+    ctx.globalAlpha = alpha;
+    ctx.fillText(line, canvas.width / 2, canvas.height / 2 - 30 + i * 70);
+  });
+  const endCue = bossTrueEndCues[2];
+  const endAlpha = Math.max(0, Math.min(1, (seq.phaseTimerMs - endCue.start) / endCue.fadeMs));
+  if (endAlpha > 0) {
+    ctx.globalAlpha = endAlpha;
+    ctx.font = 'bold 42px sans-serif';
+    ctx.fillStyle = '#222222';
+    ctx.fillText('END', canvas.width / 2, canvas.height / 2 + 140);
+  }
+  ctx.restore();
 }
 
 // 時刻の端数も使い、1時間ごとの段差ではなく滑らかに明暗を変える。
@@ -5296,6 +5537,13 @@ function draw() {
   // 力尽きた演出中は、通常のゲーム画面は描かず専用の演出画面のみを表示する
   if (deathSequence) {
     drawDeathSequenceScene();
+    return;
+  }
+
+  // ラスボス撃破演出：本体の退場（'retreat'）は通常の画面に重ねて描くが、
+  // それ以降（背景復帰・白フェード・真エンド）は専用の画面に切り替える
+  if (bossFinalSequence && bossFinalSequence.phase !== 'retreat') {
+    drawBossFinalTransition();
     return;
   }
 
@@ -5588,6 +5836,17 @@ function draw() {
     ctx.fillText('Workin’ FunDead', canvas.width / 2, canvas.height / 2 - 130);
     ctx.restore();
     ctx.textAlign = 'left';
+
+    // 真エンド（ラスボス撃破）に到達済みなら、タイトルにその印を表示する
+    if (dreamMemorySave.trueEndCleared) {
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ffd54f';
+      ctx.font = 'bold 16px sans-serif';
+      ctx.fillText('クリア済', canvas.width / 2, canvas.height / 2 - 96);
+      ctx.textAlign = 'left';
+      ctx.restore();
+    }
 
     const btnW = 340, btnH = 54;
     const btnX = canvas.width / 2 - btnW / 2;
