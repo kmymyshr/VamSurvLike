@@ -92,6 +92,23 @@ canvas {
   z-index: 20;
 }
 
+/* 連射ボタンの真上に置く、パリィ（同僚弾のはじき返し）ボタン */
+#btnMobileParry {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: calc(max(16px, env(safe-area-inset-bottom)) + 100px + 12px);
+  width: 100px;
+  height: 64px;
+  border-radius: 16px;
+  background: rgba(128, 222, 234, 0.30);
+  color: white;
+  font-size: 16px;
+  font-weight: bold;
+  border: 2px solid rgba(128, 222, 234, 0.75);
+  touch-action: none;
+  z-index: 20;
+}
+
 /* 縦持ち（ポートレート）のときだけ、横向きを促すオーバーレイを表示する */
 #rotateOverlay {
   display: none;

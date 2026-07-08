@@ -294,6 +294,15 @@ const deflectEffectDurationMs = 300;
 function spawnDeflectEffect(x, y) {
   deflectEffects.push({ x, y, timer: deflectEffectDurationMs });
 }
+
+// ===== はじき返しを振った瞬間の、剣で切ったような扇状のワイプエフェクト =====
+// 自機の向きを中心に270度の範囲を、素早く弧が伸びてからフェードアウトする
+let slashEffect = null; // { angle, timer }
+const slashEffectDurationMs = 260;
+const slashEffectRangeRad = (270 * Math.PI) / 180;
+function spawnSlashEffect(angle) {
+  slashEffect = { angle, timer: slashEffectDurationMs };
+}
 const baseFireRate = 350; // 基本の発射間隔（従来の半分、ミリ秒）
 let lastFire = 0;
 let score = dreamMemorySave.upgrades.startScore * 20; // 夢の記憶ポイントの「初期スコア」で底上げされる
@@ -3058,7 +3067,7 @@ document.addEventListener("keydown", (event) => {
   if (event.key === 'f') {
     autoFireEnabled = !autoFireEnabled;
   }
-  // スペースキーで、タイミングよく振ると同僚弾をはじき返す（キーリピートでの連発は防ぐ）
+  // スペースキーで、タイミングよく振るとパリィ（同僚弾のはじき返し）を試みる（キーリピートでの連発は防ぐ）
   if (event.key === ' ' && !event.repeat) {
     event.preventDefault();
     attemptDeflectPartnerBullet();
@@ -3162,6 +3171,14 @@ mobileFireEl.addEventListener('pointerup', releaseMobileFireButton);
 mobileFireEl.addEventListener('pointercancel', releaseMobileFireButton);
 mobileFireEl.addEventListener('pointerleave', releaseMobileFireButton);
 
+// ===== 画面外のパリィボタン（#btnMobileParry、連射ボタンの上に配置） =====
+// 押すたびにパリィ（同僚弾のはじき返し）を試みる。Spaceキーと同じ処理を呼ぶ
+const mobileParryEl = document.getElementById('btnMobileParry');
+mobileParryEl.addEventListener('pointerdown', (event) => {
+  event.preventDefault();
+  attemptDeflectPartnerBullet();
+});
+
 // ===== スマホ用：自動で最寄りの敵の方に向く設定（タイトル画面のボタンで切り替え、端末に保存する） =====
 const mobileAutoAimStorageKey = 'vamSurvLike_mobileAutoAim_v1';
 let mobileAutoAimEnabled = (() => {
@@ -3187,13 +3204,14 @@ function findNearestEnemyToPlayer() {
   }, null);
 }
 
-// ===== 同僚弾のはじき返し（バットのように、タイミングよく振ると同僚弾を最寄りの敵へ打ち返す） =====
-const deflectRange = 60; // これより近くにある同僚弾だけをはじき返せる
-const deflectDamageMultiplier = 2; // はじき返した弾は通常の2倍のダメージになる
+// ===== パリィ（バットのように、タイミングよく振ると同僚弾を最寄りの敵へ打ち返す） =====
+const deflectRange = 90; // これより近くにある同僚弾だけをパリィできる（やや緩めの判定）
+const deflectDamageMultiplier = 2; // パリィした弾は通常の2倍のダメージになる
 const deflectFatigueCost = 5; // キーを振るたび（成否問わず）暫定的に蓄積する脳疲労
 function attemptDeflectPartnerBullet() {
   if (stunned) return;
   applyFatigueGain(deflectFatigueCost);
+  spawnSlashEffect(player.angle); // 命中の有無に関わらず、振った動作自体を見せる
   let target = null;
   let targetDist = Infinity;
   for (const b of bullets) {
@@ -3217,7 +3235,7 @@ function attemptDeflectPartnerBullet() {
   target.owner = 'deflected';
   target.damage = Math.max(1, Math.round((target.damage || 1) * deflectDamageMultiplier));
   spawnDeflectEffect(target.x, target.y);
-  showMessage('弾をはじき返した！', 1400, '#fff176');
+  showMessage('パリィ成功！', 1400, '#fff176');
 }
 // スマホ用自動照準のターゲットを返す。定時報告が出ている間は、同僚の自律攻撃と同様にそちらを優先する
 function findAutoAimTarget() {
@@ -3540,6 +3558,12 @@ function update() {
   for (let di = deflectEffects.length - 1; di >= 0; di--) {
     deflectEffects[di].timer -= dt * 1000;
     if (deflectEffects[di].timer <= 0) deflectEffects.splice(di, 1);
+  }
+
+  // 斬撃ワイプエフェクトの表示時間を減らす
+  if (slashEffect) {
+    slashEffect.timer -= dt * 1000;
+    if (slashEffect.timer <= 0) slashEffect = null;
   }
 
   // 爆発後の短い時間、Canvas全体をランダムに揺らす
@@ -5033,7 +5057,7 @@ function draw() {
     ctx.fillStyle = '#cfd8dc';
     ctx.font = '16px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('P = 一時停止 / 再開　F = 自動攻撃切替　Space = 同僚弾をはじき返す', canvas.width / 2, helpTextY);
+    ctx.fillText('P = 一時停止 / 再開　F = 自動攻撃切替　Space = パリィ（同僚弾をはじき返す）', canvas.width / 2, helpTextY);
     ctx.fillText('WASD・十字ボタン = 移動　マウス・ドラッグ / 連射ボタン = 照準・攻撃', canvas.width / 2, helpTextY + 26);
     ctx.textAlign = 'left';
     return;
@@ -5251,6 +5275,32 @@ function draw() {
       ctx.lineTo(effect.x + Math.cos(angle) * radius, effect.y + Math.sin(angle) * radius);
       ctx.stroke();
     }
+    ctx.restore();
+  }
+
+  // はじき返しを振った瞬間、自機の向きを中心に270度の範囲を素早く斬るワイプエフェクトを描く
+  if (slashEffect) {
+    const progress = 1 - slashEffect.timer / slashEffectDurationMs;
+    const sweepProgress = Math.min(1, progress / 0.6); // 最初の60%で弧が伸びきる
+    const fadeAlpha = progress < 0.6 ? 1 : Math.max(0, 1 - (progress - 0.6) / 0.4); // 残りでフェードアウト
+    const startAngle = slashEffect.angle - slashEffectRangeRad / 2;
+    const sweepAngle = startAngle + slashEffectRangeRad * sweepProgress;
+    ctx.save();
+    ctx.globalAlpha = fadeAlpha;
+    ctx.strokeStyle = '#e0f7fa';
+    ctx.lineWidth = 7;
+    ctx.lineCap = 'round';
+    ctx.shadowColor = '#80deea';
+    ctx.shadowBlur = 16;
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, player.radius + 26, startAngle, sweepAngle);
+    ctx.stroke();
+    // 内側にもう1本重ねて、刃が振り抜けたような太さの変化を出す
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, player.radius + 26, startAngle, sweepAngle);
+    ctx.stroke();
     ctx.restore();
   }
 
