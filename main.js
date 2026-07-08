@@ -295,13 +295,13 @@ function spawnDeflectEffect(x, y) {
   deflectEffects.push({ x, y, timer: deflectEffectDurationMs });
 }
 
-// ===== はじき返しを振った瞬間の、剣で切ったような扇状のワイプエフェクト =====
-// 自機の向きを中心に270度の範囲を、素早く弧が伸びてからフェードアウトする
-let slashEffect = null; // { angle, timer }
+// ===== パリィを振った瞬間の、剣で切ったような扇状のワイプエフェクト =====
+// 振った本人（自機 or 同僚）の向きを中心に270度の範囲を、素早く弧が伸びてからフェードアウトする
+let slashEffect = null; // { x, y, angle, radius, timer }
 const slashEffectDurationMs = 260;
 const slashEffectRangeRad = (270 * Math.PI) / 180;
-function spawnSlashEffect(angle) {
-  slashEffect = { angle, timer: slashEffectDurationMs };
+function spawnSlashEffect(x, y, angle, entityRadius) {
+  slashEffect = { x, y, angle, radius: entityRadius, timer: slashEffectDurationMs };
 }
 const baseFireRate = 350; // 基本の発射間隔（従来の半分、ミリ秒）
 let lastFire = 0;
@@ -1508,6 +1508,14 @@ const partnerQuizCorrectStressedLines = [
   'はぁ…なんとか当たりましたね',
   '今は、それだけで救われます…',
   'ほっとしました…'
+];
+
+// ===== 同僚が自機弾をパリィした時のコメント =====
+const partnerParryLines = [
+  '危ないところでした！',
+  '今のは弾かせてもらいます！',
+  'よっと……セーフです！',
+  '油断しないでくださいね！'
 ];
 
 // ===== 同僚への誤射・同僚からの誤射に対するコメント =====
@@ -3197,21 +3205,40 @@ function setMobileAutoAimEnabled(enabled) {
   }
 }
 // 自機から最も近い敵を返す（いなければnull）
-function findNearestEnemyToPlayer() {
+function findNearestEnemyTo(x, y) {
   return enemies.reduce((closest, candidate) => {
-    const d = Math.hypot(candidate.x - player.x, candidate.y - player.y);
+    const d = Math.hypot(candidate.x - x, candidate.y - y);
     return (!closest || d < closest.d) ? { en: candidate, d } : closest;
   }, null);
+}
+function findNearestEnemyToPlayer() {
+  return findNearestEnemyTo(player.x, player.y);
+}
+
+// パリィで弾いた弾を、指定した地点から見て最も近い敵へ向け直し、ダメージを2倍にする共通処理
+function performBulletParry(bullet, fromX, fromY, actorAngle) {
+  const speed = Math.hypot(bullet.vx, bullet.vy) || 6;
+  const nearest = findNearestEnemyTo(fromX, fromY);
+  const angle = nearest
+    ? Math.atan2(nearest.en.y - bullet.y, nearest.en.x - bullet.x)
+    : actorAngle;
+  bullet.vx = Math.cos(angle) * speed;
+  bullet.vy = Math.sin(angle) * speed;
+  // 同僚・自機どちらにも当たり判定を持たせず素通りさせ、敵にだけ通常の2倍のダメージを与える
+  bullet.owner = 'deflected';
+  bullet.damage = Math.max(1, Math.round((bullet.damage || 1) * deflectDamageMultiplier));
+  spawnDeflectEffect(bullet.x, bullet.y);
 }
 
 // ===== パリィ（バットのように、タイミングよく振ると同僚弾を最寄りの敵へ打ち返す） =====
 const deflectRange = 90; // これより近くにある同僚弾だけをパリィできる（やや緩めの判定）
+const partnerParryChance = 0.3; // 同僚が自機弾の誤射を受けそうな時、デフォルトでパリィする確率
 const deflectDamageMultiplier = 2; // パリィした弾は通常の2倍のダメージになる
 const deflectFatigueCost = 5; // キーを振るたび（成否問わず）暫定的に蓄積する脳疲労
 function attemptDeflectPartnerBullet() {
   if (stunned) return;
   applyFatigueGain(deflectFatigueCost);
-  spawnSlashEffect(player.angle); // 命中の有無に関わらず、振った動作自体を見せる
+  spawnSlashEffect(player.x, player.y, player.angle, player.radius); // 命中の有無に関わらず、振った動作自体を見せる
   let target = null;
   let targetDist = Infinity;
   for (const b of bullets) {
@@ -3224,17 +3251,7 @@ function attemptDeflectPartnerBullet() {
   }
   if (!target) return;
 
-  const speed = Math.hypot(target.vx, target.vy) || 6;
-  const nearest = findNearestEnemyToPlayer();
-  const angle = nearest
-    ? Math.atan2(nearest.en.y - target.y, nearest.en.x - target.x)
-    : player.angle;
-  target.vx = Math.cos(angle) * speed;
-  target.vy = Math.sin(angle) * speed;
-  // 同僚には当たり判定を持たせず素通りさせ、敵にだけ通常の2倍のダメージを与える
-  target.owner = 'deflected';
-  target.damage = Math.max(1, Math.round((target.damage || 1) * deflectDamageMultiplier));
-  spawnDeflectEffect(target.x, target.y);
+  performBulletParry(target, player.x, player.y, player.angle);
   showMessage('パリィ成功！', 1400, '#fff176');
 }
 // スマホ用自動照準のターゲットを返す。定時報告が出ている間は、同僚の自律攻撃と同様にそちらを優先する
@@ -4170,6 +4187,13 @@ function update() {
     // 発射者と反対側の味方に当たった場合は、敵より先に誤射として処理する。
     if (b.owner === 'player' && partner.active &&
         Math.hypot(b.x - partner.x, b.y - partner.y) <= b.radius + partner.radius) {
+      // 同僚も、被弾しそうな瞬間に一定確率でパリィし、自機と同じエフェクトで最寄りの敵へ打ち返す
+      if (Math.random() < partnerParryChance) {
+        performBulletParry(b, partner.x, partner.y, partner.angle);
+        spawnSlashEffect(partner.x, partner.y, partner.angle, partner.radius);
+        showRandomPartnerSpeechBubbleIfFriendly(partnerParryLines, '#80deea');
+        continue;
+      }
       // 役職スキル「連携力」：1日10回まで、同僚への誤射を最寄りの敵への即死攻撃に変換する
       let synergyTriggered = false;
       if (rankSkillLevels.has('synergy') && synergyUsesToday < synergyDailyLimit && enemies.length > 0) {
@@ -5278,13 +5302,14 @@ function draw() {
     ctx.restore();
   }
 
-  // はじき返しを振った瞬間、自機の向きを中心に270度の範囲を素早く斬るワイプエフェクトを描く
+  // パリィを振った瞬間、振った本人の向きを中心に270度の範囲を素早く斬るワイプエフェクトを描く
   if (slashEffect) {
     const progress = 1 - slashEffect.timer / slashEffectDurationMs;
     const sweepProgress = Math.min(1, progress / 0.6); // 最初の60%で弧が伸びきる
     const fadeAlpha = progress < 0.6 ? 1 : Math.max(0, 1 - (progress - 0.6) / 0.4); // 残りでフェードアウト
     const startAngle = slashEffect.angle - slashEffectRangeRad / 2;
     const sweepAngle = startAngle + slashEffectRangeRad * sweepProgress;
+    const slashRadius = slashEffect.radius + 26;
     ctx.save();
     ctx.globalAlpha = fadeAlpha;
     ctx.strokeStyle = '#e0f7fa';
@@ -5293,13 +5318,13 @@ function draw() {
     ctx.shadowColor = '#80deea';
     ctx.shadowBlur = 16;
     ctx.beginPath();
-    ctx.arc(player.x, player.y, player.radius + 26, startAngle, sweepAngle);
+    ctx.arc(slashEffect.x, slashEffect.y, slashRadius, startAngle, sweepAngle);
     ctx.stroke();
     // 内側にもう1本重ねて、刃が振り抜けたような太さの変化を出す
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.arc(player.x, player.y, player.radius + 26, startAngle, sweepAngle);
+    ctx.arc(slashEffect.x, slashEffect.y, slashRadius, startAngle, sweepAngle);
     ctx.stroke();
     ctx.restore();
   }
