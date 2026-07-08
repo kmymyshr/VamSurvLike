@@ -3331,10 +3331,17 @@ function findNearestEnemyToPlayer() {
 // パリィで弾いた弾を、指定した地点から見て最も近い敵へ向け直し、ダメージを2倍にする共通処理
 function performBulletParry(bullet, fromX, fromY, actorAngle) {
   const speed = Math.hypot(bullet.vx, bullet.vy) || 6;
-  const nearest = findNearestEnemyTo(fromX, fromY);
-  const angle = nearest
-    ? Math.atan2(nearest.en.y - bullet.y, nearest.en.x - bullet.x)
-    : actorAngle;
+  let angle;
+  if (bullet.sourceHole && bossEvent && !bullet.sourceHole.destroyed) {
+    // ラスボス弾は、それを撃った発射口へ打ち返す
+    const holePos = getBossHoleAbsolutePosition(bullet.sourceHole);
+    angle = Math.atan2(holePos.y - bullet.y, holePos.x - bullet.x);
+  } else {
+    const nearest = findNearestEnemyTo(fromX, fromY);
+    angle = nearest
+      ? Math.atan2(nearest.en.y - bullet.y, nearest.en.x - bullet.x)
+      : actorAngle;
+  }
   bullet.vx = Math.cos(angle) * speed;
   bullet.vy = Math.sin(angle) * speed;
   // 同僚・自機どちらにも当たり判定を持たせず素通りさせ、敵にだけ通常の2倍のダメージを与える
@@ -3361,7 +3368,7 @@ const bossHoleFlashDurationMs = 220; // 命中した瞬間、穴を光らせて�
 // 全体で「1万発当てないと壊れない」程度の耐久力になるよう、穴1個あたりの必要命中数を割り出す
 const bossTotalHitsToDefeat = 10000;
 const bossHitsPerHole = Math.round(
-  bossTotalHitsToDefeat / bossHoleCountsByStage.reduce((a, b) => a + b, 0)
+  (bossTotalHitsToDefeat / bossHoleCountsByStage.reduce((a, b) => a + b, 0)) * 0.1
 );
 // 段階2・3のランダム配置の間隔と、段階3の移動先を変える間隔
 const bossHoleMinSpacing = 0.16; // 相対座標（0〜1）での最低距離
@@ -3586,7 +3593,8 @@ function fireBossBullets() {
       radius: 7,
       damage: 1,
       bounces: 0,
-      owner: 'boss'
+      owner: 'boss',
+      sourceHole: hole // パリィで打ち返した時、この発射口へ向けて反射させるために覚えておく
     });
   }
 }
