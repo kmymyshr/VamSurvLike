@@ -1287,6 +1287,15 @@ function getReunionSceneTier(lastRun) {
   return 4;
 }
 
+// 段階ごとに、同僚アイコンの演出方向（輝く／変化なし／暗く沈む）と強さを決める
+const reunionSceneToneByTier = {
+  1: { direction: 'bright', intensity: 1 },
+  2: { direction: 'bright', intensity: 0.55 },
+  3: { direction: 'none', intensity: 0 },
+  4: { direction: 'dark', intensity: 0.6 },
+  5: { direction: 'dark', intensity: 1 }
+};
+
 // 前回と全く同じ自機・同僚の組み合わせで始めた場合のみ、再会シーンを表示する
 function shouldShowReunionScene() {
   const lastRun = dreamMemorySave.lastRun;
@@ -1295,10 +1304,12 @@ function shouldShowReunionScene() {
 }
 
 let reunionSceneActive = false;
-// 'dim'（同僚アイコンが暗くなっていく演出）→ 'line'（自機のセリフ、1文字ずつ表示）→ 'paragraph'（地の文）の順に進む
+// 'dim'（同僚アイコンが関係性に応じて輝く／暗く沈む演出）→ 'line'（自機のセリフ、1文字ずつ表示）→ 'paragraph'（地の文）の順に進む
 let reunionScenePhase = null;
-const reunionSceneDimDurationMs = 2000; // アイコンが暗くなりきるまでの時間
+const reunionSceneDimDurationMs = 2000; // アイコンの演出（輝き／暗転）がかかりきるまでの時間
 let reunionSceneDimTimer = 0;
+let reunionSceneToneDirection = 'none'; // 'bright' / 'none' / 'dark'
+let reunionSceneToneIntensity = 0;
 let reunionSceneLine = '';
 let reunionSceneLineRevealedCount = 0; // 'line'フェーズ中、セリフを何文字目まで表示しているか
 let reunionSceneLineTypeTimerMs = 0;
@@ -1314,6 +1325,9 @@ function applyFemaleLineTone(text, gender) {
 function openReunionScene(onComplete) {
   const tier = getReunionSceneTier(dreamMemorySave.lastRun);
   const data = reunionSceneTiers[tier];
+  const tone = reunionSceneToneByTier[tier];
+  reunionSceneToneDirection = tone.direction;
+  reunionSceneToneIntensity = tone.intensity;
   const playerPronoun = getPlayerPronoun(selectedGender);
   const partnerPronoun = getPartnerPronoun(selectedPartnerIcon);
   reunionSceneLine = applyFemaleLineTone(
@@ -4833,12 +4847,31 @@ function draw() {
     if (partnerImg && partnerImg.complete && partnerImg.naturalWidth > 0) {
       ctx.drawImage(partnerImg, imgX, imgY, imgSize, imgSize);
     }
-    // 'dim'の間は徐々に、'line'以降は完全に暗くなった状態を保つ
-    const dimProgress = reunionScenePhase === 'dim'
+    // 'dim'の間は徐々に、'line'以降は演出がかかりきった状態を保つ
+    const toneProgress = reunionScenePhase === 'dim'
       ? 1 - Math.max(0, reunionSceneDimTimer / reunionSceneDimDurationMs)
       : 1;
-    ctx.fillStyle = `rgba(0, 0, 0, ${dimProgress * 0.45})`;
-    ctx.fillRect(imgX, imgY, imgSize, imgSize);
+    if (reunionSceneToneDirection === 'bright') {
+      // 関係性が良好なほど、アイコンの周りが輝くようなエフェクトにする
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const cx = imgX + imgSize / 2;
+      const cy = imgY + imgSize / 2;
+      const glowRadius = imgSize * 0.75;
+      const glowAlpha = toneProgress * 0.9 * reunionSceneToneIntensity;
+      const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowRadius);
+      gradient.addColorStop(0, `rgba(255, 250, 210, ${glowAlpha})`);
+      gradient.addColorStop(1, 'rgba(255, 250, 210, 0)');
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(cx, cy, glowRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    } else if (reunionSceneToneDirection === 'dark') {
+      // 関係性が悪いほど、アイコンが暗く沈んだようなエフェクトにする
+      ctx.fillStyle = `rgba(0, 0, 0, ${toneProgress * 0.45 * reunionSceneToneIntensity})`;
+      ctx.fillRect(imgX, imgY, imgSize, imgSize);
+    }
 
     ctx.textAlign = 'center';
     if (reunionScenePhase === 'line' || reunionScenePhase === 'paragraph') {
