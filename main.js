@@ -1,10 +1,11 @@
 // ===== ゲーム画面（Canvas）の準備 =====
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
-const lightingCanvas = document.createElement('canvas');
-lightingCanvas.width = canvas.width;
-lightingCanvas.height = canvas.height;
-const lightingCtx = lightingCanvas.getContext('2d');
+// SAN低下時の画面歪みエフェクト用に、完成した1フレームを一時的に複製しておくためのオフスクリーンCanvas
+const distortionCanvas = document.createElement('canvas');
+distortionCanvas.width = canvas.width;
+distortionCanvas.height = canvas.height;
+const distortionCtx = distortionCanvas.getContext('2d');
 console.log('main.js loaded');
 const player = {
   x: 400,
@@ -295,13 +296,25 @@ const weeklyFailScorePenaltyRatio = 0.25; // Scoreの25%を失う
 const weeklyFailSanPenaltyRatio = 0.35; // maxSanの35%ぶんSANを失う
 const restEvaluationPenaltyRatio = 0.10; // 休日出勤を断った場合、さらにScoreの10%を失う
 
+// 背景画像の窓（オフィスの窓ガラス部分）の下端のY座標。
+// 自機・同僚はこの窓の範囲には入れず、アイテムやクイズの選択肢もここより上には出現させない。
+const windowZoneBottomY = 235;
+// 窓の下端付近は圧迫感があるため、アイテム等の出現はさらに少し余裕を持たせた位置から
+const eventSpawnMinY = windowZoneBottomY + 40;
+
+// 自機・同僚などのキャラクターが画面外・窓の中へ出ないよう座標を制限する
+function clampToPlayableFloor(entity) {
+  entity.x = Math.max(entity.radius, Math.min(canvas.width - entity.radius, entity.x));
+  entity.y = Math.max(Math.max(entity.radius, windowZoneBottomY), Math.min(canvas.height - entity.radius, entity.y));
+}
+
 // ===== 時刻イベント（定時報告・昼食・クイズ） =====
 function getRandomEventPosition(radius = 24) {
   const margin = radius + 24;
   return {
     x: margin + Math.random() * (canvas.width - margin * 2),
-    // HUDを避け、プレイ領域の中央より下へ配置する
-    y: 275 + Math.random() * (canvas.height - 275 - margin)
+    // 窓の範囲を避け、プレイ領域の中央より下へ配置する
+    y: eventSpawnMinY + Math.random() * (canvas.height - eventSpawnMinY - margin)
   };
 }
 
@@ -363,8 +376,7 @@ function pushEntityOutsideScheduledReport(entity) {
   }
   entity.x = scheduledReport.x + (dx / distance) * minimumDistance;
   entity.y = scheduledReport.y + (dy / distance) * minimumDistance;
-  entity.x = Math.max(entity.radius, Math.min(canvas.width - entity.radius, entity.x));
-  entity.y = Math.max(entity.radius, Math.min(canvas.height - entity.radius, entity.y));
+  clampToPlayableFloor(entity);
 }
 
 // --- 昼食：12時に順番付きで出現する食べ物 ---
@@ -539,7 +551,7 @@ function resolveTimedSystemsAtDayEnd() {
 // 一日の終了処理（終業時刻・残業の限界時刻・定時報告を残業中に片付けた場合のいずれからも呼ばれる）
 function endWorkday() {
   resolveTimedSystemsAtDayEnd();
-  if (gameOver) return;
+  if (gameOver || deathSequence) return;
   // 昇進判定は週末（および月末＝クリア判定の直前）にのみ行う
   if (isWeekEndDay(currentDate) || isLastDayOfMonth(currentDate)) {
     rankUpAtWeekEnd();
@@ -597,18 +609,36 @@ function damageSan(amount) {
   checkVitalsGameOver();
 }
 
-// SAN・寿命のいずれかが尽きたらゲームオーバーにする（二重にScore送信しないようgameOverで一度だけ発火）
-// どちらが尽きたかでバッドエンドの種類を分ける
+// SANが低い間、画面全体にかける歪みの強さ（文字が読める程度に抑える）
+const sanDistortionThreshold = 30;
+const sanLowDistortionAmplitude = 2;
+
+// ===== 力尽きた瞬間の演出（BADENDへ移る前の一時停止） =====
+// 'san'：画面・文字が歪みながらBADENDへ／'lifespan'：画面が停止し、徐々に白黒になってBADENDへ
+let deathSequence = null; // { visualType, timer, duration, deathEndingType }
+const sanDeathSequenceDurationMs = 1800;
+const lifespanDeathSequenceDurationMs = 2200;
+const sanDeathDistortionMinAmplitude = 3;
+const sanDeathDistortionMaxAmplitude = 16;
+
+function startDeathSequence(visualType, deathEndingType) {
+  if (gameOver || deathSequence) return;
+  deathSequence = {
+    visualType,
+    timer: 0,
+    duration: visualType === 'lifespan' ? lifespanDeathSequenceDurationMs : sanDeathSequenceDurationMs,
+    deathEndingType
+  };
+}
+
+// SAN・寿命のいずれかが尽きたら演出を経てゲームオーバーにする（二重発火防止にgameOver/deathSequenceで一度だけ発火）
+// どちらが尽きたかで演出とバッドエンドの種類を分ける
 function checkVitalsGameOver(deathEndingType = null) {
-  if (gameOver) return;
+  if (gameOver || deathSequence) return;
   if (san <= 0) {
-    gameOver = true;
-    endingType = deathEndingType || 'bad-san';
-    sendScore(score);
+    startDeathSequence('san', deathEndingType || 'bad-san');
   } else if (lifespan <= 0) {
-    gameOver = true;
-    endingType = deathEndingType || 'bad-lifespan';
-    sendScore(score);
+    startDeathSequence('lifespan', deathEndingType || 'bad-lifespan');
   }
 }
 
@@ -816,8 +846,7 @@ function updatePartner(dt) {
     partner.y += (fdy / fdist) * step;
     partner.angle = Math.atan2(fdy, fdx);
   }
-  partner.x = Math.max(partner.radius, Math.min(canvas.width - partner.radius, partner.x));
-  partner.y = Math.max(partner.radius, Math.min(canvas.height - partner.radius, partner.y));
+  clampToPlayableFloor(partner);
   pushEntityOutsideScheduledReport(partner);
 
   // 自律攻撃：最も近い敵へ向けて、既存の弾配列にそのまま追加する
@@ -1094,7 +1123,8 @@ function getDefaultSpecialSkillEffects() {
     partnerDamageMultiplier: 1,
     partnerSanDamageMultiplier: 1,
     partnerLifespanDrainMultiplier: 1,
-    friendlyFireDamageMultiplier: 1
+    friendlyFireDamageMultiplier: 1,
+    mealOrderVisible: false
   };
 }
 const specialSkillEffects = getDefaultSpecialSkillEffects();
@@ -1137,7 +1167,8 @@ const specialSkills = [
   { id: 'perfectionism', name: '完璧主義', description: '質は高いが時間がかかる。攻撃力+25%だが発射間隔+15%' },
   { id: 'network-specialist', name: 'ネットワークスペシャリスト', description: '弾が画面端でレベルごとに1回多く跳ね返る' },
   { id: 'trust-relationship', name: '信頼関係', description: '同僚との信頼関係が深まり、同僚の攻撃力+20%・被SANダメージ-15%' },
-  { id: 'teamwork', name: 'チームワーク', description: '自分と同僚の弾が互いに当たった時の被ダメージが50%軽減される' }
+  { id: 'teamwork', name: 'チームワーク', description: '自分と同僚の弾が互いに当たった時の被ダメージが50%軽減される' },
+  { id: 'meal-foresight', name: '先読み力', description: '昼食に登場する料理に、出現する順番の番号が表示されるようになる（習得は1回のみ）', maxLevel: 1 }
 ];
 
 // スキルIDと取得レベルを対応させて保存する（これが唯一の正となる状態）
@@ -1232,6 +1263,7 @@ function applySkillEffectDelta(skillId) {
       specialSkillEffects.partnerSanDamageMultiplier *= 0.85;
       break;
     case 'teamwork': specialSkillEffects.friendlyFireDamageMultiplier *= 0.5; break;
+    case 'meal-foresight': specialSkillEffects.mealOrderVisible = true; break;
   }
 }
 
@@ -1249,8 +1281,9 @@ const specialSkillSelectionLockDurationMs = 1000; // 表示直後の連続タッ
 let specialSkillSelectionUnlockAt = 0; // この時刻（Date.now()基準）を過ぎるまで選択を受け付けない
 
 function openSpecialSkillSelection(title) {
-  // 取得済みスキルも候補に含め、再取得するとレベルアップできる
-  const availableSkills = [...specialSkills];
+  // 取得済みスキルも候補に含め、再取得するとレベルアップできる（ただしmaxLevelに達したスキルは除外する）
+  const availableSkills = specialSkills.filter(skill =>
+    !(skill.maxLevel && (specialSkillLevels.get(skill.id) || 0) >= skill.maxLevel));
 
   // Fisher-Yates法で候補をシャッフルし、先頭から3つ選ぶ
   for (let i = availableSkills.length - 1; i > 0; i--) {
@@ -1270,7 +1303,9 @@ function chooseSpecialSkill(choiceIndex) {
   const skill = specialSkillChoices[choiceIndex];
   if (!skill) return;
 
-  const newSkillLevel = (specialSkillLevels.get(skill.id) || 0) + 1;
+  const newSkillLevel = skill.maxLevel
+    ? Math.min(skill.maxLevel, (specialSkillLevels.get(skill.id) || 0) + 1)
+    : (specialSkillLevels.get(skill.id) || 0) + 1;
   specialSkillLevels.set(skill.id, newSkillLevel);
   applySkillEffectDelta(skill.id);
   if (skill.id === 'deadline-master') {
@@ -1317,10 +1352,8 @@ function updateSkillEffects() {
   }
   if (newLevel > skillLevel) {
     const specialSkillCount = Math.floor(newLevel / 5) - Math.floor(skillLevel / 5);
-    // レベルが上がった場合はメッセージを表示する
+    // 通常のレベルアップは表示せず、5レベルごとの特殊スキル習得のときだけ知らせる
     skillLevel = newLevel;
-    showAcknowledgementNotice(`スキルレベル ${newLevel} に上昇！`, '#00ffff',
-      '新しい成長を確認しました。');
     queueSpecialSkillSelections(specialSkillCount);
   }
 }
@@ -1436,7 +1469,7 @@ function resolveWeekEnd() {
     score = Math.max(0, score - scorePenalty);
     damageSan(sanPenalty);
     showMessage(`週間ノルマ未達成… Score -${scorePenalty} / SAN -${sanPenalty}`, 4000, '#ff5252', '26px sans-serif');
-    if (gameOver) return;
+    if (gameOver || deathSequence) return;
     weekendWorkChoice = true;
   }
 }
@@ -1530,7 +1563,8 @@ function chooseAdventureOption(choiceIndex) {
 function applyRestActivity(choiceIndex) {
   if (choiceIndex === 1) {
     if (partner.active) {
-      startPartnerAdventure(() => finishRestDayAndAdvanceToMonday());
+      // アドベンチャーパート自体がこの日の出来事なので、通常のランダムイベントは発生させず週明けへ進む
+      startPartnerAdventure(() => startDayTransition(jumpToNextMondayAndResetWeek));
     } else if (partnerLossReason === 'lifespan') {
       // 寿命が尽きての離脱はもう戻らない。会いに行った虚しさで自機のSANが大きく削れる
       san = Math.max(0, Math.floor(san * partnerLossGriefSanRatio));
@@ -1538,7 +1572,7 @@ function applyRestActivity(choiceIndex) {
       showAcknowledgementNotice(
         '同僚に会いに行った。……しかし、もうそこに同僚はいない。静かな部屋を前に、言葉を失う。 SANが半分になった',
         '#78909c', '',
-        () => { if (!gameOver) finishRestDayAndAdvanceToMonday(); }
+        () => { if (!gameOver && !deathSequence) finishRestDayAndAdvanceToMonday(); }
       );
     } else if (partnerLossReason === 'san') {
       if (Math.random() < partnerRevivalChance) {
@@ -1603,7 +1637,10 @@ function triggerRandomRestEvent() {
 }
 
 function grantRandomSkillLevel() {
-  const skill = specialSkills[Math.floor(Math.random() * specialSkills.length)];
+  const grantable = specialSkills.filter(s =>
+    !(s.maxLevel && (specialSkillLevels.get(s.id) || 0) >= s.maxLevel));
+  if (grantable.length === 0) return;
+  const skill = grantable[Math.floor(Math.random() * grantable.length)];
   const newLevel = (specialSkillLevels.get(skill.id) || 0) + 1;
   specialSkillLevels.set(skill.id, newLevel);
   recomputeSpecialSkillEffects();
@@ -1624,7 +1661,7 @@ function forgetRandomSkill() {
 // 休日の過ごし方＋ランダムイベントの後、月曜まで日付を進めてゲームを再開する
 function finishRestDayAndAdvanceToMonday() {
   triggerRandomRestEvent();
-  if (gameOver) return;
+  if (gameOver || deathSequence) return;
   startDayTransition(jumpToNextMondayAndResetWeek);
 }
 
@@ -2026,6 +2063,18 @@ function update() {
   }
   gameClockMs = now;
 
+  // 力尽きた演出中は、画面を停止したまま演出用のタイマーだけを進める
+  if (deathSequence) {
+    deathSequence.timer += dt * 1000;
+    if (deathSequence.timer >= deathSequence.duration) {
+      gameOver = true;
+      endingType = deathSequence.deathEndingType;
+      sendScore(score);
+      deathSequence = null;
+    }
+    return;
+  }
+
   // アイコン選択後のひとことメッセージ演出：表示→フェードアウト→次の画面へ
   if (iconGreetingPhase) {
     iconGreetingTimer -= dt * 1000;
@@ -2096,7 +2145,7 @@ function update() {
     san = Math.max(0, san - weekendWorkSanDrainPerSec * dt);
     lifespan = Math.max(0, lifespan - weekendWorkLifespanDrainPerSec * dt);
     checkVitalsGameOver();
-    if (gameOver) return;
+    if (gameOver || deathSequence) return;
   }
 
   // ゲーム内時刻を進める
@@ -2130,7 +2179,7 @@ function update() {
       partner.lifespan = Math.max(0, partner.lifespan - overtimeLifespanDrainPerSec * partnerOvertimeDrainRatio * dt);
     }
     checkVitalsGameOver();
-    if (gameOver) return;
+    if (gameOver || deathSequence) return;
   }
 
   // 全滅したら少し間を置いて次のウェーブ（仕事）を出す
@@ -2147,7 +2196,7 @@ function update() {
     enemies[i].deadlineMs -= dt * 1000;
     if (enemies[i].deadlineMs <= 0) {
       explodeEnemy(i);
-      if (gameOver) return;
+      if (gameOver || deathSequence) return;
     }
   }
 
@@ -2246,9 +2295,8 @@ function update() {
       player.y += touchMoveVector.y * currentMoveSpeed;
       moving = true;
     }
-    // プレイヤーが画面外へ出ないよう座標を制限する
-    player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
-    player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
+    // プレイヤーが画面外・窓の範囲へ出ないよう座標を制限する
+    clampToPlayableFloor(player);
     pushEntityOutsideScheduledReport(player);
 
     // 無敵時間を減らし、0になったら解除する
@@ -2376,7 +2424,7 @@ function update() {
 
   // 同僚の追従・ランダム移動・自律攻撃・被弾・寿命処理
   updatePartner(dt);
-  if (gameOver) return;
+  if (gameOver || deathSequence) return;
   friendlyFireInvincibleTimer = Math.max(0, friendlyFireInvincibleTimer - dt * 1000);
 
   // 敵をプレイヤーへ向けて移動する。当たり判定の半径は固定
@@ -2430,7 +2478,7 @@ function update() {
         Math.hypot(b.x - player.x, b.y - player.y) <= b.radius + player.radius) {
       damagePlayerByFriendlyFire();
       bullets.splice(i, 1);
-      if (gameOver) return;
+      if (gameOver || deathSequence) return;
       continue;
     }
     // 固定ターゲット「定時報告」への命中判定
@@ -2495,7 +2543,7 @@ function update() {
     lowSanTimerMs = 0;
   }
   checkVitalsGameOver();
-  if (gameOver) return;
+  if (gameOver || deathSequence) return;
 
   // ===== 敵とプレイヤーの接触判定 =====
   for (let j = enemies.length - 1; j >= 0; j--) {
@@ -2772,45 +2820,6 @@ function getVisualGameHour() {
   return currentHour + hourProgress;
 }
 
-function cutLightFromOverlay(lightX, lightY, radius) {
-  const gradient = lightingCtx.createRadialGradient(lightX, lightY, 0, lightX, lightY, radius);
-  gradient.addColorStop(0, 'rgba(0, 0, 0, 0.98)');
-  gradient.addColorStop(0.45, 'rgba(0, 0, 0, 0.68)');
-  gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
-  lightingCtx.fillStyle = gradient;
-  lightingCtx.beginPath();
-  lightingCtx.arc(lightX, lightY, radius, 0, Math.PI * 2);
-  lightingCtx.fill();
-}
-
-// 朝は淡く明るく、夕方ほど暗くする。18時以降の残業にも拡張可能。
-function drawTimeOfDayLighting() {
-  const visualHour = getVisualGameHour();
-  const workdayProgress = Math.max(0, Math.min(1,
-    (visualHour - dayStartHour) / (dayEndHour - dayStartHour)));
-  const overtimeHours = Math.max(0, visualHour - dayEndHour);
-  const darkness = Math.min(0.88, 0.04 + workdayProgress * 0.5 + overtimeHours * 0.07);
-  const morningBrightness = Math.max(0, (1 - workdayProgress) * 0.1);
-
-  if (morningBrightness > 0) {
-    ctx.save();
-    ctx.globalCompositeOperation = 'screen';
-    ctx.fillStyle = `rgba(255, 244, 205, ${morningBrightness})`;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.restore();
-  }
-
-  lightingCtx.clearRect(0, 0, lightingCanvas.width, lightingCanvas.height);
-  lightingCtx.globalCompositeOperation = 'source-over';
-  lightingCtx.fillStyle = `rgba(2, 5, 14, ${darkness})`;
-  lightingCtx.fillRect(0, 0, lightingCanvas.width, lightingCanvas.height);
-  lightingCtx.globalCompositeOperation = 'destination-out';
-  cutLightFromOverlay(player.x, player.y, 155);
-  if (partner.active) cutLightFromOverlay(partner.x, partner.y, 125);
-  lightingCtx.globalCompositeOperation = 'source-over';
-  ctx.drawImage(lightingCanvas, 0, 0);
-}
-
 // 2つの16進カラーを割合に応じて混ぜ、関係性の連続的な色変化に使う。
 function mixHexColors(fromColor, toColor, ratio) {
   const t = Math.max(0, Math.min(1, ratio));
@@ -2821,6 +2830,20 @@ function mixHexColors(fromColor, toColor, ratio) {
   const mixed = fromRgb.map((value, index) =>
     Math.round(value + (toRgb[index] - value) * t));
   return `rgb(${mixed[0]}, ${mixed[1]}, ${mixed[2]})`;
+}
+
+// 描き終えた1フレーム全体（文字・アイコン含む）を、横スライスごとに正弦波でずらして歪ませる。
+// 文字が判読できる程度になるよう、amplitudeは小さめの値を渡すこと。
+function applyScreenDistortion(amplitude) {
+  if (amplitude <= 0) return;
+  distortionCtx.clearRect(0, 0, distortionCanvas.width, distortionCanvas.height);
+  distortionCtx.drawImage(canvas, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const sliceHeight = 4;
+  for (let y = 0; y < canvas.height; y += sliceHeight) {
+    const offsetX = Math.sin(y * 0.06 + gameClockMs / 220) * amplitude;
+    ctx.drawImage(distortionCanvas, 0, y, canvas.width, sliceHeight, offsetX, y, canvas.width, sliceHeight);
+  }
 }
 
 // HUD用プロフィール区画。選択した絵文字を仮の顔イラストとして使う。
@@ -3058,6 +3081,14 @@ function draw() {
     return;
   }
 
+  // 寿命が尽きた演出中は、画面全体を徐々に白黒にしていく
+  if (deathSequence && deathSequence.visualType === 'lifespan') {
+    const progress = Math.min(1, deathSequence.timer / deathSequence.duration);
+    ctx.filter = `grayscale(${Math.round(progress * 100)}%)`;
+  } else {
+    ctx.filter = 'none';
+  }
+
   drawBackground();
   // 敵・アイコン・自分/同僚などの前景要素に薄い影をつけ、背景から浮き上がって見やすくする
   ctx.shadowColor = 'rgba(0, 0, 0, 0.65)';
@@ -3191,9 +3222,6 @@ function draw() {
   }
   ctx.textAlign = 'left';
 
-  // 時間帯の暗さはワールド全体へ掛け、HUDは常に読みやすく保つ。
-  drawTimeOfDayLighting();
-
   // 定時報告（固定ターゲット）
   if (scheduledReport) {
     const reportHpRatio = Math.max(0, scheduledReport.hp / scheduledReport.maxHp);
@@ -3235,6 +3263,17 @@ function draw() {
       ctx.textBaseline = 'middle';
       ctx.fillText(item.icon, item.x, item.y);
       ctx.restore();
+
+      // 特殊スキル「先読み力」習得済みなら、出現順の番号を見える化する
+      if (specialSkillEffects.mealOrderVisible) {
+        ctx.save();
+        ctx.font = 'bold 14px sans-serif';
+        ctx.fillStyle = '#fff59d';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(item.sequenceIndex + 1), item.x + item.radius - 4, item.y - item.radius + 4);
+        ctx.restore();
+      }
     }
   }
 
@@ -3601,6 +3640,18 @@ function draw() {
     ctx.fillText('クリック / タップで再開', canvas.width / 2, noticeY + 166);
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
+  }
+
+  ctx.filter = 'none';
+
+  // SANが尽きた演出中は、時間とともに画面全体（文字含む）の歪みを強めていく
+  if (deathSequence && deathSequence.visualType === 'san') {
+    const progress = Math.min(1, deathSequence.timer / deathSequence.duration);
+    applyScreenDistortion(sanDeathDistortionMinAmplitude +
+      progress * (sanDeathDistortionMaxAmplitude - sanDeathDistortionMinAmplitude));
+  } else if (!deathSequence && !gameOver && !gameClear && san <= sanDistortionThreshold) {
+    // 通常時、SANが低いときは文字が読める程度の軽い歪みをかける
+    applyScreenDistortion(sanLowDistortionAmplitude);
   }
 }
 // ===== メインループ =====
