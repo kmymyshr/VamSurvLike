@@ -515,9 +515,7 @@ function drawStation(x, y, icon, label, color) {
 }
 
 // ===== 回復アイテム（栄養ドリンク） =====
-// チョコレートより効果は強いが出現頻度は低い上位互換の回復アイテム
-const energyDrinkLifetimeMs = 10000; // 出現してから消えるまでの時間（10秒）
-const energyDrinkBlinkMs = 3000; // 消える3秒前から点滅する
+// チョコレートより効果は強いが出現頻度は低い上位互換の回復アイテム。時間経過では消えない
 const energyDrinkRadius = 22;
 const energyDrinkSanRecovery = 20; // SAN値を20回復する
 const energyDrinkFatigueReduction = 50; // 脳疲労を50下げる
@@ -563,15 +561,12 @@ function spawnEnergyDrink() {
     targetY: energyDrinkItemSpawnPosition.y,
     radius: energyDrinkRadius,
     fallSpeed: 0,
-    landed: true,
-    remainingMs: energyDrinkLifetimeMs
+    landed: true
   };
 }
 
 // ===== 回復アイテム（コーヒー） =====
-// 栄養ドリンクよりマイルドな強化アイテム。効果切れの反動はない
-const coffeeLifetimeMs = 10000; // 出現してから消えるまでの時間（10秒）
-const coffeeBlinkMs = 3000; // 消える3秒前から点滅する
+// 栄養ドリンクよりマイルドな強化アイテム。効果切れの反動はない。時間経過では消えない
 const coffeeRadius = 22;
 const coffeeSanRecovery = 10; // SAN値を10回復する
 const coffeeLifespanCost = 2; // その代わり寿命を2消費する
@@ -662,8 +657,7 @@ function spawnCoffee() {
     targetY: coffeeItemSpawnPosition.y,
     radius: coffeeRadius,
     fallSpeed: 0,
-    landed: true,
-    remainingMs: coffeeLifetimeMs
+    landed: true
   };
 }
 
@@ -3174,7 +3168,6 @@ function update() {
       energyDrink.landed = true;
     }
   } else if (energyDrink) {
-    energyDrink.remainingMs -= dt * 1000;
     const distanceToEnergyDrink = Math.hypot(
       player.x - energyDrink.x,
       player.y - energyDrink.y
@@ -3204,9 +3197,6 @@ function update() {
       energyDrink = null;
       energyDrinkSpawnTimerMs = getRandomEnergyDrinkSpawnDelay();
       if (gameOver || deathSequence) return;
-    } else if (energyDrink.remainingMs <= 0) {
-      energyDrink = null;
-      energyDrinkSpawnTimerMs = getRandomEnergyDrinkSpawnDelay();
     }
   } else {
     energyDrinkSpawnTimerMs -= dt * 1000;
@@ -3230,7 +3220,6 @@ function update() {
       coffee.landed = true;
     }
   } else if (coffee) {
-    coffee.remainingMs -= dt * 1000;
     const distanceToCoffee = Math.hypot(
       player.x - coffee.x,
       player.y - coffee.y
@@ -3255,9 +3244,6 @@ function update() {
       coffee = null;
       coffeeSpawnTimerMs = getRandomCoffeeSpawnDelay();
       if (gameOver || deathSequence) return;
-    } else if (coffee.remainingMs <= 0) {
-      coffee = null;
-      coffeeSpawnTimerMs = getRandomCoffeeSpawnDelay();
     }
   } else {
     coffeeSpawnTimerMs -= dt * 1000;
@@ -4666,66 +4652,38 @@ function draw() {
     }
   }
 
-  // 栄養ドリンクを描く。消滅直前は一定間隔で表示を切り替えて点滅させる
+  // 栄養ドリンクを描く（時間経過では消えないため、点滅・残り時間表示はしない）
   if (energyDrink) {
-    const shouldShowEnergyDrink = energyDrink.remainingMs > energyDrinkBlinkMs ||
-      Math.floor(energyDrink.remainingMs / 200) % 2 === 0;
-
-    if (shouldShowEnergyDrink) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(energyDrink.x, energyDrink.y, energyDrink.radius, 0, Math.PI * 2);
-      ctx.fillStyle = '#16282b';
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(128, 222, 234, 0.85)';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      ctx.font = '34px "Segoe UI Emoji", sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('🧃', energyDrink.x, energyDrink.y);
-      if (energyDrink.landed) {
-        ctx.font = '12px sans-serif';
-        ctx.fillStyle = '#80deea';
-        ctx.fillText(
-          `${Math.max(0, energyDrink.remainingMs / 1000).toFixed(1)}秒`,
-          energyDrink.x,
-          energyDrink.y + energyDrink.radius + 12
-        );
-      }
-      ctx.restore();
-    }
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(energyDrink.x, energyDrink.y, energyDrink.radius, 0, Math.PI * 2);
+    ctx.fillStyle = '#16282b';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(128, 222, 234, 0.85)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.font = '34px "Segoe UI Emoji", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('🧃', energyDrink.x, energyDrink.y);
+    ctx.restore();
   }
 
-  // コーヒーを描く。消滅直前は一定間隔で表示を切り替えて点滅させる
+  // コーヒーを描く（時間経過では消えないため、点滅・残り時間表示はしない）
   if (coffee) {
-    const shouldShowCoffee = coffee.remainingMs > coffeeBlinkMs ||
-      Math.floor(coffee.remainingMs / 200) % 2 === 0;
-
-    if (shouldShowCoffee) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(coffee.x, coffee.y, coffee.radius, 0, Math.PI * 2);
-      ctx.fillStyle = '#2b1e14';
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(161, 136, 127, 0.85)';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      ctx.font = '32px "Segoe UI Emoji", sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('☕', coffee.x, coffee.y);
-      if (coffee.landed) {
-        ctx.font = '12px sans-serif';
-        ctx.fillStyle = '#a1887f';
-        ctx.fillText(
-          `${Math.max(0, coffee.remainingMs / 1000).toFixed(1)}秒`,
-          coffee.x,
-          coffee.y + coffee.radius + 12
-        );
-      }
-      ctx.restore();
-    }
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(coffee.x, coffee.y, coffee.radius, 0, Math.PI * 2);
+    ctx.fillStyle = '#2b1e14';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(161, 136, 127, 0.85)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.font = '32px "Segoe UI Emoji", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('☕', coffee.x, coffee.y);
+    ctx.restore();
   }
 
   // 「心の壁」を描く。消滅直前は一定間隔で表示を切り替えて点滅させる
