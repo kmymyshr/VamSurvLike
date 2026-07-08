@@ -167,6 +167,19 @@ spawnWave();
 // ===== 弾・スコア・ゲーム状態 =====
 // プレイヤーが発射した弾を保存する配列
 const bullets = [];
+
+// ===== 敵に弾が命中した瞬間の弾けるようなヒットエフェクト =====
+const hitSparks = [];
+const hitSparkDurationMs = 220;
+function spawnHitSpark(x, y, big = false) {
+  hitSparks.push({
+    x, y,
+    timer: hitSparkDurationMs,
+    big,
+    // 放射状に飛び散る線の角度をあらかじめランダムに決めておく
+    rays: Array.from({ length: big ? 8 : 5 }, () => Math.random() * Math.PI * 2)
+  });
+}
 const baseFireRate = 350; // 基本の発射間隔（従来の半分、ミリ秒）
 let lastFire = 0;
 let score = 0;
@@ -403,6 +416,35 @@ function spawnEnergyDrink() {
     fallSpeed: 0,
     landed: false,
     remainingMs: energyDrinkLifetimeMs
+  };
+}
+
+// ===== レアアイテム（心の壁・仮称） =====
+// 取得すると、自機・同僚それぞれに「お互いの誤射を防ぐバリア」が張られる（重ね掛け可能）
+const heartWallLifetimeMs = 10000; // 出現してから消えるまでの時間（10秒）
+const heartWallBlinkMs = 3000; // 消える3秒前から点滅する
+const heartWallRadius = 22;
+const heartWallBarrierCharges = 3; // 1個取得するごとに、お互いの誤射を防げる回数
+let heartWall = null;
+let heartWallSpawnTimerMs = getRandomHeartWallSpawnDelay();
+let playerBarrierCharges = 0; // 残っている間は同僚の誤射を防ぐ
+
+// チョコレート・栄養ドリンクの約20%の頻度でしか出現しない、希少アイテム
+function getRandomHeartWallSpawnDelay() {
+  return (8000 + Math.random() * 7000) / 0.2;
+}
+
+// マップ上部から落ちてきて、窓の範囲を避けた床の上に着地する
+function spawnHeartWall() {
+  const target = getRandomEventPosition(heartWallRadius);
+  heartWall = {
+    x: target.x,
+    y: -heartWallRadius - 20,
+    targetY: target.y,
+    radius: heartWallRadius,
+    fallSpeed: 0,
+    landed: false,
+    remainingMs: heartWallLifetimeMs
   };
 }
 
@@ -1053,6 +1095,7 @@ const partner = {
   lowSanTimerMs: 0,
   fatigueResting: false, // 脳疲労が100に達し、50まで下がるまで攻撃を控えている状態
   friendlyFireInvincibleTimer: 0,
+  barrierCharges: 0, // 「心の壁」の効果。残っている間は自機の誤射を防ぐ
   relationship: partnerRelationshipInitial, // 非表示。0～100で、低いほど自分へ反撃しやすい
   // 賢さ（0〜1、初期はランダム）：高いほど的が正確で、疲労時に無駄撃ちを避けやすい
   intelligence: 0.5,
@@ -1087,6 +1130,7 @@ function initPartner() {
   partner.lowSanTimerMs = 0;
   partner.fatigueResting = false;
   partner.friendlyFireInvincibleTimer = 0;
+  partner.barrierCharges = 0;
   partner.relationship = partnerRelationshipInitial;
   partner.intelligence = Math.random();
   partner.recklessness = Math.random();
@@ -1100,6 +1144,11 @@ function damagePartnerSan(amount) {
 // 味方の弾はSANと寿命を直接削る。連続被弾は専用の短い無敵時間で抑える。
 function damagePlayerByFriendlyFire() {
   if (friendlyFireInvincibleTimer > 0) return false;
+  if (playerBarrierCharges > 0) {
+    playerBarrierCharges--;
+    friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
+    return false;
+  }
   san = Math.max(0, san - playerFriendlyFireSanDamage *
     specialSkillEffects.sanDamageMultiplier * specialSkillEffects.friendlyFireDamageMultiplier);
   lifespan = Math.max(0, lifespan - playerFriendlyFireLifespanDamage * specialSkillEffects.friendlyFireDamageMultiplier);
@@ -1113,6 +1162,11 @@ function damagePlayerByFriendlyFire() {
 
 function damagePartnerByFriendlyFire() {
   if (!partner.active || partner.friendlyFireInvincibleTimer > 0) return false;
+  if (partner.barrierCharges > 0) {
+    partner.barrierCharges--;
+    partner.friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
+    return false;
+  }
   partner.san = Math.max(0, partner.san - partnerFriendlyFireSanDamage *
     specialSkillEffects.partnerSanDamageMultiplier * specialSkillEffects.friendlyFireDamageMultiplier);
   partner.lifespan = Math.max(0, partner.lifespan - partnerFriendlyFireLifespanDamage * specialSkillEffects.friendlyFireDamageMultiplier);
@@ -2157,6 +2211,7 @@ function startGame(timeScale) {
   lastHourTime = 0;
   dayStartTime = 0;
   dayNumber = 1;
+  playerBarrierCharges = 0;
   resetWeeklyQuotaForNewWeek();
   initPartner();
 }
@@ -2493,6 +2548,12 @@ function update() {
     if (partnerSpeechBubble.timer <= 0) partnerSpeechBubble = null;
   }
 
+  // 弾が敵に当たった瞬間のヒットエフェクトの表示時間を減らす
+  for (let hi = hitSparks.length - 1; hi >= 0; hi--) {
+    hitSparks[hi].timer -= dt * 1000;
+    if (hitSparks[hi].timer <= 0) hitSparks.splice(hi, 1);
+  }
+
   // 爆発後の短い時間、Canvas全体をランダムに揺らす
   explosionFlashTimer = Math.max(0, explosionFlashTimer - dt * 1000);
   friendlyFireHitFlashTimer = Math.max(0, friendlyFireHitFlashTimer - dt * 1000);
@@ -2691,6 +2752,42 @@ function update() {
     energyDrinkSpawnTimerMs -= dt * 1000;
     if (energyDrinkSpawnTimerMs <= 0) {
       spawnEnergyDrink();
+    }
+  }
+
+  // 「心の壁」の出現待ち、取得判定、時間切れを処理する
+  if (heartWall && !heartWall.landed) {
+    // 画面上部から落下してくる演出。着地するまでは取得判定を行わない
+    heartWall.fallSpeed += chocolateFallGravityPerSec2 * dt;
+    heartWall.y += heartWall.fallSpeed * dt;
+    if (heartWall.y >= heartWall.targetY) {
+      heartWall.y = heartWall.targetY;
+      heartWall.landed = true;
+    }
+  } else if (heartWall) {
+    heartWall.remainingMs -= dt * 1000;
+    const distanceToHeartWall = Math.hypot(
+      player.x - heartWall.x,
+      player.y - heartWall.y
+    );
+
+    if (distanceToHeartWall <= player.radius + heartWall.radius) {
+      playerBarrierCharges += heartWallBarrierCharges;
+      if (partner.active) partner.barrierCharges += heartWallBarrierCharges;
+      showMessage(
+        `心の壁を手に入れた！ お互いの誤射を${heartWallBarrierCharges}回まで防ぐバリアを展開`,
+        2200, '#b39ddb'
+      );
+      heartWall = null;
+      heartWallSpawnTimerMs = getRandomHeartWallSpawnDelay();
+    } else if (heartWall.remainingMs <= 0) {
+      heartWall = null;
+      heartWallSpawnTimerMs = getRandomHeartWallSpawnDelay();
+    }
+  } else {
+    heartWallSpawnTimerMs -= dt * 1000;
+    if (heartWallSpawnTimerMs <= 0) {
+      spawnHeartWall();
     }
   }
 
@@ -2981,6 +3078,7 @@ function update() {
           const actualDmg = Math.max(1, Math.round(dmg * damageBonus));
           en.hp = (en.hp || 1) - actualDmg;
         if (b.owner === 'partner') en.hitByPartner = true;
+        spawnHitSpark(b.x, b.y, en.hp <= 0);
         bullets.splice(i, 1);
         if (en.hp <= 0) {
             // 強い敵ほど多くのスコアを獲得する
@@ -3340,6 +3438,27 @@ function drawMiniStatBars(centerX, topY, stats) {
   ctx.restore();
 }
 
+// 「心の壁」の効果が残っている間、対象の周りに点線の破魔円を表示し、残り回数をバッジで示す
+function drawBarrierShield(x, y, radius, charges) {
+  if (charges <= 0) return;
+  const pulse = 0.5 + 0.5 * Math.sin(gameClockMs / 130);
+  const shieldRadius = radius * 2.1 + pulse * 3;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, shieldRadius, 0, Math.PI * 2);
+  ctx.strokeStyle = `rgba(179, 157, 219, ${0.55 + pulse * 0.25})`;
+  ctx.lineWidth = 3;
+  ctx.setLineDash([8, 6]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.font = 'bold 12px sans-serif';
+  ctx.fillStyle = '#e1bee7';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`×${charges}`, x, y - shieldRadius - 10);
+  ctx.restore();
+}
+
 // 描き終えた1フレーム全体（文字・アイコン含む）を、横スライスごとに正弦波でずらして歪ませる。
 // 文字が判読できる程度になるよう、amplitudeは小さめの値を渡すこと。
 function applyScreenDistortion(amplitude) {
@@ -3619,6 +3738,30 @@ function draw() {
   } else {
     ctx.globalAlpha = 1;
   }
+  // 栄養ドリンクの効果が有効な間は、自機の周りに淡い光るエフェクトを表示する
+  if (energyDrinkBuffTimerMs > 0) {
+    const pulse = 0.5 + 0.5 * Math.sin(gameClockMs / 150);
+    const glowRadius = player.radius * 2.4 + pulse * 5;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, glowRadius, 0, Math.PI * 2);
+    const glowGradient = ctx.createRadialGradient(
+      player.x, player.y, player.radius * 0.4,
+      player.x, player.y, glowRadius
+    );
+    glowGradient.addColorStop(0, 'rgba(128, 222, 234, 0.4)');
+    glowGradient.addColorStop(1, 'rgba(128, 222, 234, 0)');
+    ctx.fillStyle = glowGradient;
+    ctx.fill();
+    ctx.strokeStyle = `rgba(128, 222, 234, ${0.5 + pulse * 0.3})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, player.radius * 1.8, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+  // 「心の壁」の効果が残っている間、自機の周りにバリアを表示する
+  drawBarrierShield(player.x, player.y, player.radius, playerBarrierCharges);
   // 自分のアイコン（性別選択で選んだimages/self内の画像を使用）
   const selfImg = genderImageElements[selectedPlayerIcon];
   if (selfImg && selfImg.complete && selfImg.naturalWidth > 0) {
@@ -3684,6 +3827,9 @@ function draw() {
     }
     ctx.restore();
 
+    // 「心の壁」の効果が残っている間、同僚の周りにバリアを表示する
+    drawBarrierShield(partner.x, partner.y, partner.radius, partner.barrierCharges);
+
     // 同僚の下にSAN・寿命・脳疲労の小さなバーを表示する
     drawMiniStatBars(partner.x, partner.y + (partner.radius * 4.8) / 2 + 6, [
       { value: partner.san, max: maxSan, color: '#ce93d8' },
@@ -3742,6 +3888,35 @@ function draw() {
     ctx.fill();
   }
 
+  // 弾が敵に当たった瞬間、放射状に弾ける小さなヒットエフェクトを描く（撃破時は少し大きく）
+  for (const spark of hitSparks) {
+    const progress = 1 - spark.timer / hitSparkDurationMs;
+    const alpha = Math.max(0, 1 - progress);
+    const baseRadius = spark.big ? 10 : 6;
+    const maxRadius = spark.big ? 26 : 16;
+    const radius = baseRadius + (maxRadius - baseRadius) * progress;
+    const rayLength = (spark.big ? 16 : 10) * progress;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = spark.big ? '#ffe082' : '#fff59d';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(spark.x, spark.y, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = spark.big ? '#fff3e0' : '#ffffff';
+    for (const angle of spark.rays) {
+      const innerR = radius * 0.5;
+      ctx.beginPath();
+      ctx.moveTo(spark.x + Math.cos(angle) * innerR, spark.y + Math.sin(angle) * innerR);
+      ctx.lineTo(
+        spark.x + Math.cos(angle) * (innerR + rayLength),
+        spark.y + Math.sin(angle) * (innerR + rayLength)
+      );
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   // 回復アイテムを描く。消滅直前は一定間隔で表示を切り替えて点滅させる
   if (chocolate) {
     const shouldShowChocolate = chocolate.remainingMs > chocolateBlinkMs ||
@@ -3798,6 +3973,37 @@ function draw() {
           `${Math.max(0, energyDrink.remainingMs / 1000).toFixed(1)}秒`,
           energyDrink.x,
           energyDrink.y + energyDrink.radius + 12
+        );
+      }
+      ctx.restore();
+    }
+  }
+
+  // 「心の壁」を描く。消滅直前は一定間隔で表示を切り替えて点滅させる
+  if (heartWall) {
+    const shouldShowHeartWall = heartWall.remainingMs > heartWallBlinkMs ||
+      Math.floor(heartWall.remainingMs / 200) % 2 === 0;
+
+    if (shouldShowHeartWall) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(heartWall.x, heartWall.y, heartWall.radius, 0, Math.PI * 2);
+      ctx.fillStyle = '#211a2e';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(179, 157, 219, 0.9)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.font = '30px "Segoe UI Emoji", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('🛡️', heartWall.x, heartWall.y);
+      if (heartWall.landed) {
+        ctx.font = '12px sans-serif';
+        ctx.fillStyle = '#b39ddb';
+        ctx.fillText(
+          `${Math.max(0, heartWall.remainingMs / 1000).toFixed(1)}秒`,
+          heartWall.x,
+          heartWall.y + heartWall.radius + 12
         );
       }
       ctx.restore();
