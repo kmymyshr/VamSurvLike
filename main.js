@@ -246,6 +246,76 @@ function getFatigueRecoveryFloor() {
   return dayProgress * fatigueFloorAtDayEnd;
 }
 
+// 攻撃による脳疲労の増加を「1秒に1回」までにまとめる仕組み。
+// 連射系スキルで攻撃回数が増えても、1秒間攻撃し続けている間は増加が1回分にしかならないようにする。
+// マルチタスク系（同時複数発）で撃った場合は、そのぶん負荷を1.5倍にする。
+const fatigueTickIntervalMs = 1000;
+const fatigueMultitaskLoadMultiplier = 1.5;
+let fatigueTickChainActive = false; // 現在「連続攻撃中」の判定チェーンが進行しているか
+let fatigueTickTimerMs = 0; // 次の判定までの残り時間
+let fatigueTickWindowAttacked = false; // 直近の1秒枠内に攻撃があったか
+let fatigueTickWindowElevated = false; // 直近の1秒枠内にマルチタスク系の攻撃があったか
+
+// 脳疲労を増やし、上限に達したらstun（行動不能）を発生させる共通処理
+function applyFatigueGain(amount) {
+  if (amount <= 0) return;
+  fatigue = Math.min(maxFatigue, fatigue + amount);
+  if (fatigue >= maxFatigue) {
+    fatigue = maxFatigue;
+    stunned = true;
+    stunTimer = stunDuration * specialSkillEffects.stunDurationMultiplier;
+    if (partner.active) showRandomPartnerSpeechBubble(partnerStunWorryLines, '#90caf9', partnerStunWorryStressedLines);
+    // 疲労が限界に達したら行動不能にし、SANも減らす
+    const sanMultiplier = Math.max(0.5, 1 - skillLevel * 0.04);
+    damageSan(Math.ceil(
+      stunSanPenalty * sanMultiplier * specialSkillEffects.sanDamageMultiplier
+    ));
+    const stunLifespanPenalty = stunLifespanPenaltyMin + Math.floor(
+      Math.random() * (stunLifespanPenaltyMax - stunLifespanPenaltyMin + 1)
+    );
+    lifespan = Math.max(0, lifespan - stunLifespanPenalty);
+    checkVitalsGameOver();
+  }
+}
+
+// 攻撃1回あたりの脳疲労増加の基準値（スキルレベル・時間帯による補正込み）
+function getBaseFiringFatigueAmount() {
+  const firingDrainMultiplier = Math.max(0.8, 1 - skillLevel * 0.05);
+  return firingFatiguePerShot * firingDrainMultiplier *
+    specialSkillEffects.firingFatigueMultiplier * getTimeOfDayFatigueMultiplier();
+}
+
+// 攻撃が発生したことを登録する。チェーンが止まっていれば即座に1回分を反映して新しいチェーンを開始し、
+// チェーン進行中ならこの枠の「攻撃あり」フラグだけを立てて、次の判定タイミングにまとめて反映する
+function registerFatigueAttack(elevated) {
+  if (!fatigueTickChainActive) {
+    applyFatigueGain(getBaseFiringFatigueAmount() * (elevated ? fatigueMultitaskLoadMultiplier : 1));
+    fatigueTickChainActive = true;
+    fatigueTickTimerMs = fatigueTickIntervalMs;
+    fatigueTickWindowAttacked = false;
+    fatigueTickWindowElevated = false;
+  } else {
+    fatigueTickWindowAttacked = true;
+    fatigueTickWindowElevated = fatigueTickWindowElevated || elevated;
+  }
+}
+
+// 毎フレーム呼び出し、チェーンの次の判定タイミングを進める。
+// 枠内に攻撃があれば1回分を反映して次の枠へ、なければチェーンを終了する
+function updateFatigueTickChain(dt) {
+  if (!fatigueTickChainActive) return;
+  fatigueTickTimerMs -= dt * 1000;
+  if (fatigueTickTimerMs > 0) return;
+  if (fatigueTickWindowAttacked) {
+    applyFatigueGain(getBaseFiringFatigueAmount() * (fatigueTickWindowElevated ? fatigueMultitaskLoadMultiplier : 1));
+    fatigueTickTimerMs = fatigueTickIntervalMs;
+    fatigueTickWindowAttacked = false;
+    fatigueTickWindowElevated = false;
+  } else {
+    fatigueTickChainActive = false;
+  }
+}
+
 let stunned = false;
 const stunDuration = 2200; // 疲労が100になったときの行動不能時間（ミリ秒）
 let stunTimer = 0;
@@ -279,6 +349,7 @@ const chocolateRecoveryRatio = 0.3; // 最大値の30%ぶん脳疲労を減ら�
 const chocolateSanRecovery = 8; // 少しSANも回復する（その代わり寿命を消費する）
 const chocolateLifespanCost = 3;
 const chocolateRadius = 22;
+const chocolateFallGravityPerSec2 = 900; // 落下中、1秒あたりに増える落下速度
 let chocolate = null;
 let chocolateSpawnTimerMs = getRandomChocolateSpawnDelay();
 
@@ -287,12 +358,16 @@ function getRandomChocolateSpawnDelay() {
   return 8000 + Math.random() * 7000;
 }
 
+// マップ上部から落ちてきて、窓の範囲を避けた床の上に着地する
 function spawnChocolate() {
-  const margin = chocolateRadius + 20;
+  const target = getRandomEventPosition(chocolateRadius);
   chocolate = {
-    x: margin + Math.random() * (canvas.width - margin * 2),
-    y: margin + Math.random() * (canvas.height - margin * 2),
+    x: target.x,
+    y: -chocolateRadius - 20,
+    targetY: target.y,
     radius: chocolateRadius,
+    fallSpeed: 0,
+    landed: false,
     remainingMs: chocolateLifetimeMs
   };
 }
@@ -597,8 +672,8 @@ function resolveTimedSystemsAtDayEnd() {
 function endWorkday() {
   resolveTimedSystemsAtDayEnd();
   if (gameOver || deathSequence) return;
-  // 昇進判定は週末（および月末＝クリア判定の直前）にのみ行う
-  if (isWeekEndDay(currentDate) || isLastDayOfMonth(currentDate)) {
+  // 昇進判定は翌週の開始時に行うため、ここでは月末（クリア判定の直前）のみ判定する
+  if (isLastDayOfMonth(currentDate)) {
     rankUpAtWeekEnd();
     if (acknowledgementNotice) return;
   }
@@ -719,6 +794,7 @@ let selectedPartnerIcon = partnerIconChoices[0]; // nullの場合は「同僚な
 const partnerMoveSpeed = 3.2;
 const partnerFollowSpeedMultiplier = 0.45;
 const partnerWanderChance = 0.8;
+const partnerChocolateSeekFatigueRatio = 0.6; // 脳疲労がこの割合を超えたら、チョコレートを優先して取りに行く
 const partnerFollowOffsetX = -95;
 const partnerFollowOffsetY = 65;
 const partnerBaseFireRate = 700; // 自律攻撃の間隔（ミリ秒）
@@ -1072,14 +1148,19 @@ function updatePartner(dt) {
     }
     partner.wanderTimer = 1800 + Math.random() * 2600;
   }
-  const followTarget = partner.wandering
-    ? partner.wanderTarget
-    : { x: player.x + partnerFollowOffsetX, y: player.y + partnerFollowOffsetY };
+  // 脳疲労が60%を超えていて、着地済みのチョコレートがあれば、追従・徘徊よりも優先して取りに行く
+  const partnerWantsChocolate = !!chocolate && chocolate.landed &&
+    partner.fatigue >= maxFatigue * partnerChocolateSeekFatigueRatio;
+  const followTarget = partnerWantsChocolate
+    ? { x: chocolate.x, y: chocolate.y }
+    : partner.wandering
+      ? partner.wanderTarget
+      : { x: player.x + partnerFollowOffsetX, y: player.y + partnerFollowOffsetY };
   const fdx = followTarget.x - partner.x;
   const fdy = followTarget.y - partner.y;
   const fdist = Math.hypot(fdx, fdy);
   if (fdist > 2) {
-    const movementSpeed = partnerMoveSpeed * (partner.wandering ? 1 : partnerFollowSpeedMultiplier);
+    const movementSpeed = partnerMoveSpeed * (partnerWantsChocolate || partner.wandering ? 1 : partnerFollowSpeedMultiplier);
     const step = Math.min(fdist, movementSpeed);
     partner.x += (fdx / fdist) * step;
     partner.y += (fdy / fdist) * step;
@@ -1087,6 +1168,24 @@ function updatePartner(dt) {
   }
   clampToPlayableFloor(partner);
   pushEntityOutsideScheduledReport(partner);
+
+  // チョコレートを取りに行っていた場合、たどり着いたら食べて疲労・SAN・寿命に反映する
+  if (partnerWantsChocolate && chocolate &&
+      Math.hypot(partner.x - chocolate.x, partner.y - chocolate.y) <= partner.radius + chocolate.radius) {
+    const recoveryAmount = Math.ceil(
+      maxFatigue * chocolateRecoveryRatio * specialSkillEffects.chocolateRecoveryMultiplier
+    );
+    const reducedFatigue = Math.min(partner.fatigue, recoveryAmount);
+    partner.fatigue -= reducedFatigue;
+    partner.san = Math.min(maxSan, partner.san + chocolateSanRecovery);
+    partner.lifespan = Math.max(0, partner.lifespan - chocolateLifespanCost);
+    showMessage(
+      `同僚がチョコレートを食べた！ 脳疲労 -${Math.ceil(reducedFatigue)} / SAN +${chocolateSanRecovery} / 寿命 -${chocolateLifespanCost}`,
+      1800, '#ffcc80'
+    );
+    chocolate = null;
+    chocolateSpawnTimerMs = getRandomChocolateSpawnDelay();
+  }
 
   // 脳疲労が100に達したら、50（または時間帯の下限、どちらか高い方）まで下がるまで攻撃を控えて休ませる。
   // 下限が50を超える時間帯でも、必ずいつかは休息を終えられるようにする
@@ -1620,7 +1719,7 @@ function checkRankUp() {
   return promotions;
 }
 
-// 週末（週の最終稼働日）にのみ呼び出す昇進判定
+// 昇進判定（週の最終稼働日の月末クリア判定時、および翌週の開始時に呼び出す）
 function rankUpAtWeekEnd() {
   const promotions = checkRankUp();
   if (promotions > 0) {
@@ -1628,6 +1727,12 @@ function rankUpAtWeekEnd() {
     showAcknowledgementNotice('昇進しました！ ' + rank + ' ' + rankNames[rank-1] + jumpNote,
       '#ffeb3b', '新しい役職での一週間が始まります。');
   }
+}
+
+// 翌週の開始時（月曜日を迎えた瞬間）に、昇進判定と週次ノルマのリセットをまとめて行う
+function startNewWeek() {
+  rankUpAtWeekEnd();
+  resetWeeklyQuotaForNewWeek();
 }
 
 // ===== 日次進行・週次ノルマ判定・休日フロー =====
@@ -1672,7 +1777,7 @@ function autoAdvanceDay() {
   stunned = false;
   dayNumber++;
   if (currentDate.getDay() === 1) {
-    resetWeeklyQuotaForNewWeek();
+    startNewWeek();
   }
   lastUpdate = Date.now();
 }
@@ -1685,7 +1790,7 @@ function jumpToNextMondayAndResetWeek() {
   currentHour = dayStartHour;
   stunned = false;
   dayNumber++;
-  resetWeeklyQuotaForNewWeek();
+  startNewWeek();
   lastUpdate = Date.now();
 }
 
@@ -2353,6 +2458,10 @@ function update() {
   // 「同僚と遊ぶ」アドベンチャーパート中は、ゲームの進行を止める
   if (adventureState) return;
 
+  // 攻撃による脳疲労増加の「1秒に1回」チェーンを進める
+  updateFatigueTickChain(dt);
+  if (gameOver || deathSequence) return;
+
   // 一時メッセージの残り表示時間を減らし、期限切れなら削除する
   // ただし「DAY～」演出中（暗転～クリック待ち）は、読み終える前に消えないよう時間を止める
   if (dayTransitionPhase !== 'out' && dayTransitionPhase !== 'waiting') {
@@ -2447,7 +2556,15 @@ function update() {
   }
 
   // チョコレートの出現待ち、取得判定、時間切れを処理する
-  if (chocolate) {
+  if (chocolate && !chocolate.landed) {
+    // 画面上部から落下してくる演出。着地するまでは取得判定を行わない
+    chocolate.fallSpeed += chocolateFallGravityPerSec2 * dt;
+    chocolate.y += chocolate.fallSpeed * dt;
+    if (chocolate.y >= chocolate.targetY) {
+      chocolate.y = chocolate.targetY;
+      chocolate.landed = true;
+    }
+  } else if (chocolate) {
     chocolate.remainingMs -= dt * 1000;
     const distanceToChocolate = Math.hypot(
       player.x - chocolate.x,
@@ -2594,9 +2711,6 @@ function update() {
     if (wantsToFire && !stunned) {
       if (now - lastFire >= currentFireRate) {
         updateSkillEffects();
-        const firingDrainMultiplier = Math.max(0.8, 1 - skillLevel * 0.05);
-        const projectedFatigue = firingFatiguePerShot * firingDrainMultiplier *
-          specialSkillEffects.firingFatigueMultiplier * getTimeOfDayFatigueMultiplier();
         if (fatigue < maxFatigue) {
           lastFire = now;
           const shotAngle = player.angle;
@@ -2660,25 +2774,9 @@ function update() {
               owner: 'player'
             });
           }
-          // 発射時に疲労を増やす。スキルレベルが高いほど消耗を軽減する
-          // マルチタスクは処理する弾数に比例して脳疲労も増える。
-          fatigue += projectedFatigue * shotCount;
-          if (fatigue >= maxFatigue) {
-            fatigue = maxFatigue;
-            stunned = true;
-            stunTimer = stunDuration * specialSkillEffects.stunDurationMultiplier;
-            if (partner.active) showRandomPartnerSpeechBubble(partnerStunWorryLines, '#90caf9', partnerStunWorryStressedLines);
-            // 疲労が限界に達したら行動不能にし、SANも減らす
-            const sanMultiplier = Math.max(0.5, 1 - skillLevel * 0.04);
-            damageSan(Math.ceil(
-              stunSanPenalty * sanMultiplier * specialSkillEffects.sanDamageMultiplier
-            ));
-            const stunLifespanPenalty = stunLifespanPenaltyMin + Math.floor(
-              Math.random() * (stunLifespanPenaltyMax - stunLifespanPenaltyMin + 1)
-            );
-            lifespan = Math.max(0, lifespan - stunLifespanPenalty);
-            checkVitalsGameOver();
-          }
+          // 発射時に疲労を増やす。1秒間攻撃し続けていても増加は1秒に1回分にまとめ、
+          // マルチタスク（同時複数発）で撃った場合はその1回分の負荷を1.5倍にする
+          registerFatigueAttack(shotCount > 1);
         }
       }
     }
@@ -3566,13 +3664,15 @@ function draw() {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText('🍫', chocolate.x, chocolate.y);
-      ctx.font = '12px sans-serif';
-      ctx.fillStyle = '#ffcc80';
-      ctx.fillText(
-        `${Math.max(0, chocolate.remainingMs / 1000).toFixed(1)}秒`,
-        chocolate.x,
-        chocolate.y + chocolate.radius + 12
-      );
+      if (chocolate.landed) {
+        ctx.font = '12px sans-serif';
+        ctx.fillStyle = '#ffcc80';
+        ctx.fillText(
+          `${Math.max(0, chocolate.remainingMs / 1000).toFixed(1)}秒`,
+          chocolate.x,
+          chocolate.y + chocolate.radius + 12
+        );
+      }
       ctx.restore();
     }
   }
