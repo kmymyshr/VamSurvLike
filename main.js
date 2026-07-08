@@ -3198,8 +3198,15 @@ function findFullAutoSeekTarget() {
   } else {
     fullAutoQuizChoiceIndex = null;
   }
-  if (chocolate && chocolate.landed) {
-    return { x: chocolate.x, y: chocolate.y };
+  // チョコレートと心の壁は、着地済みのものが両方あれば近い方を優先する
+  const bonusItems = [];
+  if (chocolate && chocolate.landed) bonusItems.push(chocolate);
+  if (heartWall && heartWall.landed) bonusItems.push(heartWall);
+  if (bonusItems.length > 0) {
+    return bonusItems.reduce((closest, item) => {
+      const d = Math.hypot(item.x - player.x, item.y - player.y);
+      return (!closest || d < closest.d) ? { x: item.x, y: item.y, d } : closest;
+    }, null);
   }
   return null;
 }
@@ -3224,9 +3231,18 @@ function computeFullAutoEnemyAvoidanceVector() {
 
 // 完全オートモード中の移動方向（-1〜1に正規化済み）を決める。
 // 1) 同僚弾の回避を最優先 → 2) 昼食・クイズ・チョコレートを拾いに行く → 3) 近い敵からは離れる
-function computeFullAutoMoveVector() {
+// 周囲の反発がほぼ打ち消し合って板挟みになった時、振動せずランダムな方向へ抜け出すための状態
+const fullAutoStuckVectorThreshold = 0.15; // 合成ベクトルの大きさがこれ未満なら「板挟み」とみなす
+const fullAutoEscapeDurationMs = 500; // 一度ランダムな方向へ逃げ始めたら、この間は同じ方向を保つ
+let fullAutoEscapeDirection = null;
+let fullAutoEscapeTimerMs = 0;
+
+function computeFullAutoMoveVector(dt) {
   const dodge = computeFullAutoDodgeVector();
-  if (dodge) return dodge;
+  if (dodge) {
+    fullAutoEscapeTimerMs = 0; // 弾を回避できている間は脱出モードをリセットする
+    return dodge;
+  }
 
   let vx = 0, vy = 0;
   const seekTarget = findFullAutoSeekTarget();
@@ -3243,7 +3259,23 @@ function computeFullAutoMoveVector() {
   vx += avoid.x;
   vy += avoid.y;
 
+  // 既にランダム方向への脱出中なら、時間が切れるまでは同じ方向を保って振動を防ぐ
+  if (fullAutoEscapeTimerMs > 0) {
+    fullAutoEscapeTimerMs -= dt * 1000;
+    return fullAutoEscapeDirection;
+  }
+
   const len = Math.hypot(vx, vy);
+  const hasNearbyThreat = avoid.x !== 0 || avoid.y !== 0;
+  // 周囲からの反発がほぼ打ち消し合い、どちらへ動いてもダメージを受けかねない板挟み状態になったら、
+  // 振動する代わりにランダムな方向へ一定時間逃げて突破する
+  if (hasNearbyThreat && len < fullAutoStuckVectorThreshold) {
+    const randomAngle = Math.random() * Math.PI * 2;
+    fullAutoEscapeDirection = { x: Math.cos(randomAngle), y: Math.sin(randomAngle) };
+    fullAutoEscapeTimerMs = fullAutoEscapeDurationMs;
+    return fullAutoEscapeDirection;
+  }
+
   if (len < 0.001) return { x: 0, y: 0 };
   return { x: vx / len, y: vy / len };
 }
@@ -3748,7 +3780,7 @@ function update() {
       getEnergyDrinkMoveSpeedMultiplier() * getCoffeeMoveSpeedMultiplier();
     if (fullAutoModeEnabled) {
       // 完全オートモード中は、手動操作の代わりにAIが移動方向を決める
-      const autoVec = computeFullAutoMoveVector();
+      const autoVec = computeFullAutoMoveVector(dt);
       if (autoVec.x !== 0 || autoVec.y !== 0) {
         player.x += autoVec.x * currentMoveSpeed;
         player.y += autoVec.y * currentMoveSpeed;
