@@ -4604,13 +4604,17 @@ function draw() {
       ctx.save();
       ctx.fillStyle = isHovered ? 'rgba(156, 107, 230, 0.55)' : 'rgba(103, 58, 183, 0.35)';
       ctx.fillRect(cellX, cellY, cellSize, cellSize);
+      const img = partnerIconImageElements[id];
+      if (img && img.complete && img.naturalWidth > 0) {
+        // 枠のサイズは変えず、画像だけ枠より一回り大きく中央に描画する
+        const imgSize = cellSize + 8;
+        const imgOffset = (cellSize - imgSize) / 2;
+        ctx.drawImage(img, cellX + imgOffset, cellY + imgOffset, imgSize, imgSize);
+      }
+      // 枠は画像より後に描き直し、はみ出した部分の上からでも見えるようにする
       ctx.strokeStyle = isHovered ? '#f3e5f5' : '#ce93d8';
       ctx.lineWidth = isHovered ? 3 : 2;
       ctx.strokeRect(cellX, cellY, cellSize, cellSize);
-      const img = partnerIconImageElements[id];
-      if (img && img.complete && img.naturalWidth > 0) {
-        ctx.drawImage(img, cellX + 4, cellY + 4, cellSize - 8, cellSize - 8);
-      }
       ctx.restore();
       uiButtons.push({ x: cellX, y: cellY, w: cellSize, h: cellSize, action: () => selectPartnerIcon(id) });
     });
