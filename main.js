@@ -271,6 +271,9 @@ let scheduledReport = null;
 function spawnScheduledReport() {
   if (scheduledReport || dayNumber % scheduledReportIntervalDays !== 0) return;
   const position = getRandomEventPosition(scheduledReportRadius);
+  const collisionSafeMargin = scheduledReportRadius + player.radius * 2 + 2;
+  position.x = Math.max(collisionSafeMargin, Math.min(canvas.width - collisionSafeMargin, position.x));
+  position.y = Math.max(collisionSafeMargin, Math.min(canvas.height - collisionSafeMargin, position.y));
   const maxHp = Math.ceil(scheduledReportBaseHp * getEnemyDifficultyMultiplier());
   scheduledReport = { ...position, radius: scheduledReportRadius, hp: maxHp, maxHp };
   showMessage('16時：定時報告が発生！ 終業までに片付けよう', 3500, '#ffca28', '23px sans-serif');
@@ -293,7 +296,27 @@ function failScheduledReport() {
   showMessage('定時報告を完了できなかった… Scoreが半分になった', 4000, '#ff5252', '23px sans-serif');
 }
 
+// 定時報告は接触ダメージを持たないが、自分も同僚も通り抜けられない。
+function pushEntityOutsideScheduledReport(entity) {
+  if (!scheduledReport || !entity) return;
+  let dx = entity.x - scheduledReport.x;
+  let dy = entity.y - scheduledReport.y;
+  let distance = Math.hypot(dx, dy);
+  const minimumDistance = entity.radius + scheduledReport.radius + 1;
+  if (distance >= minimumDistance) return;
+  if (distance === 0) {
+    dx = 1;
+    dy = 0;
+    distance = 1;
+  }
+  entity.x = scheduledReport.x + (dx / distance) * minimumDistance;
+  entity.y = scheduledReport.y + (dy / distance) * minimumDistance;
+  entity.x = Math.max(entity.radius, Math.min(canvas.width - entity.radius, entity.x));
+  entity.y = Math.max(entity.radius, Math.min(canvas.height - entity.radius, entity.y));
+}
+
 // --- 昼食：12時に順番付きで出現する食べ物 ---
+const lunchWarningHour = 11;
 const lunchHour = 12;
 const lunchFoodCount = 4;
 const lunchSpawnIntervalMs = 550;
@@ -420,6 +443,9 @@ function answerQuiz(answerIndex) {
 function processTimedHourEvents(previousHour, newHour) {
   const lastEventHour = Math.min(newHour, dayEndHour);
   for (let hour = previousHour + 1; hour <= lastEventHour; hour++) {
+    if (hour === lunchWarningHour) {
+      showMessage('もうすぐ12時。昼食の順番を覚える準備をしよう', 3000, '#ffe082', '21px sans-serif');
+    }
     if (hour === lunchHour) startLunchEvent();
     if (hour === scheduledReportHour) spawnScheduledReport();
     const weekday = currentDate.getDay();
@@ -499,8 +525,10 @@ let selectedPartnerIcon = partnerIconChoices[0]; // nullの場合は「同僚な
 
 // ===== 同僚 =====
 const partnerMoveSpeed = 3.2;
-const partnerFollowOffsetX = -55;
-const partnerFollowOffsetY = 40;
+const partnerFollowSpeedMultiplier = 0.45;
+const partnerWanderChance = 0.8;
+const partnerFollowOffsetX = -95;
+const partnerFollowOffsetY = 65;
 const partnerBaseFireRate = 700; // 自律攻撃の間隔（ミリ秒）
 const partnerFiringFatiguePerShot = 8;
 const partnerContactSanMultiplier = 3; // 接触時のSANダメージ = 敵の種類 × この倍率（プレイヤーよりやや軽め）
@@ -551,7 +579,7 @@ function initPartner() {
   partner.invincible = false;
   partner.invincibleTimer = 0;
   partner.wandering = false;
-  partner.wanderTimer = 1500 + Math.random() * 2500;
+  partner.wanderTimer = 1800 + Math.random() * 2200;
   partner.fireTimer = partnerBaseFireRate;
   partner.highFatigueTimerMs = 0;
   partner.lowSanTimerMs = 0;
@@ -638,17 +666,14 @@ function updatePartner(dt) {
   // 疲労回復（プレイヤーの待機時回復と同じ割合を流用）
   partner.fatigue = Math.max(0, partner.fatigue - idleRecoveryPerSec * dt);
 
-  // 追従・ランダム移動：数秒おきに「追従」⇔「ランダム徘徊」を切り替える（ふらふらと動く印象を強めにしてある）
+  // 追従する時間を減らし、画面内を広く自発的に徘徊する。
   partner.wanderTimer -= dt * 1000;
   if (partner.wanderTimer <= 0) {
-    partner.wandering = Math.random() < 0.55;
+    partner.wandering = Math.random() < partnerWanderChance;
     if (partner.wandering) {
-      partner.wanderTarget = {
-        x: Math.max(partner.radius, Math.min(canvas.width - partner.radius, player.x + (Math.random() - 0.5) * 340)),
-        y: Math.max(partner.radius, Math.min(canvas.height - partner.radius, player.y + (Math.random() - 0.5) * 340))
-      };
+      partner.wanderTarget = getRandomEventPosition(partner.radius);
     }
-    partner.wanderTimer = 900 + Math.random() * 1800;
+    partner.wanderTimer = 1800 + Math.random() * 2600;
   }
   const followTarget = partner.wandering
     ? partner.wanderTarget
@@ -657,18 +682,20 @@ function updatePartner(dt) {
   const fdy = followTarget.y - partner.y;
   const fdist = Math.hypot(fdx, fdy);
   if (fdist > 2) {
-    const step = Math.min(fdist, partnerMoveSpeed);
+    const movementSpeed = partnerMoveSpeed * (partner.wandering ? 1 : partnerFollowSpeedMultiplier);
+    const step = Math.min(fdist, movementSpeed);
     partner.x += (fdx / fdist) * step;
     partner.y += (fdy / fdist) * step;
     partner.angle = Math.atan2(fdy, fdx);
   }
   partner.x = Math.max(partner.radius, Math.min(canvas.width - partner.radius, partner.x));
   partner.y = Math.max(partner.radius, Math.min(canvas.height - partner.radius, partner.y));
+  pushEntityOutsideScheduledReport(partner);
 
   // 自律攻撃：最も近い敵へ向けて、既存の弾配列にそのまま追加する
   // 賢さ・性格・脳疲労に応じて、無駄撃ちを避けたり、狙いが不正確になったりする
   partner.fireTimer -= dt * 1000;
-  if (partner.fireTimer <= 0 && enemies.length > 0 && partner.fatigue < maxFatigue) {
+  if (partner.fireTimer <= 0 && (enemies.length > 0 || scheduledReport) && partner.fatigue < maxFatigue) {
     const intelligence = getPartnerEffectiveIntelligence();
     const recklessness = getPartnerEffectiveRecklessness();
     const fatigueRatio = partner.fatigue / maxFatigue;
@@ -678,10 +705,12 @@ function updatePartner(dt) {
     if (Math.random() < holdFireChance) {
       partner.fireTimer = 200; // 少し待って再度チャンスを窺う（このターンは撃たない）
     } else {
-      const nearestEnemy = enemies.reduce((closest, candidate) => {
-        const d = Math.hypot(candidate.x - partner.x, candidate.y - partner.y);
-        return (!closest || d < closest.d) ? { en: candidate, d } : closest;
-      }, null).en;
+      const nearestEnemy = enemies.length > 0
+        ? enemies.reduce((closest, candidate) => {
+          const d = Math.hypot(candidate.x - partner.x, candidate.y - partner.y);
+          return (!closest || d < closest.d) ? { en: candidate, d } : closest;
+        }, null).en
+        : null;
       // 関係性が閾値以下になると、悪化度に応じた確率で敵ではなく自分を狙う。
       const relationshipHostility = Math.max(0,
         (partnerRelationshipRetaliationThreshold - partner.relationship) /
@@ -690,7 +719,8 @@ function updatePartner(dt) {
         ? 0.2 + relationshipHostility * 0.3
         : 0;
       const retaliating = Math.random() < retaliationChance;
-      const target = retaliating ? player : nearestEnemy;
+      // 定時報告が出ている間は、通常の仕事より優先して狙う。
+      const target = retaliating ? player : (scheduledReport || nearestEnemy);
       // 賢さが高く、疲労が少なく、慎重な性格ほど命中精度（狙いの正確さ）が上がる
       const accuracy = Math.max(0.15, Math.min(1,
         0.35 + intelligence * 0.5 - fatigueRatio * 0.25 - recklessness * 0.1
@@ -1140,7 +1170,9 @@ function updateSkillEffects() {
     const specialSkillCount = Math.floor(newLevel / 5) - Math.floor(skillLevel / 5);
     // レベルが上がった場合はメッセージを表示する
     skillLevel = newLevel;
-    showMessage('スキルレベルが上昇しました！', 6000, '#00ffff', '50px sans-serif');
+    showMessage(`スキルレベル ${newLevel} に上昇！`, 4200, '#00ffff', '30px sans-serif', {
+      x: canvas.width - 18, y: 190, textAlign: 'right'
+    });
     queueSpecialSkillSelections(specialSkillCount);
   }
 }
@@ -1327,8 +1359,8 @@ function finishRestDayAndAdvanceToMonday() {
 
 // ===== 画面上に表示する一時メッセージ =====
 const messages = [];
-function showMessage(text, ttl = 2000, color = 'white', font = '20px sans-serif') {
-  messages.push({ text, ttl, initialTtl: ttl, color, font });
+function showMessage(text, ttl = 2000, color = 'white', font = '20px sans-serif', options = {}) {
+  messages.push({ text, ttl, initialTtl: ttl, color, font, ...options });
 }
 
 function getAllowedMaxTypeIndexByRank() {
@@ -1844,6 +1876,7 @@ function update() {
     // プレイヤーが画面外へ出ないよう座標を制限する
     player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
     player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
+    pushEntityOutsideScheduledReport(player);
 
     // 無敵時間を減らし、0になったら解除する
     if (invincible) {
@@ -2312,13 +2345,13 @@ function drawHudProfilePanel(x, y, width, height, title, icon, accentColor, stat
   ctx.fillRect(x, y, width, height);
 
   const portraitCenterX = x + width / 2;
-  const portraitCenterY = y + 39;
+  const portraitCenterY = y + 30;
   const clampedDangerLevel = Math.max(0, Math.min(1, dangerLevel));
   const portraitFrameColor = inactive
     ? '#757575'
     : mixHexColors(accentColor, '#ff2338', clampedDangerLevel);
   ctx.beginPath();
-  ctx.arc(portraitCenterX, portraitCenterY, 30, 0, Math.PI * 2);
+  ctx.arc(portraitCenterX, portraitCenterY, 23, 0, Math.PI * 2);
   ctx.fillStyle = inactive ? 'rgba(90, 90, 90, 0.4)' : 'rgba(255, 255, 255, 0.07)';
   ctx.fill();
   ctx.strokeStyle = portraitFrameColor;
@@ -2326,7 +2359,7 @@ function drawHudProfilePanel(x, y, width, height, title, icon, accentColor, stat
   ctx.stroke();
 
   ctx.globalAlpha = inactive ? 0.45 : 1;
-  ctx.font = '42px "Segoe UI Emoji", sans-serif';
+  ctx.font = '32px "Segoe UI Emoji", sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = 'white';
@@ -2336,14 +2369,14 @@ function drawHudProfilePanel(x, y, width, height, title, icon, accentColor, stat
 
   ctx.font = 'bold 14px sans-serif';
   ctx.fillStyle = inactive ? '#9e9e9e' : accentColor;
-  ctx.fillText(title, portraitCenterX, y + 79);
+  ctx.fillText(title, portraitCenterX, y + 61);
 
-  ctx.font = '12px sans-serif';
+  ctx.font = '11px sans-serif';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
   statLines.forEach((line, index) => {
     ctx.fillStyle = line.color || (inactive ? '#9e9e9e' : '#eceff1');
-    ctx.fillText(line.text, x + 12, y + 101 + index * 17);
+    ctx.fillText(line.text, x + 9, y + 80 + index * 14);
   });
   ctx.restore();
 }
@@ -2623,20 +2656,20 @@ function draw() {
   }
 
   // 左上に自分と同僚のプロフィールを同じ高さで並べる。
-  drawHudProfilePanel(12, 12, 180, 196, '自分', selectedPlayerIcon, '#4dd0e1', [
+  drawHudProfilePanel(12, 12, 145, 168, '自分', selectedPlayerIcon, '#4dd0e1', [
     { text: `SAN: ${Math.floor(san)} / ${maxSan}` },
     { text: `寿命: ${Math.ceil(lifespan)} / ${maxLifespan}` },
     { text: `脳疲労: ${Math.floor(fatigue)} / ${maxFatigue}` },
     { text: `Score: ${score}` },
     { text: `Rank: ${rank} ${rankNames[rank - 1]}` },
-    { text: `Skill Lvl: ${skillLevel}  EXP: ${Math.floor(exp)}` }
+    { text: `Skill:${skillLevel}  EXP:${Math.floor(exp)}` }
   ]);
 
   const partnerUnavailable = !partner.active;
   const partnerTitle = selectedPartnerIcon === null
     ? '同僚なし'
     : (partner.active ? '同僚' : '同僚離脱');
-  drawHudProfilePanel(204, 12, 180, 196, partnerTitle,
+  drawHudProfilePanel(164, 12, 145, 168, partnerTitle,
     selectedPartnerIcon, '#80cbc4', partner.active ? [
       { text: `SAN: ${Math.floor(partner.san)} / ${maxSan}` },
       { text: `寿命: ${Math.ceil(partner.lifespan)} / ${maxLifespan}` },
@@ -2656,18 +2689,17 @@ function draw() {
   ctx.fillText(
     `週ノルマ: 撃破 ${weeklyKills}/${weeklyKillQuota}  Score ${weeklyScoreGained}/${weeklyScoreQuota}` +
     (weeklyQuotaAchievedEarly ? '（達成！）' : ''),
-    12, 228
+    12, 198
   );
   ctx.fillStyle = 'white';
   ctx.fillText(
     '攻撃モード: ' + (autoFireEnabled ? '自動' : '手動') + (stunned ? '（行動不能）' : ''),
-    12, 248
+    12, 216
   );
 
   // 一時メッセージを画面上部の中央に表示する
   if (messages.length > 0) {
-    ctx.textAlign = 'center';
-    let y = 276;
+    let y = 242;
     for (const m of messages) {
       ctx.font = m.font || '20px sans-serif';
       // 残り時間に応じてメッセージを徐々に透明にする
@@ -2676,9 +2708,10 @@ function draw() {
       ctx.save();
       ctx.globalAlpha = alpha;
       ctx.fillStyle = m.color || 'white';
-      ctx.fillText(m.text, canvas.width / 2, y);
+      ctx.textAlign = m.textAlign || 'center';
+      ctx.fillText(m.text, m.x ?? canvas.width / 2, m.y ?? y);
       ctx.restore();
-      y += 28;
+      if (m.y === undefined) y += 28;
     }
     ctx.textAlign = 'left';
   }
