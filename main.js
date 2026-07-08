@@ -287,6 +287,13 @@ const synergyBeamDurationMs = 350;
 function spawnSynergyBeam(x1, y1, x2, y2) {
   synergyBeams.push({ x1, y1, x2, y2, timer: synergyBeamDurationMs });
 }
+
+// ===== 同僚弾を弾き返した瞬間の「カキーン」エフェクト =====
+const deflectEffects = [];
+const deflectEffectDurationMs = 300;
+function spawnDeflectEffect(x, y) {
+  deflectEffects.push({ x, y, timer: deflectEffectDurationMs });
+}
 const baseFireRate = 350; // 基本の発射間隔（従来の半分、ミリ秒）
 let lastFire = 0;
 let score = dreamMemorySave.upgrades.startScore * 20; // 夢の記憶ポイントの「初期スコア」で底上げされる
@@ -3051,6 +3058,11 @@ document.addEventListener("keydown", (event) => {
   if (event.key === 'f') {
     autoFireEnabled = !autoFireEnabled;
   }
+  // スペースキーで、タイミングよく振ると同僚弾をはじき返す（キーリピートでの連発は防ぐ）
+  if (event.key === ' ' && !event.repeat) {
+    event.preventDefault();
+    attemptDeflectPartnerBullet();
+  }
   keys[event.key] = true;
 });
 document.addEventListener("keyup", (event) => {
@@ -3173,6 +3185,39 @@ function findNearestEnemyToPlayer() {
     const d = Math.hypot(candidate.x - player.x, candidate.y - player.y);
     return (!closest || d < closest.d) ? { en: candidate, d } : closest;
   }, null);
+}
+
+// ===== 同僚弾のはじき返し（バットのように、タイミングよく振ると同僚弾を最寄りの敵へ打ち返す） =====
+const deflectRange = 60; // これより近くにある同僚弾だけをはじき返せる
+const deflectDamageMultiplier = 2; // はじき返した弾は通常の2倍のダメージになる
+const deflectFatigueCost = 5; // キーを振るたび（成否問わず）暫定的に蓄積する脳疲労
+function attemptDeflectPartnerBullet() {
+  if (stunned) return;
+  applyFatigueGain(deflectFatigueCost);
+  let target = null;
+  let targetDist = Infinity;
+  for (const b of bullets) {
+    if (b.owner !== 'partner') continue;
+    const d = Math.hypot(b.x - player.x, b.y - player.y);
+    if (d <= deflectRange + b.radius && d < targetDist) {
+      target = b;
+      targetDist = d;
+    }
+  }
+  if (!target) return;
+
+  const speed = Math.hypot(target.vx, target.vy) || 6;
+  const nearest = findNearestEnemyToPlayer();
+  const angle = nearest
+    ? Math.atan2(nearest.en.y - target.y, nearest.en.x - target.x)
+    : player.angle;
+  target.vx = Math.cos(angle) * speed;
+  target.vy = Math.sin(angle) * speed;
+  // 同僚には当たり判定を持たせず素通りさせ、敵にだけ通常の2倍のダメージを与える
+  target.owner = 'deflected';
+  target.damage = Math.max(1, Math.round((target.damage || 1) * deflectDamageMultiplier));
+  spawnDeflectEffect(target.x, target.y);
+  showMessage('弾をはじき返した！', 1400, '#fff176');
 }
 // スマホ用自動照準のターゲットを返す。定時報告が出ている間は、同僚の自律攻撃と同様にそちらを優先する
 function findAutoAimTarget() {
@@ -3489,6 +3534,12 @@ function update() {
   for (let si = synergyBeams.length - 1; si >= 0; si--) {
     synergyBeams[si].timer -= dt * 1000;
     if (synergyBeams[si].timer <= 0) synergyBeams.splice(si, 1);
+  }
+
+  // 弾き返しエフェクトの表示時間を減らす
+  for (let di = deflectEffects.length - 1; di >= 0; di--) {
+    deflectEffects[di].timer -= dt * 1000;
+    if (deflectEffects[di].timer <= 0) deflectEffects.splice(di, 1);
   }
 
   // 爆発後の短い時間、Canvas全体をランダムに揺らす
@@ -4982,7 +5033,7 @@ function draw() {
     ctx.fillStyle = '#cfd8dc';
     ctx.font = '16px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('P = 一時停止 / 再開　F = 自動攻撃切替', canvas.width / 2, helpTextY);
+    ctx.fillText('P = 一時停止 / 再開　F = 自動攻撃切替　Space = 同僚弾をはじき返す', canvas.width / 2, helpTextY);
     ctx.fillText('WASD・十字ボタン = 移動　マウス・ドラッグ / 連射ボタン = 照準・攻撃', canvas.width / 2, helpTextY + 26);
     ctx.textAlign = 'left';
     return;
@@ -5166,12 +5217,41 @@ function draw() {
     }
   }
 
-  // プレイヤーが発射した弾を描く
-  ctx.fillStyle = 'white';
+  // プレイヤーが発射した弾を描く（弾き返した弾は金色に光らせて見分けられるようにする）
   for (const b of bullets) {
+    ctx.save();
+    if (b.owner === 'deflected') {
+      ctx.fillStyle = '#ffd54f';
+      ctx.shadowColor = '#fff176';
+      ctx.shadowBlur = 10;
+    } else {
+      ctx.fillStyle = 'white';
+    }
     ctx.beginPath();
     ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
+  }
+
+  // 同僚弾を弾き返した瞬間の「カキーン」という弾ける星形エフェクトを描く
+  for (const effect of deflectEffects) {
+    const progress = 1 - effect.timer / deflectEffectDurationMs;
+    const alpha = Math.max(0, 1 - progress);
+    const radius = 10 + 22 * progress;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = '#fff176';
+    ctx.lineWidth = 3;
+    ctx.shadowColor = '#ffd54f';
+    ctx.shadowBlur = 10;
+    for (let i = 0; i < 6; i++) {
+      const angle = (Math.PI / 3) * i + Math.PI / 6;
+      ctx.beginPath();
+      ctx.moveTo(effect.x + Math.cos(angle) * radius * 0.4, effect.y + Math.sin(angle) * radius * 0.4);
+      ctx.lineTo(effect.x + Math.cos(angle) * radius, effect.y + Math.sin(angle) * radius);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   // 弾が敵に当たった瞬間、放射状に弾ける小さなヒットエフェクトを描く（撃破時は少し大きく）
