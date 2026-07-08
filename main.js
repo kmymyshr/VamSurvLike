@@ -229,6 +229,8 @@ const mousePosition = { x: player.x + 100, y: player.y };
 const movingDrainPerSec = 6; // 移動時の1秒あたりの疲労量（現在は未使用）
 const firingFatiguePerShot = 10; // 1発撃つごとに増える疲労量（stunになりにくいよう軽減）
 const idleRecoveryPerSec = 12; // 待機時の1秒あたりの回復量
+// 朝から夜にかけて時間が経つほど、脳疲労がたまりやすくなる（デフォルトのデバフ）
+const timeOfDayFatigueMultiplierMax = 1.8; // 終業時刻ごろに到達する最大倍率（残業中はさらにやや伸びる）
 const stunRecoveryPerSec = 18; // 行動不能中は通常より早く疲労を回復する
 const fireRateMultiplier = 1.5; // 疲労が多いほど発射間隔を延ばす倍率
 const baseBulletDamage = 2; // 疲労がないときの基本攻撃力
@@ -696,15 +698,32 @@ const partnerSpeechBubbleDurationMs = 2600;
 function showPartnerSpeechBubble(text, color = '#fff3e0') {
   partnerSpeechBubble = { text, color, timer: partnerSpeechBubbleDurationMs };
 }
+function showRandomPartnerSpeechBubble(lines, color) {
+  showPartnerSpeechBubble(lines[Math.floor(Math.random() * lines.length)], color);
+}
 
 // ===== 攻撃をサボっていると同僚の好感度が下がる仕組み =====
-const partnerNeglectThresholdMs = 12000; // これだけ攻撃しないと苦言を呈し始める
-const partnerNeglectIntervalMs = 8000; // 苦言を呈したあとも、さらにこの間隔で好感度が下がり続ける
+const partnerNeglectThresholdMs = 5000; // これだけ攻撃しないと苦言を呈し始める
+const partnerNeglectIntervalMs = 2000; // 苦言を呈したあとも、さらにこの間隔で好感度が下がり続ける
 const partnerNeglectRelationshipPenalty = 1;
 let partnerNeglectTimerMs = 0; // 攻撃せず苦言状態が続いている時間
+const partnerNeglectLines = [
+  '仕事してください！',
+  'ちょっと、手が止まってますよ！',
+  'サボらないでくださいよ…！',
+  '私だけに任せないでください！',
+  'こっちは押されてます、早く！'
+];
 
 // ===== 同僚が当てた敵を自機が倒すと、お礼を言ってくれる仕組み =====
 const partnerThanksRelationshipChance = 0.3; // お礼と共に好感度が+1する確率
+const partnerThanksLines = [
+  'ありがとうございます！',
+  '助かりました！',
+  'ナイスです！',
+  'さすがです！',
+  '頼りにしてます！'
+];
 
 const partner = {
   active: false, // 「同僚なし」を選んだ場合や、力尽きた後はfalseのまま
@@ -921,7 +940,8 @@ function updatePartner(dt) {
           bounces: 0,
           owner: 'partner'
         });
-        partner.fatigue = Math.min(maxFatigue, partner.fatigue + partnerFiringFatiguePerShot);
+        partner.fatigue = Math.min(maxFatigue,
+          partner.fatigue + partnerFiringFatiguePerShot * getTimeOfDayFatigueMultiplier());
         partner.fireTimer = partnerBaseFireRate;
       }
     }
@@ -2354,7 +2374,7 @@ function update() {
         updateSkillEffects();
         const firingDrainMultiplier = Math.max(0.8, 1 - skillLevel * 0.05);
         const projectedFatigue = firingFatiguePerShot * firingDrainMultiplier *
-          specialSkillEffects.firingFatigueMultiplier;
+          specialSkillEffects.firingFatigueMultiplier * getTimeOfDayFatigueMultiplier();
         if (fatigue < maxFatigue) {
           lastFire = now;
           const shotAngle = player.angle;
@@ -2452,7 +2472,7 @@ function update() {
     if (partnerNeglectTimerMs >= partnerNeglectIntervalMs) {
       partnerNeglectTimerMs = 0;
       adjustPartnerRelationship(-partnerNeglectRelationshipPenalty);
-      showPartnerSpeechBubble('仕事してください！', '#ff8a65');
+      showRandomPartnerSpeechBubble(partnerNeglectLines, '#ff8a65');
     }
   } else {
     partnerNeglectTimerMs = 0;
@@ -2545,7 +2565,7 @@ function update() {
             updateSkillEffects();
           // 同僚が当てていた敵に自機がとどめを刺すと、お礼を言ってくれる
           if (b.owner === 'player' && en.hitByPartner && partner.active) {
-            showPartnerSpeechBubble('ありがとうございます！', '#69f0ae');
+            showRandomPartnerSpeechBubble(partnerThanksLines, '#69f0ae');
             if (Math.random() < partnerThanksRelationshipChance) {
               adjustPartnerRelationship(1);
             }
@@ -2857,6 +2877,14 @@ function drawBackground() {
 function getVisualGameHour() {
   const hourProgress = Math.max(0, Math.min(1, (gameClockMs - lastHourTime) / hourMs));
   return currentHour + hourProgress;
+}
+
+// 朝(dayStartHour)を1倍、終業時刻(dayEndHour)ごろをtimeOfDayFatigueMultiplierMax倍として、
+// 夕方・夜になるほど脳疲労がたまりやすくなる倍率を返す（残業中はさらに少し伸びる）
+function getTimeOfDayFatigueMultiplier() {
+  const visualHour = getVisualGameHour();
+  const progress = Math.max(0, Math.min(1.3, (visualHour - dayStartHour) / (dayEndHour - dayStartHour)));
+  return 1 + progress * (timeOfDayFatigueMultiplierMax - 1);
 }
 
 // 2つの16進カラーを割合に応じて混ぜ、関係性の連続的な色変化に使う。
@@ -3252,8 +3280,11 @@ function draw() {
       ctx.save();
       ctx.beginPath();
       ctx.arc(chocolate.x, chocolate.y, chocolate.radius, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255, 204, 128, 0.3)';
+      ctx.fillStyle = '#2b2016';
       ctx.fill();
+      ctx.strokeStyle = 'rgba(255, 204, 128, 0.8)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
       ctx.font = '34px "Segoe UI Emoji", sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -3337,8 +3368,11 @@ function draw() {
       ctx.save();
       ctx.beginPath();
       ctx.arc(item.x, item.y, item.radius, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255, 204, 128, 0.25)';
+      ctx.fillStyle = '#2b2016';
       ctx.fill();
+      ctx.strokeStyle = 'rgba(255, 204, 128, 0.8)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
       ctx.font = '30px "Segoe UI Emoji", sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
