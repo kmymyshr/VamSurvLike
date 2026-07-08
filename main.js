@@ -3702,20 +3702,18 @@ function attemptDeflectPartnerBullet() {
   if (stunned) return;
   applyFatigueGain(deflectFatigueCost);
   spawnSlashEffect(player.x, player.y, player.angle, player.radius); // 命中の有無に関わらず、振った動作自体を見せる
-  let target = null;
-  let targetDist = Infinity;
-  for (const b of bullets) {
-    if (b.owner !== 'partner' && b.owner !== 'boss') continue;
+  // 範囲内の条件を満たす弾は、まとめて同時にパリィする（1発だけに限らない）
+  const targets = bullets.filter(b => {
+    if (b.owner !== 'partner' && b.owner !== 'boss') return false;
     const d = Math.hypot(b.x - player.x, b.y - player.y);
-    if (d <= deflectRange + b.radius && d < targetDist) {
-      target = b;
-      targetDist = d;
-    }
-  }
-  if (!target) return;
+    return d <= deflectRange + b.radius;
+  });
+  if (targets.length === 0) return;
 
-  performBulletParry(target, player.x, player.y, player.angle);
-  showMessage('パリィ成功！', 1400, '#fff176');
+  for (const target of targets) {
+    performBulletParry(target, player.x, player.y, player.angle);
+  }
+  showMessage(targets.length > 1 ? `パリィ成功！（${targets.length}発同時）` : 'パリィ成功！', 1400, '#fff176');
 }
 // スマホ用自動照準のターゲットを返す。定時報告が出ている間は、同僚の自律攻撃と同様にそちらを優先する
 function findAutoAimTarget() {
