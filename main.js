@@ -481,6 +481,10 @@ let isPaused = false;
 let autoFireEnabled = false;
 let mouseFireHeld = false;
 const mousePosition = { x: player.x + 100, y: player.y };
+// 自動攻撃モードの間、脳疲労がstunに達しない範囲で連射を自動的に控える仕組み
+// （手動攻撃時は対象外。stun直前で一時停止し、半分程度まで下がったら再開する）
+const autoFireStunSafetyMargin = 15; // この値だけ余裕を残した時点で連射を控え始める
+let autoFireResting = false;
 
 // 1秒ごと、または1発ごとに変化する疲労関連の値
 const movingDrainPerSec = 6; // 移動時の1秒あたりの疲労量（現在は未使用）
@@ -1728,6 +1732,19 @@ function wouldPartnerShotHitCurrentPlayer(angle, bulletRadius = 4) {
   if (forwardDistance <= 0) return false;
   const perpendicularDistance = Math.abs(dx * directionY - dy * directionX);
   return perpendicularDistance <= player.radius + bulletRadius + 4;
+}
+
+// 発射時点の同僚位置が、自機弾の進行方向上にあるかを調べる（自動攻撃モードの誤射回避に使う）
+function wouldPlayerShotHitPartner(angle, bulletRadius = 4) {
+  if (!partner.active) return false;
+  const dx = partner.x - player.x;
+  const dy = partner.y - player.y;
+  const directionX = Math.cos(angle);
+  const directionY = Math.sin(angle);
+  const forwardDistance = dx * directionX + dy * directionY;
+  if (forwardDistance <= 0) return false;
+  const perpendicularDistance = Math.abs(dx * directionY - dy * directionX);
+  return perpendicularDistance <= partner.radius + bulletRadius + 4;
 }
 
 // 同僚の追従・ランダム移動・自律攻撃・被弾・寿命減少・退場判定をまとめて処理する
@@ -3673,7 +3690,15 @@ function update() {
     const currentFireRate = baseFireRate * (1 + fatigueRatio * fireRateMultiplier) *
       specialSkillEffects.fireRateMultiplier * getEnergyDrinkFireRateMultiplier() *
       getCoffeeFireRateMultiplier() * getRankSkillFireRateMultiplier();
-    const wantsToFire = autoFireEnabled || mouseFireHeld;
+    // 自動攻撃モードは、stunになる手前で自動的に連射を控え、疲労が半分程度まで下がったら再開する
+    if (fatigue >= maxFatigue - autoFireStunSafetyMargin) {
+      autoFireResting = true;
+    } else if (autoFireResting && fatigue <= Math.max(maxFatigue * 0.5, getFatigueRecoveryFloor())) {
+      autoFireResting = false;
+    }
+    // 自動攻撃モードは、射線上に同僚がいる間は誤射を避けて撃たない
+    const autoFireBlockedByPartner = autoFireEnabled && wouldPlayerShotHitPartner(player.angle);
+    const wantsToFire = (autoFireEnabled && !autoFireResting && !autoFireBlockedByPartner) || mouseFireHeld;
     if (wantsToFire && !stunned) {
       if (now - lastFire >= currentFireRate) {
         updateSkillEffects();
@@ -5288,7 +5313,8 @@ function draw() {
   );
   ctx.fillStyle = 'white';
   ctx.fillText(
-    '攻撃モード: ' + (autoFireEnabled ? '自動' : '手動') + (stunned ? '（行動不能）' : ''),
+    '攻撃モード: ' + (autoFireEnabled ? '自動' : '手動') + (stunned ? '（行動不能）' :
+      (autoFireEnabled && autoFireResting ? '（疲労のため一時休止）' : '')),
     12, 268
   );
 
