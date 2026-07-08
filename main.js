@@ -350,7 +350,7 @@ const chocolateRecoveryRatio = 0.3; // 最大値の30%ぶん脳疲労を減ら�
 const chocolateSanRecovery = 8; // 少しSANも回復する（その代わり寿命を消費する）
 const chocolateLifespanCost = 3;
 const chocolateRadius = 22;
-const chocolateFallGravityPerSec2 = 900; // 落下中、1秒あたりに増える落下速度
+const chocolateFallGravityPerSec2 = 540; // 落下中、1秒あたりに増える落下速度（従来の60%）
 let chocolate = null;
 let chocolateSpawnTimerMs = getRandomChocolateSpawnDelay();
 
