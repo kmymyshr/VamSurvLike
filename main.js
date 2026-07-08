@@ -690,6 +690,22 @@ const partnerRelationshipSafeFireThreshold = 50;
 const partnerRelationshipDamagePerHit = 15;
 const partnerRelationshipRetaliationThreshold = 40;
 
+// ===== 同僚の吹き出し（一言セリフ） =====
+let partnerSpeechBubble = null; // { text, color, timer }
+const partnerSpeechBubbleDurationMs = 2600;
+function showPartnerSpeechBubble(text, color = '#fff3e0') {
+  partnerSpeechBubble = { text, color, timer: partnerSpeechBubbleDurationMs };
+}
+
+// ===== 攻撃をサボっていると同僚の好感度が下がる仕組み =====
+const partnerNeglectThresholdMs = 12000; // これだけ攻撃しないと苦言を呈し始める
+const partnerNeglectIntervalMs = 8000; // 苦言を呈したあとも、さらにこの間隔で好感度が下がり続ける
+const partnerNeglectRelationshipPenalty = 1;
+let partnerNeglectTimerMs = 0; // 攻撃せず苦言状態が続いている時間
+
+// ===== 同僚が当てた敵を自機が倒すと、お礼を言ってくれる仕組み =====
+const partnerThanksRelationshipChance = 0.3; // お礼と共に好感度が+1する確率
+
 const partner = {
   active: false, // 「同僚なし」を選んだ場合や、力尽きた後はfalseのまま
   x: 0, y: 0, angle: 0,
@@ -1411,7 +1427,6 @@ function repositionRemainingEnemies() {
 
 // 通常の平日（または休日出勤中の土日）の終業処理。続行確認なしで自動的に翌日へ進む
 function autoAdvanceDay() {
-  const isWeekendWork = currentDate.getDay() === 0 || currentDate.getDay() === 6;
   currentDate.setDate(currentDate.getDate() + 1);
   fatigue = Math.max(0, fatigue - dayFatigueRecover);
   san = Math.min(maxSan, san + daySanRecover);
@@ -1420,7 +1435,6 @@ function autoAdvanceDay() {
   currentHour = dayStartHour;
   stunned = false;
   dayNumber++;
-  showMessage(`DAY ${dayNumber} 開始${isWeekendWork ? '（休日出勤）' : ''}`, 2200, '#90caf9', '26px sans-serif');
   if (currentDate.getDay() === 1) {
     resetWeeklyQuotaForNewWeek();
   }
@@ -1436,7 +1450,6 @@ function jumpToNextMondayAndResetWeek() {
   stunned = false;
   dayNumber++;
   resetWeeklyQuotaForNewWeek();
-  showMessage(`DAY ${dayNumber} 開始（月曜日）`, 2200, '#90caf9', '26px sans-serif');
   lastUpdate = Date.now();
 }
 
@@ -2090,6 +2103,12 @@ function update() {
     return;
   }
 
+  // 同僚の吹き出しの表示時間を減らす
+  if (partnerSpeechBubble) {
+    partnerSpeechBubble.timer -= dt * 1000;
+    if (partnerSpeechBubble.timer <= 0) partnerSpeechBubble = null;
+  }
+
   // 爆発後の短い時間、Canvas全体をランダムに揺らす
   explosionFlashTimer = Math.max(0, explosionFlashTimer - dt * 1000);
   friendlyFireHitFlashTimer = Math.max(0, friendlyFireHitFlashTimer - dt * 1000);
@@ -2427,6 +2446,18 @@ function update() {
   if (gameOver || deathSequence) return;
   friendlyFireInvincibleTimer = Math.max(0, friendlyFireInvincibleTimer - dt * 1000);
 
+  // 敵がいるのに長時間攻撃していないと、同僚が苦言を呈しつつ好感度が下がっていく
+  if (partner.active && enemies.length > 0 && (now - lastFire) >= partnerNeglectThresholdMs) {
+    partnerNeglectTimerMs += dt * 1000;
+    if (partnerNeglectTimerMs >= partnerNeglectIntervalMs) {
+      partnerNeglectTimerMs = 0;
+      adjustPartnerRelationship(-partnerNeglectRelationshipPenalty);
+      showPartnerSpeechBubble('仕事してください！', '#ff8a65');
+    }
+  } else {
+    partnerNeglectTimerMs = 0;
+  }
+
   // 敵をプレイヤーへ向けて移動する。当たり判定の半径は固定
   for (const e of enemies) {
     const dx = player.x - e.x;
@@ -2503,6 +2534,7 @@ function update() {
           const damageBonus = 1 + skillLevel * 0.08;
           const actualDmg = Math.max(1, Math.round(dmg * damageBonus));
           en.hp = (en.hp || 1) - actualDmg;
+        if (b.owner === 'partner') en.hitByPartner = true;
         bullets.splice(i, 1);
         if (en.hp <= 0) {
             // 強い敵ほど多くのスコアを獲得する
@@ -2511,6 +2543,13 @@ function update() {
             // 敵の種類に応じて経験値を獲得する
             exp += en.type * 5 * specialSkillEffects.expGainMultiplier;
             updateSkillEffects();
+          // 同僚が当てていた敵に自機がとどめを刺すと、お礼を言ってくれる
+          if (b.owner === 'player' && en.hitByPartner && partner.active) {
+            showPartnerSpeechBubble('ありがとうございます！', '#69f0ae');
+            if (Math.random() < partnerThanksRelationshipChance) {
+              adjustPartnerRelationship(1);
+            }
+          }
           enemies.splice(j, 1);
           weeklyKills++;
           weeklyScoreGained += pts;
@@ -3152,6 +3191,48 @@ function draw() {
       ctx.fillText('🧑', partner.x, partner.y);
     }
     ctx.restore();
+
+    // 同僚の吹き出し（一言セリフ）
+    if (partnerSpeechBubble) {
+      ctx.save();
+      ctx.font = 'bold 14px sans-serif';
+      const paddingX = 10, paddingY = 8;
+      const textWidth = ctx.measureText(partnerSpeechBubble.text).width;
+      const bubbleW = textWidth + paddingX * 2;
+      const bubbleH = 16 + paddingY * 2;
+      const bubbleX = partner.x - bubbleW / 2;
+      const partnerImgSize = partner.radius * 4.8;
+      const bubbleY = partner.y - partnerImgSize / 2 - bubbleH - 14;
+      // 表示直後と消える直前だけフェードさせる
+      ctx.globalAlpha = Math.max(0, Math.min(1,
+        Math.min(partnerSpeechBubbleDurationMs - partnerSpeechBubble.timer, partnerSpeechBubble.timer) / 300));
+      ctx.fillStyle = 'rgba(20, 24, 32, 0.9)';
+      ctx.strokeStyle = partnerSpeechBubble.color;
+      ctx.lineWidth = 2;
+      if (ctx.roundRect) {
+        ctx.beginPath();
+        ctx.roundRect(bubbleX, bubbleY, bubbleW, bubbleH, 8);
+        ctx.fill();
+        ctx.stroke();
+      } else {
+        ctx.fillRect(bubbleX, bubbleY, bubbleW, bubbleH);
+        ctx.strokeRect(bubbleX, bubbleY, bubbleW, bubbleH);
+      }
+      // 同僚を指す吹き出しの尻尾
+      ctx.beginPath();
+      ctx.moveTo(partner.x - 6, bubbleY + bubbleH);
+      ctx.lineTo(partner.x + 6, bubbleY + bubbleH);
+      ctx.lineTo(partner.x, bubbleY + bubbleH + 10);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(20, 24, 32, 0.9)';
+      ctx.fill();
+
+      ctx.fillStyle = partnerSpeechBubble.color;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(partnerSpeechBubble.text, partner.x, bubbleY + bubbleH / 2);
+      ctx.restore();
+    }
   }
 
   // プレイヤーが発射した弾を描く
