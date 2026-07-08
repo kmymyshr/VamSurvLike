@@ -153,6 +153,21 @@ function purchaseDreamMemoryUpgrade(id) {
   saveDreamMemorySave();
 }
 
+// 「思い直す」：これまで各強化に費やしたポイントを全額払い戻し、レベルを0に戻す
+function respecDreamMemoryUpgrades() {
+  let refund = 0;
+  dreamMemoryUpgradeDefs.forEach(def => {
+    const level = dreamMemorySave.upgrades[def.id];
+    for (let lv = 0; lv < level; lv++) {
+      refund += getDreamMemoryUpgradeCost(def, lv);
+    }
+    dreamMemorySave.upgrades[def.id] = 0;
+  });
+  if (refund <= 0) return;
+  dreamMemorySave.points += refund;
+  saveDreamMemorySave();
+}
+
 const player = {
   x: 400,
   y: 300,
@@ -5433,6 +5448,10 @@ function draw() {
     ctx.font = 'bold 15px sans-serif';
     ctx.fillText(`保有ポイント: ${dreamMemorySave.points}`, canvas.width / 2, 56);
     ctx.textAlign = 'left';
+
+    // これまで費やしたポイントを全額払い戻し、レベルを0に戻して振り分け直せるボタン
+    drawUiButton(canvas.width - 138, 12, 126, 30, '思い直す', respecDreamMemoryUpgrades,
+      { fillStyle: 'rgba(84, 30, 30, 0.55)', strokeStyle: '#ef9a9a', font: 'bold 13px sans-serif' });
 
     // 項目数が多いため、2列に分けて見やすくする
     const cols = 2;
