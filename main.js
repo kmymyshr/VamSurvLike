@@ -4723,6 +4723,73 @@ function applyScreenDistortion(amplitude) {
   }
 }
 
+// ===== 寿命が50を切ってから0に近づくにつれて強くなる、画面端のひび割れ・暗転エフェクト =====
+const lifespanCrackWarningThreshold = 50; // これ以下になると効果が始まる
+// ひび割れの形はあらかじめ決めておき、寿命が減るにつれて本数・長さだけが伸びていくようにする
+const lifespanCracks = (() => {
+  const cracks = [];
+  const count = 14;
+  for (let i = 0; i < count; i++) {
+    const edge = i % 4; // 0:上 1:右 2:下 3:左から伸びる
+    let x, y, dirX, dirY;
+    if (edge === 0) { x = Math.random() * canvas.width; y = 0; dirX = (Math.random() - 0.5) * 0.6; dirY = 1; }
+    else if (edge === 1) { x = canvas.width; y = Math.random() * canvas.height; dirX = -1; dirY = (Math.random() - 0.5) * 0.6; }
+    else if (edge === 2) { x = Math.random() * canvas.width; y = canvas.height; dirX = (Math.random() - 0.5) * 0.6; dirY = -1; }
+    else { x = 0; y = Math.random() * canvas.height; dirX = 1; dirY = (Math.random() - 0.5) * 0.6; }
+    // ガラスが割れたようなジグザグの折れ線を、あらかじめセグメント列として生成しておく
+    const segments = [];
+    let cx = x, cy = y;
+    const segCount = 5 + Math.floor(Math.random() * 4);
+    const segLength = 20 + Math.random() * 14;
+    const baseAngle = Math.atan2(dirY, dirX);
+    for (let s = 0; s < segCount; s++) {
+      const angle = baseAngle + (Math.random() - 0.5) * 1.1;
+      cx += Math.cos(angle) * segLength;
+      cy += Math.sin(angle) * segLength;
+      segments.push({ x: cx, y: cy });
+    }
+    cracks.push({ x, y, segments });
+  }
+  return cracks;
+})();
+
+function drawLifespanCrackEffect() {
+  if (lifespan >= lifespanCrackWarningThreshold) return;
+  const ratio = Math.max(0, Math.min(1, 1 - lifespan / lifespanCrackWarningThreshold));
+  if (ratio <= 0) return;
+
+  ctx.save();
+  // 画面端からじわじわ暗くなっていくビネット
+  const vignette = ctx.createRadialGradient(
+    canvas.width / 2, canvas.height / 2, canvas.height * 0.25,
+    canvas.width / 2, canvas.height / 2, canvas.height * 0.75
+  );
+  vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+  vignette.addColorStop(1, `rgba(0, 0, 0, ${ratio * 0.65})`);
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // 寿命が減るほど、ひびの本数が増え、既存のひびもさらに伸びていく
+  const totalProgress = ratio * lifespanCracks.length;
+  const visibleCount = Math.ceil(totalProgress);
+  ctx.strokeStyle = `rgba(15, 15, 20, ${0.55 + ratio * 0.4})`;
+  ctx.lineWidth = 1.5;
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
+  ctx.shadowBlur = 3;
+  for (let i = 0; i < visibleCount; i++) {
+    const crack = lifespanCracks[i];
+    const growth = Math.max(0, Math.min(1, totalProgress - i));
+    const segCount = Math.max(1, Math.round(crack.segments.length * growth));
+    ctx.beginPath();
+    ctx.moveTo(crack.x, crack.y);
+    for (let s = 0; s < segCount; s++) {
+      ctx.lineTo(crack.segments[s].x, crack.segments[s].y);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 // 力尽きた演出（寿命切れ／SAN切れ）中の専用画面。
 // 寿命切れ：images/self/dead の画像が5秒ほどかけて真っ白になる。
 // SAN切れ：images/self/SAN0 の画像が5秒ほどかけて歪みながら消滅する。
@@ -6104,6 +6171,10 @@ function draw() {
   // 通常時、SANが低いときは文字が読める程度の軽い歪みをかける
   if (!gameOver && !gameClear && san <= sanDistortionThreshold) {
     applyScreenDistortion(sanLowDistortionAmplitude);
+  }
+  // 寿命が50を切ってから0に近づくにつれて、画面端が暗くひび割れていく
+  if (!gameOver && !gameClear) {
+    drawLifespanCrackEffect();
   }
 
   // セットアップ画面の切り替え演出：選択直後、画面全体を暗転させて次のページへ切り替える
