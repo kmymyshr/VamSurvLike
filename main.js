@@ -251,6 +251,191 @@ const weeklyFailScorePenaltyRatio = 0.25; // Scoreの25%を失う
 const weeklyFailSanPenaltyRatio = 0.35; // maxSanの35%ぶんSANを失う
 const restEvaluationPenaltyRatio = 0.10; // 休日出勤を断った場合、さらにScoreの10%を失う
 
+// ===== 時刻イベント（定時報告・昼食・クイズ） =====
+function getRandomEventPosition(radius = 24) {
+  const margin = radius + 24;
+  return {
+    x: margin + Math.random() * (canvas.width - margin * 2),
+    // HUDを避け、プレイ領域の中央より下へ配置する
+    y: 275 + Math.random() * (canvas.height - 275 - margin)
+  };
+}
+
+// --- 定時報告：3日ごとの16時に現れる、移動しない高耐久ターゲット ---
+const scheduledReportIntervalDays = 3;
+const scheduledReportHour = 16;
+const scheduledReportBaseHp = 70;
+const scheduledReportRadius = 38;
+let scheduledReport = null;
+
+function spawnScheduledReport() {
+  if (scheduledReport || dayNumber % scheduledReportIntervalDays !== 0) return;
+  const position = getRandomEventPosition(scheduledReportRadius);
+  const maxHp = Math.ceil(scheduledReportBaseHp * getEnemyDifficultyMultiplier());
+  scheduledReport = { ...position, radius: scheduledReportRadius, hp: maxHp, maxHp };
+  showMessage('16時：定時報告が発生！ 終業までに片付けよう', 3500, '#ffca28', '23px sans-serif');
+}
+
+function defeatScheduledReport() {
+  if (!scheduledReport) return;
+  const reward = Math.ceil(35 * specialSkillEffects.scoreGainMultiplier);
+  score += reward;
+  weeklyScoreGained += reward;
+  scheduledReport = null;
+  checkEarlyQuotaAchievement();
+  showMessage(`定時報告を完了！ Score +${reward}`, 2500, '#69f0ae', '24px sans-serif');
+}
+
+function failScheduledReport() {
+  if (!scheduledReport) return;
+  scheduledReport = null;
+  score = Math.floor(score / 2);
+  showMessage('定時報告を完了できなかった… Scoreが半分になった', 4000, '#ff5252', '23px sans-serif');
+}
+
+// --- 昼食：12時に順番付きで出現する食べ物 ---
+const lunchHour = 12;
+const lunchFoodCount = 4;
+const lunchSpawnIntervalMs = 550;
+const lunchFoodRadius = 20;
+const lunchFoodIcons = ['🍙', '🥪', '🍎', '🥗', '🍜', '🍌', '🍱', '🥛'];
+const lunchIncompleteLifespanPenalty = 5;
+let lunchState = null;
+
+function startLunchEvent() {
+  const choices = [...lunchFoodIcons].sort(() => Math.random() - 0.5).slice(0, lunchFoodCount);
+  lunchState = {
+    sequence: choices,
+    items: [],
+    nextSpawnIndex: 0,
+    spawnTimerMs: 0,
+    collectedCount: 0,
+    orderMistake: false
+  };
+  showMessage('12時：昼食！ 出た順番どおりに食べよう', 3200, '#ffcc80', '23px sans-serif');
+}
+
+function collectLunchItem(itemIndex) {
+  if (!lunchState) return;
+  const item = lunchState.items[itemIndex];
+  if (!item) return;
+  if (item.sequenceIndex !== lunchState.collectedCount) lunchState.orderMistake = true;
+  lunchState.items.splice(itemIndex, 1);
+  lunchState.collectedCount++;
+
+  // 一品ごとの小回復
+  san = Math.min(maxSan, san + 2);
+  lifespan = Math.min(maxLifespan, lifespan + 0.5);
+  fatigue = Math.max(0, fatigue - 3);
+
+  if (lunchState.collectedCount >= lunchFoodCount) {
+    const bonusMultiplier = lunchState.orderMistake ? 0.5 : 1;
+    san = Math.min(maxSan, san + 10 * bonusMultiplier);
+    lifespan = Math.min(maxLifespan, lifespan + 4 * bonusMultiplier);
+    fatigue = Math.max(0, fatigue - 15 * bonusMultiplier);
+    showMessage(
+      lunchState.orderMistake ? '昼食完了。順番違いでボーナス半減' : '昼食を順番どおり完食！ フルボーナス',
+      3000,
+      lunchState.orderMistake ? '#ffb74d' : '#69f0ae',
+      '22px sans-serif'
+    );
+    lunchState = null;
+  }
+}
+
+function finishLunchAtDayEnd() {
+  if (!lunchState) return;
+  if (lunchState.collectedCount <= lunchFoodCount / 2) {
+    lifespan = Math.max(0, lifespan - lunchIncompleteLifespanPenalty);
+    showMessage(`ちゃんと食事を取れなかった… 寿命 -${lunchIncompleteLifespanPenalty}`, 3500, '#ef9a9a', '22px sans-serif');
+    checkVitalsGameOver();
+  }
+  lunchState = null;
+}
+
+// --- クイズ：平日の10時・15時に抽選し、週2回まで発生 ---
+const quizHours = [10, 15];
+const quizChancePerOpportunity = 0.2;
+const maxWeeklyQuizCount = 2;
+const quizAnswerRadius = 23;
+let weeklyQuizCount = 0;
+let quizState = null;
+let internalItKnowledge = 0;
+let internalCommunicationSkill = 0;
+const quizQuestions = [
+  { category: 'it', text: 'HTTPSが主に保護するものは？', choices: ['通信内容', '画面サイズ', 'CPU温度'], correct: 0 },
+  { category: 'it', text: 'バックアップの目的は？', choices: ['データ復旧', '回線高速化', '文字拡大'], correct: 0 },
+  { category: 'it', text: '強いパスワードに適するものは？', choices: ['長く複雑', '誕生日', 'password'], correct: 0 },
+  { category: 'communication', text: '認識違いを減らす行動は？', choices: ['復唱・確認', '推測で進行', '黙って保留'], correct: 0 },
+  { category: 'communication', text: '問題報告で最初に伝えるものは？', choices: ['結論と影響', '雑談', '言い訳'], correct: 0 },
+  { category: 'communication', text: '意見が対立したとき有効なのは？', choices: ['目的を確認', '無視する', '声量で勝つ'], correct: 0 }
+];
+
+function startQuizEvent() {
+  if (quizState || weeklyQuizCount >= maxWeeklyQuizCount) return;
+  const source = quizQuestions[Math.floor(Math.random() * quizQuestions.length)];
+  // 正解位置が固定化しないよう選択肢を並べ替える
+  const shuffled = source.choices.map((text, index) => ({ text, correct: index === source.correct }))
+    .sort(() => Math.random() - 0.5);
+  const answerTokens = [];
+  shuffled.forEach((choice, index) => {
+    let position;
+    let attempts = 0;
+    do {
+      position = getRandomEventPosition(quizAnswerRadius);
+      attempts++;
+    } while (attempts < 20 && answerTokens.some(token =>
+      Math.hypot(token.x - position.x, token.y - position.y) < 90));
+    answerTokens.push({
+      ...position,
+      radius: quizAnswerRadius,
+      number: index + 1,
+      correct: choice.correct
+    });
+  });
+  quizState = {
+    category: source.category,
+    text: source.text,
+    choices: shuffled.map(choice => choice.text),
+    answerTokens
+  };
+  weeklyQuizCount++;
+  showMessage('突発クイズ！ マップ上の番号を取って回答', 2800, '#90caf9', '22px sans-serif');
+}
+
+function answerQuiz(answerIndex) {
+  if (!quizState) return;
+  const answer = quizState.answerTokens[answerIndex];
+  if (!answer) return;
+  if (answer.correct) {
+    if (quizState.category === 'it') internalItKnowledge++;
+    else internalCommunicationSkill++;
+    showMessage('クイズ正解！ 内部能力が上昇した', 2800, '#69f0ae', '23px sans-serif');
+  } else {
+    showMessage('クイズ不正解…', 2200, '#ef9a9a', '22px sans-serif');
+  }
+  quizState = null;
+}
+
+function processTimedHourEvents(previousHour, newHour) {
+  const lastEventHour = Math.min(newHour, dayEndHour);
+  for (let hour = previousHour + 1; hour <= lastEventHour; hour++) {
+    if (hour === lunchHour) startLunchEvent();
+    if (hour === scheduledReportHour) spawnScheduledReport();
+    const weekday = currentDate.getDay();
+    const isWeekday = weekday >= 1 && weekday <= 5 && !isHoliday(currentDate);
+    if (isWeekday && quizHours.includes(hour) && weeklyQuizCount < maxWeeklyQuizCount && !quizState &&
+        Math.random() < quizChancePerOpportunity) {
+      startQuizEvent();
+    }
+  }
+}
+
+function resolveTimedSystemsAtDayEnd() {
+  failScheduledReport();
+  finishLunchAtDayEnd();
+  quizState = null;
+}
 // ===== SAN（精神力）システム =====
 const maxSan = 100;
 let san = maxSan;
@@ -646,6 +831,7 @@ function resetWeeklyQuotaForNewWeek() {
   weeklyKills = 0;
   weeklyScoreGained = 0;
   weeklyQuotaAchievedEarly = false;
+  weeklyQuizCount = 0;
 }
 
 // 週の途中でノルマを達成したかどうかをキル時にチェックする
@@ -1520,10 +1706,14 @@ function update() {
   // ゲーム内時刻を進める
   if (now - lastHourTime >= hourMs) {
     const passed = Math.floor((now - lastHourTime) / hourMs);
+    const previousHour = currentHour;
     lastHourTime += passed * hourMs;
     currentHour += passed;
+    processTimedHourEvents(previousHour, currentHour);
     // 終業時刻になったら一日を終了する
     if (currentHour >= dayEndHour) {
+      resolveTimedSystemsAtDayEnd();
+      if (gameOver) return;
       // 昇進判定は週末（および月末＝クリア判定の直前）にのみ行う
       if (isWeekEndDay(currentDate) || isLastDayOfMonth(currentDate)) {
         rankUpAtWeekEnd();
@@ -1587,6 +1777,46 @@ function update() {
     chocolateSpawnTimerMs -= dt * 1000;
     if (chocolateSpawnTimerMs <= 0) {
       spawnChocolate();
+    }
+  }
+
+  // 昼食を一品ずつ出現させ、接触した料理を取得する
+  if (lunchState) {
+    lunchState.spawnTimerMs -= dt * 1000;
+    if (lunchState.nextSpawnIndex < lunchFoodCount && lunchState.spawnTimerMs <= 0) {
+      let position;
+      let attempts = 0;
+      do {
+        position = getRandomEventPosition(lunchFoodRadius);
+        attempts++;
+      } while (attempts < 20 && lunchState.items.some(item =>
+        Math.hypot(item.x - position.x, item.y - position.y) < 65));
+      lunchState.items.push({
+        ...position,
+        radius: lunchFoodRadius,
+        icon: lunchState.sequence[lunchState.nextSpawnIndex],
+        sequenceIndex: lunchState.nextSpawnIndex
+      });
+      lunchState.nextSpawnIndex++;
+      lunchState.spawnTimerMs = lunchSpawnIntervalMs;
+    }
+    for (let i = lunchState.items.length - 1; i >= 0; i--) {
+      const item = lunchState.items[i];
+      if (Math.hypot(player.x - item.x, player.y - item.y) <= player.radius + item.radius) {
+        collectLunchItem(i);
+        if (!lunchState) break;
+      }
+    }
+  }
+
+  // マップ上の番号アイコンへ触れるとクイズへ回答する
+  if (quizState) {
+    for (let i = quizState.answerTokens.length - 1; i >= 0; i--) {
+      const token = quizState.answerTokens[i];
+      if (Math.hypot(player.x - token.x, player.y - token.y) <= player.radius + token.radius) {
+        answerQuiz(i);
+        break;
+      }
     }
   }
 
@@ -1797,6 +2027,17 @@ function update() {
       if (gameOver) return;
       continue;
     }
+    // 固定ターゲット「定時報告」への命中判定
+    if (scheduledReport &&
+        Math.hypot(b.x - scheduledReport.x, b.y - scheduledReport.y) <= b.radius + scheduledReport.radius) {
+      const damageBonus = 1 + skillLevel * 0.08;
+      const actualDmg = Math.max(1, Math.round((b.damage || 1) * damageBonus));
+      scheduledReport.hp -= actualDmg;
+      bullets.splice(i, 1);
+      if (scheduledReport.hp <= 0) defeatScheduledReport();
+      continue;
+    }
+
     // 弾と各敵の円形当たり判定が重なっているか調べる
     for (let j = enemies.length - 1; j >= 0; j--) {
       const en = enemies[j];
@@ -2302,8 +2543,86 @@ function draw() {
   }
   ctx.textAlign = 'left';
 
-  // 左上に自分と同僚のプロフィールを同じ高さで並べる。
-  drawHudProfilePanel(12, 12, 180, 196, '自分', selectedPlayerIcon, '#4dd0e1', [
+  // 定時報告（固定ターゲット）
+  if (scheduledReport) {
+    const reportHpRatio = Math.max(0, scheduledReport.hp / scheduledReport.maxHp);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(scheduledReport.x, scheduledReport.y, scheduledReport.radius, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 193, 7, 0.22)';
+    ctx.fill();
+    ctx.strokeStyle = '#ffca28';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.font = '36px "Segoe UI Emoji", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('📊', scheduledReport.x, scheduledReport.y - 5);
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillStyle = '#fff59d';
+    ctx.fillText('定時報告', scheduledReport.x, scheduledReport.y + 20);
+    const barWidth = 82;
+    ctx.fillStyle = '#424242';
+    ctx.fillRect(scheduledReport.x - barWidth / 2, scheduledReport.y + 43, barWidth, 8);
+    ctx.fillStyle = reportHpRatio < 0.3 ? '#ef5350' : '#ffca28';
+    ctx.fillRect(scheduledReport.x - barWidth / 2, scheduledReport.y + 43, barWidth * reportHpRatio, 8);
+    ctx.restore();
+  }
+
+  // 昼食として出現中の食べ物
+  if (lunchState) {
+    for (const item of lunchState.items) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(item.x, item.y, item.radius, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255, 204, 128, 0.25)';
+      ctx.fill();
+      ctx.font = '30px "Segoe UI Emoji", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(item.icon, item.x, item.y);
+      ctx.restore();
+    }
+  }
+
+  // クイズ回答用の番号アイコンと設問
+  if (quizState) {
+    const numberIcons = ['1️⃣', '2️⃣', '3️⃣'];
+    for (const token of quizState.answerTokens) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(token.x, token.y, token.radius, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(66, 165, 245, 0.3)';
+      ctx.fill();
+      ctx.strokeStyle = '#90caf9';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.font = '31px "Segoe UI Emoji", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(numberIcons[token.number - 1], token.x, token.y);
+      ctx.restore();
+    }
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(8, 18, 35, 0.86)';
+    ctx.fillRect(400, 45, 388, 112);
+    ctx.strokeStyle = '#64b5f6';
+    ctx.strokeRect(400, 45, 388, 112);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = '#bbdefb';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText(`QUIZ: ${quizState.text}`, 412, 66);
+    ctx.font = '12px sans-serif';
+    ctx.fillStyle = 'white';
+    quizState.choices.forEach((choice, index) => {
+      ctx.fillText(`${index + 1}. ${choice}`, 416, 88 + index * 22);
+    });
+    ctx.restore();
+  }
+
+  // 左上に自分と同僚のプロフィールを同じ高さで並べる。  drawHudProfilePanel(12, 12, 180, 196, '自分', selectedPlayerIcon, '#4dd0e1', [
     { text: `SAN: ${Math.floor(san)} / ${maxSan}` },
     { text: `寿命: ${Math.ceil(lifespan)} / ${maxLifespan}` },
     { text: `脳疲労: ${Math.floor(fatigue)} / ${maxFatigue}` },
