@@ -1379,7 +1379,12 @@ function updatePartner(dt) {
     for (const en of enemies) {
       const d = Math.hypot(en.x - partner.x, en.y - partner.y);
       if (d <= en.radius + partner.radius) {
-        damagePartnerSan(Math.ceil((en.type || 1) * partnerContactSanMultiplier * getEnemyDifficultyMultiplier()));
+        // 「心の壁」が残っていれば、SANダメージを無効化する
+        if (partner.barrierCharges > 0) {
+          partner.barrierCharges--;
+        } else {
+          damagePartnerSan(Math.ceil((en.type || 1) * partnerContactSanMultiplier * getEnemyDifficultyMultiplier()));
+        }
         partner.invincible = true;
         partner.invincibleTimer = partnerInvincibleDuration;
         break;
@@ -2775,7 +2780,7 @@ function update() {
       playerBarrierCharges += heartWallBarrierCharges;
       if (partner.active) partner.barrierCharges += heartWallBarrierCharges;
       showMessage(
-        `心の壁を手に入れた！ お互いの誤射を${heartWallBarrierCharges}回まで防ぐバリアを展開`,
+        `心の壁を手に入れた！ 誤射・敵の接触ダメージを${heartWallBarrierCharges}回まで防ぐバリアを展開`,
         2200, '#b39ddb'
       );
       heartWall = null;
@@ -3134,6 +3139,7 @@ function update() {
     const ed = Math.hypot(en.x - player.x, en.y - player.y);
     if (ed > en.radius + player.radius) {
       en.touching = false;
+      en.barrierBlockedContact = false;
       continue;
     }
     if (invincible) continue;
@@ -3143,12 +3149,19 @@ function update() {
     const sanMultiplier = Math.max(0.5, 1 - skillLevel * 0.04);
     let defeated = false;
     if (!en.touching) {
-      // 接触した瞬間：SANダメージを与え、無敵時間を開始する
-      const sdamage = Math.ceil(
-        (en.type || 1) * contactSanMultiplier * sanMultiplier *
-        specialSkillEffects.sanDamageMultiplier * getEnemyDifficultyMultiplier()
-      );
-      damageSan(sdamage);
+      // 「心の壁」が残っていれば、この接触の間ずっとSANダメージを無効化する
+      if (playerBarrierCharges > 0) {
+        playerBarrierCharges--;
+        en.barrierBlockedContact = true;
+      } else {
+        en.barrierBlockedContact = false;
+        // 接触した瞬間：SANダメージを与え、無敵時間を開始する
+        const sdamage = Math.ceil(
+          (en.type || 1) * contactSanMultiplier * sanMultiplier *
+          specialSkillEffects.sanDamageMultiplier * getEnemyDifficultyMultiplier()
+        );
+        damageSan(sdamage);
+      }
       en.touching = true;
       invincible = true;
       invincibleTimer = invincibleDuration;
@@ -3157,8 +3170,8 @@ function update() {
       const contactDamage = Math.max(1, Math.round(baseBulletDamage * contactConditionRatio * (1 + skillLevel * 0.08)));
       en.hp = (en.hp || 1) - contactDamage;
       if (en.hp <= 0) defeated = true;
-    } else {
-      // 接触し続けている間は、少しずつSANを減らす
+    } else if (!en.barrierBlockedContact) {
+      // 接触し続けている間は、少しずつSANを減らす（バリアが有効な接触では発生しない）
       const sustainedDrain = Math.max(
         1,
         (en.type || 1) * contactSanMultiplier * sanMultiplier * 0.18 * dt *
