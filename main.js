@@ -520,8 +520,10 @@ function answerQuiz(answerIndex) {
     else internalCommunicationSkill++;
     showAcknowledgementNotice('クイズ正解！ 新しい知識を得た', '#69f0ae',
       quizState.category === 'it' ? 'IT知識が上昇しました。' : 'コミュニケーション知識が上昇しました。');
+    if (partner.active) showRandomPartnerSpeechBubble(partnerQuizCorrectLines, '#69f0ae');
   } else {
     showMessage('クイズ不正解…', 2200, '#ef9a9a', '22px sans-serif');
+    if (partner.active) showRandomPartnerSpeechBubble(partnerQuizWrongLines, '#ffb74d');
   }
   quizState = null;
 }
@@ -720,6 +722,25 @@ const partnerThanksLines = [
   'ナイスです！',
   'さすがです！',
   '頼りにしてます！'
+];
+
+// ===== クイズの正解・不正解に対する同僚のコメント =====
+// TODO: 将来的には選択した同僚アイコンごとの「性格」設定によって、レパートリーを出し分ける
+const partnerQuizWrongLines = [
+  'ドンマイです！次いきましょう！',
+  'え、そこ間違えちゃいますか…',
+  '大丈夫、次は分かりますよ！',
+  'ちょっと恥ずかしいですね、それ',
+  '練習あるのみです！',
+  'まあ、そういう日もあります'
+];
+const partnerQuizCorrectLines = [
+  'さすがです！',
+  'やっぱり凄いですね！',
+  'まあ、これくらい常識ですよね',
+  'よくできました！',
+  'その調子です！',
+  'いや、それくらい自分でも分かってましたよ'
 ];
 
 const partner = {
