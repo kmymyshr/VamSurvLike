@@ -275,9 +275,18 @@ function applyFatigueGain(amount) {
   fatigue = Math.min(maxFatigue, fatigue + amount);
   if (fatigue >= maxFatigue) {
     fatigue = maxFatigue;
-    stunned = true;
-    stunTimer = stunDuration * specialSkillEffects.stunDurationMultiplier;
-    if (partner.active) showRandomPartnerSpeechBubble(partnerStunWorryLines, '#90caf9', partnerStunWorryStressedLines);
+    // 既にstun中、またはコーヒーのstun回避が発動中なら、上限到達の処理（ペナルティ含む）を再度行わない
+    if (stunned || coffeeStunImmunityTimerMs > 0) return;
+    // コーヒーの「stun回避」が残っていれば、行動不能にせず通常通り動けるようにする（その日のうち1杯につき1回）
+    if (coffeeStunImmunityCharges > 0) {
+      coffeeStunImmunityCharges--;
+      coffeeStunImmunityTimerMs = stunDuration * specialSkillEffects.stunDurationMultiplier;
+      showMessage('コーヒーの効果でstunを回避した！', 2200, '#a1887f');
+    } else {
+      stunned = true;
+      stunTimer = stunDuration * specialSkillEffects.stunDurationMultiplier;
+      if (partner.active) showRandomPartnerSpeechBubble(partnerStunWorryLines, '#90caf9', partnerStunWorryStressedLines);
+    }
     // 疲労が限界に達したら行動不能にし、SANも減らす
     const sanMultiplier = Math.max(0.5, 1 - skillLevel * 0.04);
     damageSan(Math.ceil(
@@ -360,12 +369,20 @@ const baseBulletDamage = 2; // 疲労がないときの基本攻撃力
 const chocolateLifetimeMs = 10000; // 出現してから消えるまでの時間（10秒）
 const chocolateBlinkMs = 3000; // 消える3秒前から点滅する
 const chocolateRecoveryRatio = 0.3; // 最大値の30%ぶん脳疲労を減らす
-const chocolateSanRecovery = 8; // 少しSANも回復する（その代わり寿命を消費する）
-const chocolateLifespanCost = 3;
+const chocolateSanRecovery = 8; // 少しSANも回復する
 const chocolateRadius = 22;
 const chocolateFallGravityPerSec2 = 540; // 落下中、1秒あたりに増える落下速度（従来の60%）
+// 一日のうち何個目に食べたかで寿命への影響が変わる（食べ過ぎるとマイナスになっていく）。翌日はまた1個目から
+const chocolateLifespanEffectByCount = [2, 1, 0, -2, -5];
 let chocolate = null;
 let chocolateSpawnTimerMs = getRandomChocolateSpawnDelay();
+let chocolateDailyCount = 0; // 本日すでに食べた個数。日付が変わるとリセットする
+
+// 本日何個目に食べたか（1始まり）に応じた寿命への影響量を返す
+function getChocolateLifespanEffect(countToday) {
+  const index = Math.min(countToday, chocolateLifespanEffectByCount.length) - 1;
+  return chocolateLifespanEffectByCount[index];
+}
 
 // 次のチョコレートは8～15秒後に出現する
 function getRandomChocolateSpawnDelay() {
@@ -455,6 +472,55 @@ const coffeeCrossDrinkLifespanCost = 5; // 栄養ドリンクの効果中にコ�
 let coffee = null;
 let coffeeSpawnTimerMs = getRandomCoffeeSpawnDelay();
 let coffeeBuffTimerMs = 0; // 残り時間。0より大きい間は移動・発射が強化される（効果切れによる反動はない）
+let coffeeDailyCount = 0; // 本日すでに飲んだコーヒーの本数。日付が変わるとリセットする
+let coffeeStunImmunityCharges = 0; // コーヒー1杯につき1回分。脳疲労が100になってもstunを回避できる（その日のうちのみ）
+let coffeeStunImmunityTimerMs = 0; // stunを回避している間、通常通り行動できる残り時間
+
+// ===== カフェイン（栄養ドリンク・コーヒー）過剰摂取イベント =====
+const caffeineOverdoseThreshold = 5; // 栄養ドリンク・コーヒーの合計本数がこれを超えると、倒れる可能性が生じる
+const caffeineOverdoseBaseChance = 0.2; // 超過1本目の基本確率
+const caffeineOverdoseChancePerExtra = 0.05; // 超過本数が増えるごとに加算する確率（最大50%まで）
+const caffeineOverdoseMaxChance = 0.5;
+let pendingCaffeineCollapse = false; // 翌日の開始時に「倒れる」イベントが発生するか
+
+// 栄養ドリンク・コーヒーを飲むたびに呼び出す。本日の合計本数が閾値を超えていたら、
+// 超過量に応じた確率で「翌日の開始時に倒れる」イベントを予約する
+function checkCaffeineOverdose() {
+  if (pendingCaffeineCollapse) return;
+  const totalToday = energyDrinkDailyCount + coffeeDailyCount;
+  if (totalToday <= caffeineOverdoseThreshold) return;
+  const extra = totalToday - caffeineOverdoseThreshold;
+  const chance = Math.min(caffeineOverdoseMaxChance,
+    caffeineOverdoseBaseChance + (extra - 1) * caffeineOverdoseChancePerExtra);
+  if (Math.random() < chance) {
+    pendingCaffeineCollapse = true;
+  }
+}
+
+// 「カフェインの摂り過ぎで倒れる」イベント：寿命・SAN・同僚のSANを半分にし、丸一日休みにする
+function triggerCaffeineCollapse() {
+  pendingCaffeineCollapse = false;
+  lifespan = Math.max(0, Math.floor(lifespan / 2));
+  san = Math.max(0, Math.floor(san / 2));
+  if (partner.active) partner.san = Math.max(0, Math.floor(partner.san / 2));
+  checkVitalsGameOver();
+  showAcknowledgementNotice(
+    'カフェインの摂り過ぎで倒れてしまった…',
+    '#ff8a65',
+    '丸一日、休むことになった。寿命・SANが半分に、同僚のSANも半分になってしまった。',
+    () => { if (!gameOver && !deathSequence) skipCollapseRestDay(); }
+  );
+}
+
+// 倒れて休んだ分、さらにもう1日だけ日付を進める（この日は稼働日として扱わない）
+function skipCollapseRestDay() {
+  currentDate.setDate(currentDate.getDate() + 1);
+  dayNumber++;
+  if (currentDate.getDay() === 1) {
+    startNewWeek();
+  }
+  lastUpdate = Date.now();
+}
 
 // コーヒーによる移動速度の倍率
 function getCoffeeMoveSpeedMultiplier() {
@@ -1166,6 +1232,7 @@ const partner = {
   fatigueResting: false, // 脳疲労が100に達し、50まで下がるまで攻撃を控えている状態
   friendlyFireInvincibleTimer: 0,
   barrierCharges: 0, // 「心の壁」の効果。残っている間は自機の誤射を防ぐ
+  chocolateDailyCount: 0, // 本日すでに食べたチョコレートの個数。日付が変わるとリセットする
   relationship: partnerRelationshipInitial, // 非表示。0～100で、低いほど自分へ反撃しやすい
   // 賢さ（0〜1、初期はランダム）：高いほど的が正確で、疲労時に無駄撃ちを避けやすい
   intelligence: 0.5,
@@ -1201,6 +1268,7 @@ function initPartner() {
   partner.fatigueResting = false;
   partner.friendlyFireInvincibleTimer = 0;
   partner.barrierCharges = 0;
+  partner.chocolateDailyCount = 0;
   partner.relationship = partnerRelationshipInitial;
   partner.intelligence = Math.random();
   partner.recklessness = Math.random();
@@ -1353,9 +1421,12 @@ function updatePartner(dt) {
       const reducedFatigue = Math.min(partner.fatigue, recoveryAmount);
       partner.fatigue -= reducedFatigue;
       partner.san = Math.min(maxSan, partner.san + chocolateSanRecovery);
-      partner.lifespan = Math.max(0, partner.lifespan - chocolateLifespanCost);
+      partner.chocolateDailyCount++;
+      const partnerLifespanEffect = getChocolateLifespanEffect(partner.chocolateDailyCount);
+      partner.lifespan = Math.max(0, Math.min(maxLifespan, partner.lifespan + partnerLifespanEffect));
       showMessage(
-        `同僚がチョコレートを食べた！ 脳疲労 -${Math.ceil(reducedFatigue)} / SAN +${chocolateSanRecovery} / 寿命 -${chocolateLifespanCost}`,
+        `同僚がチョコレートを食べた！ 脳疲労 -${Math.ceil(reducedFatigue)} / SAN +${chocolateSanRecovery} / 寿命 ${partnerLifespanEffect >= 0 ? '+' : ''}${partnerLifespanEffect}` +
+        `（本日${partner.chocolateDailyCount}個目）`,
         1800, '#ffcc80'
       );
       chocolate = null;
@@ -2022,10 +2093,15 @@ function autoAdvanceDay() {
   dayNumber++;
   synergyUsesToday = 0;
   energyDrinkDailyCount = 0;
+  coffeeDailyCount = 0;
+  coffeeStunImmunityCharges = 0;
+  chocolateDailyCount = 0;
+  if (partner.active) partner.chocolateDailyCount = 0;
   if (currentDate.getDay() === 1) {
     startNewWeek();
   }
   lastUpdate = Date.now();
+  if (pendingCaffeineCollapse) triggerCaffeineCollapse();
 }
 
 // 週末（土日祝日）を飛ばして次の月曜から新しい週を始める
@@ -2039,8 +2115,13 @@ function jumpToNextMondayAndResetWeek() {
   dayNumber++;
   synergyUsesToday = 0;
   energyDrinkDailyCount = 0;
+  coffeeDailyCount = 0;
+  coffeeStunImmunityCharges = 0;
+  chocolateDailyCount = 0;
+  if (partner.active) partner.chocolateDailyCount = 0;
   startNewWeek();
   lastUpdate = Date.now();
+  if (pendingCaffeineCollapse) triggerCaffeineCollapse();
 }
 
 // 週の終わりを迎えたときの、週末の過ごし方選択画面の見出し文。状況に応じて呼び分ける
@@ -2858,9 +2939,12 @@ function update() {
       const reducedFatigue = Math.min(fatigue, recoveryAmount);
       fatigue -= reducedFatigue;
       san = Math.min(maxSan, san + chocolateSanRecovery);
-      lifespan = Math.max(0, lifespan - chocolateLifespanCost);
+      chocolateDailyCount++;
+      const lifespanEffect = getChocolateLifespanEffect(chocolateDailyCount);
+      lifespan = Math.max(0, Math.min(maxLifespan, lifespan + lifespanEffect));
       showMessage(
-        `チョコレート取得！ 脳疲労 -${Math.ceil(reducedFatigue)} / SAN +${chocolateSanRecovery} / 寿命 -${chocolateLifespanCost}`,
+        `チョコレート取得！ 脳疲労 -${Math.ceil(reducedFatigue)} / SAN +${chocolateSanRecovery} / 寿命 ${lifespanEffect >= 0 ? '+' : ''}${lifespanEffect}` +
+        `（本日${chocolateDailyCount}個目）`,
         1800, '#ffcc80'
       );
       checkVitalsGameOver();
@@ -2919,6 +3003,7 @@ function update() {
       energyDrinkBuffTimerMs = energyDrinkBuffDurationMs;
       energyDrinkCrashTimerMs = 0; // 反動状態が残っていても、新たに飲めば打ち消してすぐ強化状態に入る
       if (currentHour >= dayEndHour) eveningDrinkRecoveryPenalty = true;
+      checkCaffeineOverdose();
       showMessage(
         `栄養ドリンク取得！ 脳疲労 -${Math.ceil(reducedFatigue)} / SAN +${energyDrinkSanRecovery} / 寿命 -${totalLifespanCost}` +
         (isSecondOrLater ? '（本日2本目以降…）' : '') + (isCrossDrink ? '（コーヒーとの飲み合わせ…）' : ''),
@@ -2941,6 +3026,8 @@ function update() {
 
   // コーヒーの効果時間を減らす（効果切れによる反動はない）
   coffeeBuffTimerMs = Math.max(0, coffeeBuffTimerMs - dt * 1000);
+  // コーヒーによるstun回避の残り時間を減らす
+  coffeeStunImmunityTimerMs = Math.max(0, coffeeStunImmunityTimerMs - dt * 1000);
 
   // コーヒーの出現待ち、取得判定、時間切れを処理する
   if (coffee && !coffee.landed) {
@@ -2959,12 +3046,15 @@ function update() {
     );
 
     if (distanceToCoffee <= player.radius + coffee.radius) {
+      coffeeDailyCount++;
+      coffeeStunImmunityCharges++;
       const isCrossDrink = energyDrinkBuffTimerMs > 0;
       const totalLifespanCost = coffeeLifespanCost + (isCrossDrink ? coffeeCrossDrinkLifespanCost : 0);
       san = Math.min(maxSan, san + coffeeSanRecovery);
       lifespan = Math.max(0, lifespan - totalLifespanCost);
       coffeeBuffTimerMs = coffeeBuffDurationMs;
       if (currentHour >= dayEndHour) eveningDrinkRecoveryPenalty = true;
+      checkCaffeineOverdose();
       showMessage(
         `コーヒー取得！ SAN +${coffeeSanRecovery} / 寿命 -${totalLifespanCost}` +
         (isCrossDrink ? '（栄養ドリンクとの飲み合わせ…）' : ''),
@@ -3136,7 +3226,8 @@ function update() {
     if (wantsToFire && !stunned) {
       if (now - lastFire >= currentFireRate) {
         updateSkillEffects();
-        if (fatigue < maxFatigue) {
+        // 通常は脳疲労が上限に達すると撃てなくなるが、コーヒーのstun回避中は通常通り行動できる
+        if (fatigue < maxFatigue || coffeeStunImmunityTimerMs > 0) {
           lastFire = now;
           const shotAngle = player.angle;
 
