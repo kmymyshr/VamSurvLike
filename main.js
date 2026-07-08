@@ -75,6 +75,16 @@ const dreamMemoryUpgradeDefs = [
   {
     id: 'quotaEase', label: '週間ノルマ緩和',
     describeLevel: (lv) => `週間ノルマが${lv * 3}%緩和される`
+  },
+  {
+    id: 'partnerAutoParry', label: '同僚のオートパリィレベル',
+    describeLevel: (lv) => `同僚が被弾しそうな時にパリィする確率が${30 + lv * 14}%になる（未強化時は30%）`
+  },
+  {
+    id: 'dreamCatcher', label: 'DreamCatcher',
+    describeLevel: () => '自機・同僚のSAN上限が25になる（ラスボスに遭遇しやすくなる）',
+    maxLevel: 1,
+    costOverride: 1
   }
 ];
 // 現在のレベルから次のレベルへ上げるのに必要な夢の記憶ポイント数
@@ -93,7 +103,8 @@ function loadDreamMemorySave() {
     const rawUpgrades = parsed.upgrades || {};
     const upgrades = {};
     dreamMemoryUpgradeDefs.forEach(def => {
-      upgrades[def.id] = Math.max(0, Math.min(dreamMemoryUpgradeMaxLevel, Math.floor(rawUpgrades[def.id]) || 0));
+      const maxLevel = def.maxLevel || dreamMemoryUpgradeMaxLevel;
+      upgrades[def.id] = Math.max(0, Math.min(maxLevel, Math.floor(rawUpgrades[def.id]) || 0));
     });
     // 前回プレイした自機の性別・同僚アイコン・信頼関係・最期の原因（同じ自機と同僚で再開した時の再会シーンに使う）
     const rawLastRun = parsed.lastRun;
@@ -118,10 +129,24 @@ function saveDreamMemorySave() {
 let dreamMemorySave = loadDreamMemorySave();
 
 // 夢の記憶ポイントを消費して、指定した強化を1レベル上げる
+function getDreamMemoryUpgradeDef(id) {
+  return dreamMemoryUpgradeDefs.find(def => def.id === id);
+}
+// 項目ごとに上限レベルを変えられるようにする（未指定なら共通の上限を使う）
+function getDreamMemoryUpgradeMaxLevel(def) {
+  return def.maxLevel || dreamMemoryUpgradeMaxLevel;
+}
+// 項目ごとに固定価格を設定できるようにする（未指定ならレベルに応じた通常の価格を使う）
+function getDreamMemoryUpgradeCost(def, level) {
+  return def.costOverride !== undefined ? def.costOverride : dreamMemoryUpgradeCost(level);
+}
+
 function purchaseDreamMemoryUpgrade(id) {
+  const def = getDreamMemoryUpgradeDef(id);
+  if (!def) return;
   const level = dreamMemorySave.upgrades[id];
-  if (level >= dreamMemoryUpgradeMaxLevel) return;
-  const cost = dreamMemoryUpgradeCost(level);
+  if (level >= getDreamMemoryUpgradeMaxLevel(def)) return;
+  const cost = getDreamMemoryUpgradeCost(def, level);
   if (dreamMemorySave.points < cost) return;
   dreamMemorySave.points -= cost;
   dreamMemorySave.upgrades[id] = level + 1;
@@ -1122,7 +1147,10 @@ function endWorkday() {
   }
 }
 // ===== SAN（精神力）システム =====
-const maxSan = 100 + dreamMemorySave.upgrades.maxSan * 10; // 夢の記憶ポイントの「初期SAN上限」で底上げされる
+// 「DreamCatcher」を購入していると、SAN上限は25に固定される（ラスボスに遭遇しやすくするため）
+const maxSan = dreamMemorySave.upgrades.dreamCatcher >= 1
+  ? 25
+  : 100 + dreamMemorySave.upgrades.maxSan * 10; // 夢の記憶ポイントの「初期SAN上限」で底上げされる
 let san = maxSan;
 
 // SANが減少する量
@@ -3328,7 +3356,9 @@ function getBossHolePositions() {
 
 function fireBossBullets() {
   for (const hole of getBossHolePositions()) {
-    const angle = Math.atan2(player.y - hole.y, player.x - hole.x) + (Math.random() - 0.5) * 0.35;
+    // 穴ごとに、自機・同僚のどちらを狙うかをランダムに決める（同僚も直接狙われる）
+    const target = (partner.active && Math.random() < 0.5) ? partner : player;
+    const angle = Math.atan2(target.y - hole.y, target.x - hole.x) + (Math.random() - 0.5) * 0.35;
     bullets.push({
       x: hole.x,
       y: hole.y,
@@ -3365,6 +3395,19 @@ function damagePlayerByBossBullet() {
   checkVitalsGameOver();
 }
 
+// 同僚がラスボス弾のパリィに失敗した時の被弾処理
+function damagePartnerByBossBullet() {
+  if (!partner.active || partner.friendlyFireInvincibleTimer > 0) return;
+  if (partner.barrierCharges > 0) {
+    partner.barrierCharges--;
+    partner.friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
+    return;
+  }
+  partner.san = Math.max(0, partner.san - bossBulletDamageSan);
+  partner.lifespan = Math.max(0, partner.lifespan - bossBulletDamageLifespan);
+  partner.friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
+}
+
 function defeatBossEvent() {
   showMessage('ラスボスを退けた！ 日常が戻ってくる……', 3800, '#69f0ae', '26px sans-serif');
   enemies.push(...bossEvent.savedEnemies);
@@ -3374,7 +3417,9 @@ function defeatBossEvent() {
 
 // ===== パリィ（バットのように、タイミングよく振ると同僚弾を最寄りの敵へ打ち返す） =====
 const deflectRange = 90; // これより近くにある同僚弾だけをパリィできる（やや緩めの判定）
-const partnerParryChance = 0.3; // 同僚が自機弾の誤射を受けそうな時、デフォルトでパリィする確率
+// 同僚が被弾しそうな時にパリィする確率。デフォルト30%で、夢の記憶ポイントの
+// 「同僚のオートパリィレベル」で最大100%まで強化できる
+const partnerParryChance = Math.min(1, 0.3 + dreamMemorySave.upgrades.partnerAutoParry * 0.14);
 const deflectDamageMultiplier = 2; // パリィした弾は通常の2倍のダメージになる
 const deflectFatigueCost = 5; // キーを振るたび（成否問わず）暫定的に蓄積する脳疲労
 function attemptDeflectPartnerBullet() {
@@ -4381,6 +4426,19 @@ function update() {
       bullets.splice(i, 1);
       if (gameOver || deathSequence) return;
       continue;
+    } else if (b.owner === 'boss' && partner.active &&
+        Math.hypot(b.x - partner.x, b.y - partner.y) <= b.radius + partner.radius) {
+      // 同僚のオートパリィ（デフォルト30%、夢の記憶ポイントで最大100%まで強化可能）
+      if (Math.random() < partnerParryChance) {
+        performBulletParry(b, partner.x, partner.y, partner.angle);
+        spawnSlashEffect(partner.x, partner.y, partner.angle, partner.radius);
+        showMessage('同僚がパリィ！', 1400, '#80deea');
+        showRandomPartnerSpeechBubbleIfFriendly(partnerParryLines, '#80deea');
+        continue;
+      }
+      damagePartnerByBossBullet();
+      bullets.splice(i, 1);
+      continue;
     } else if (b.owner === 'boss' &&
         Math.hypot(b.x - player.x, b.y - player.y) <= b.radius + player.radius) {
       // 特殊スキル「オートパリィ」：ラスボス弾に対しても被弾しそうな瞬間に自動でパリィする
@@ -5333,36 +5391,50 @@ function draw() {
     ctx.fillText(`保有ポイント: ${dreamMemorySave.points}`, canvas.width / 2, 56);
     ctx.textAlign = 'left';
 
-    // 10項目を1画面に収めるため、1行あたりの高さを抑えたコンパクトな一覧表示にする
-    const rowX = 60;
-    const rowWidth = canvas.width - 120;
-    const rowHeight = 42;
-    const rowGap = 4;
-    let rowY = 70;
-    dreamMemoryUpgradeDefs.forEach((def) => {
+    // 項目数が多いため、2列に分けて見やすくする
+    const cols = 2;
+    const colGap = 16;
+    const gridX = 40;
+    const gridWidth = canvas.width - gridX * 2;
+    const cellWidth = (gridWidth - colGap * (cols - 1)) / cols;
+    const cellHeight = 64;
+    const cellGap = 8;
+    const gridStartY = 68;
+    const rows = Math.ceil(dreamMemoryUpgradeDefs.length / cols);
+
+    dreamMemoryUpgradeDefs.forEach((def, index) => {
+      const col = index % cols;
+      const row = Math.floor(index / cols);
+      const cellX = gridX + col * (cellWidth + colGap);
+      const cellY = gridStartY + row * (cellHeight + cellGap);
+
       const level = dreamMemorySave.upgrades[def.id];
-      const maxed = level >= dreamMemoryUpgradeMaxLevel;
-      const cost = maxed ? null : dreamMemoryUpgradeCost(level);
+      const maxLevel = getDreamMemoryUpgradeMaxLevel(def);
+      const maxed = level >= maxLevel;
+      const cost = maxed ? null : getDreamMemoryUpgradeCost(def, level);
       const affordable = !maxed && dreamMemorySave.points >= cost;
 
       ctx.fillStyle = 'rgba(103, 58, 183, 0.30)';
-      ctx.fillRect(rowX, rowY, rowWidth, rowHeight);
+      ctx.fillRect(cellX, cellY, cellWidth, cellHeight);
       ctx.strokeStyle = '#ce93d8';
       ctx.lineWidth = 1;
-      ctx.strokeRect(rowX, rowY, rowWidth, rowHeight);
+      ctx.strokeRect(cellX, cellY, cellWidth, cellHeight);
 
-      const btnW = 110, btnH = 30;
-      const btnX = rowX + rowWidth - btnW - 10;
-      const btnY = rowY + (rowHeight - btnH) / 2;
-      const textMaxWidth = btnX - (rowX + 14) - 10;
+      const btnW = 100, btnH = 24;
+      const btnX = cellX + cellWidth - btnW - 10;
+      const btnY = cellY + cellHeight - btnH - 8;
+      const textMaxWidth = cellWidth - 20;
 
       ctx.fillStyle = 'white';
       ctx.font = 'bold 13px sans-serif';
-      ctx.fillText(`${def.label}  Lv.${level}/${dreamMemoryUpgradeMaxLevel}`, rowX + 14, rowY + 16);
+      ctx.fillText(`${def.label}  Lv.${level}/${maxLevel}`, cellX + 10, cellY + 16);
       ctx.fillStyle = '#cfd8dc';
       ctx.font = '11px sans-serif';
       const descText = maxed ? '既に最大レベルまで強化済み' : def.describeLevel(level + 1);
-      ctx.fillText(wrapTextToWidth(descText, textMaxWidth)[0] || '', rowX + 14, rowY + 32);
+      const descLines = wrapTextToWidth(descText, textMaxWidth).slice(0, 2);
+      descLines.forEach((line, i) => {
+        ctx.fillText(line, cellX + 10, cellY + 31 + i * 13);
+      });
 
       if (maxed) {
         ctx.fillStyle = 'rgba(60, 60, 60, 0.6)';
@@ -5371,7 +5443,7 @@ function draw() {
         ctx.lineWidth = 2;
         ctx.strokeRect(btnX, btnY, btnW, btnH);
         ctx.fillStyle = '#9e9e9e';
-        ctx.font = 'bold 13px sans-serif';
+        ctx.font = 'bold 12px sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText('MAX', btnX + btnW / 2, btnY + btnH / 2);
@@ -5381,14 +5453,14 @@ function draw() {
         drawUiButton(btnX, btnY, btnW, btnH, `強化 (${cost}P)`,
           () => purchaseDreamMemoryUpgrade(def.id),
           affordable
-            ? { fillStyle: 'rgba(103, 58, 183, 0.7)', strokeStyle: '#ce93d8', font: 'bold 13px sans-serif' }
-            : { fillStyle: 'rgba(60, 60, 60, 0.5)', strokeStyle: '#616161', textColor: '#9e9e9e', font: 'bold 13px sans-serif' });
+            ? { fillStyle: 'rgba(103, 58, 183, 0.7)', strokeStyle: '#ce93d8', font: 'bold 12px sans-serif' }
+            : { fillStyle: 'rgba(60, 60, 60, 0.5)', strokeStyle: '#616161', textColor: '#9e9e9e', font: 'bold 12px sans-serif' });
       }
-      rowY += rowHeight + rowGap;
     });
 
-    const backBtnW = 200, backBtnH = 36;
-    drawUiButton(canvas.width / 2 - backBtnW / 2, rowY + 8, backBtnW, backBtnH,
+    const gridBottom = gridStartY + rows * (cellHeight + cellGap) - cellGap;
+    const backBtnW = 200, backBtnH = 32;
+    drawUiButton(canvas.width / 2 - backBtnW / 2, gridBottom + 10, backBtnW, backBtnH,
       '強化終了', () => { dreamMemoryShopActive = false; },
       { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
     return;
