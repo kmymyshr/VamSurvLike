@@ -287,6 +287,9 @@ let weeklyScoreGained = 0; // 今週のスコア獲得量（減点は含まな�
 let weekendWorkChoice = false; // 「休日出勤しますか」の選択待ち
 let restActivityChoice = false; // 「休日の過ごし方」3択の選択待ち
 let restStudyPending = false; // 休日の「勉強」からスキル選択を開いた後の後続処理待ち
+let weekendWorkQuotaChoice = false; // 休日出勤中にノルマ達成し、「家に帰りますか」の選択待ち
+const weekendWorkSanDrainPerSec = 0.5; // 休日出勤中、1秒あたり緩やかに減少するSAN
+const weekendWorkLifespanDrainPerSec = 0.15; // 休日出勤中、1秒あたり緩やかに減少する寿命
 // ノルマ未達成時のペナルティ・達成時のボーナスの割合
 const weeklyFailScorePenaltyRatio = 0.25; // Scoreの25%を失う
 const weeklyFailSanPenaltyRatio = 0.35; // maxSanの35%ぶんSANを失う
@@ -999,6 +1002,25 @@ function checkEarlyQuotaAchievement() {
   if (weeklyKills >= weeklyKillQuota || weeklyScoreGained >= weeklyScoreQuota) {
     weeklyQuotaAchievedEarly = true;
     showMessage('今週のノルマ達成！残りは易しい仕事だけになります', 3500, '#69f0ae', '22px sans-serif');
+    // 休日出勤中にノルマを達成したら、そのまま帰るかどうかを選ばせる
+    const isWeekendWorkDay = currentDate.getDay() === 0 || currentDate.getDay() === 6;
+    if (isWeekendWorkDay) {
+      weekendWorkQuotaChoice = true;
+    }
+  }
+}
+
+// 休日出勤を切り上げて、翌週の平日の流れへ戻る
+function goHomeFromWeekendWork() {
+  showMessage('今日はここまで。切り上げて帰宅した。', 2500, '#90caf9', '22px sans-serif');
+  startDayTransition(jumpToNextMondayAndResetWeek);
+}
+
+// 休日出勤中にノルマを達成した際の「家に帰りますか」選択を処理する
+function handleWeekendWorkQuotaChoice(goHome) {
+  weekendWorkQuotaChoice = false;
+  if (goHome) {
+    goHomeFromWeekendWork();
   }
 }
 
@@ -1683,6 +1705,15 @@ document.addEventListener("keydown", (event) => {
     }
     return;
   }
+  // 休日出勤中にノルマを達成：家に帰るかどうかの選択
+  if (weekendWorkQuotaChoice) {
+    if (event.key === 'y') {
+      handleWeekendWorkQuotaChoice(true);
+    } else if (event.key === 'n') {
+      handleWeekendWorkQuotaChoice(false);
+    }
+    return;
+  }
   // 休日の過ごし方（1:同僚と遊ぶ 2:休息 3:勉強）を選ぶ
   if (restActivityChoice) {
     const choiceIndex = Number(event.key);
@@ -1691,6 +1722,12 @@ document.addEventListener("keydown", (event) => {
       // 「勉強」以外は結果メッセージを確認後にランダムイベント＋週明けへ進む（勉強はスキル選択完了後に進む）
       applyRestActivity(choiceIndex);
     }
+    return;
+  }
+  // 休日出勤中（土日）は、Hキーでいつでも切り上げて帰宅できる
+  if ((currentDate.getDay() === 0 || currentDate.getDay() === 6) &&
+      dayTransitionPhase === null && event.key.toLowerCase() === 'h') {
+    goHomeFromWeekendWork();
     return;
   }
   // スタート画面では通常開始か3倍加速開始を選ぶ
@@ -1961,8 +1998,16 @@ function update() {
     return;
   }
 
-  // 週末の休日出勤選択・休日の過ごし方選択中は、ゲームの進行を止める
-  if (weekendWorkChoice || restActivityChoice) return;
+  // 週末の休日出勤選択・休日の過ごし方選択・休日出勤中の帰宅確認中は、ゲームの進行を止める
+  if (weekendWorkChoice || restActivityChoice || weekendWorkQuotaChoice) return;
+
+  // 休日出勤中（土曜・日曜に働いている間）は、SAN・寿命が緩やかに削れていく
+  if (currentDate.getDay() === 0 || currentDate.getDay() === 6) {
+    san = Math.max(0, san - weekendWorkSanDrainPerSec * dt);
+    lifespan = Math.max(0, lifespan - weekendWorkLifespanDrainPerSec * dt);
+    checkVitalsGameOver();
+    if (gameOver) return;
+  }
 
   // ゲーム内時刻を進める
   if (now - lastHourTime >= hourMs) {
@@ -2626,6 +2671,9 @@ function drawBackground() {
     ctx.drawImage(toImg, 0, 0, canvas.width, canvas.height);
     ctx.restore();
   }
+  // 背景を少し薄暗くして、敵・アイコン・文字などの前景を見やすくする
+  ctx.fillStyle = 'rgba(6, 10, 18, 0.3)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
 }
 
 // 時刻の端数も使い、1時間ごとの段差ではなく滑らかに明暗を変える。
@@ -2921,6 +2969,10 @@ function draw() {
   }
 
   drawBackground();
+  // 敵・アイコン・自分/同僚などの前景要素に薄い影をつけ、背景から浮き上がって見やすくする
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.65)';
+  ctx.shadowBlur = 4;
+  ctx.shadowOffsetY = 1;
   if (invincible) {
     const blink = Math.floor(gameClockMs / 100) % 2 === 0;
     ctx.globalAlpha = blink ? 0.4 : 0.8;
@@ -3145,6 +3197,11 @@ function draw() {
     ctx.restore();
   }
 
+  // ここまでの前景要素の影を解除する（HUDパネル等には不要なため）
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetY = 0;
+
   // 左上に自分と同僚のプロフィールを同じ高さで並べる。
   drawHudProfilePanel(12, 12, 145, 168, '自分', selectedPlayerIcon, '#4dd0e1', [
     { text: `SAN: ${Math.floor(san)} / ${maxSan}` },
@@ -3200,6 +3257,14 @@ function draw() {
   const dateStr = `DAY${dayNumber} ${currentDate.getFullYear()}/${String(currentDate.getMonth()+1).padStart(2,'0')}/${String(currentDate.getDate()).padStart(2,'0')} ${hourStr} (${yName})`;
   ctx.fillText(dateStr, canvas.width - 12 - ctx.measureText(dateStr).width, 28);
 
+  // 休日出勤中（土日）のみ表示する、切り上げて帰宅するためのボタン
+  if ((currentDate.getDay() === 0 || currentDate.getDay() === 6) &&
+      !gameOver && !gameClear && !dayTransitionPhase && !weekendWorkChoice &&
+      !restActivityChoice && !weekendWorkQuotaChoice && !acknowledgementNotice) {
+    drawUiButton(canvas.width - 160, 38, 148, 40, '帰宅する (H)', goHomeFromWeekendWork,
+      { fillStyle: 'rgba(84, 60, 30, 0.65)', strokeStyle: '#ffb74d', font: 'bold 15px sans-serif' });
+  }
+
   if (isPaused && !gameOver && !gameClear) {
     ctx.fillStyle = 'rgba(0,0,0,0.65)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -3232,6 +3297,24 @@ function draw() {
       () => handleWeekendWorkChoice('work'));
     drawUiButton(btnX, canvas.height / 2 + 54, btnW, btnH, '休む (N)',
       () => handleWeekendWorkChoice('rest'), { fillStyle: 'rgba(84, 60, 30, 0.6)', strokeStyle: '#ffb74d' });
+  }
+  // 休日出勤中にノルマ達成：家に帰るかどうかの選択画面
+  if (weekendWorkQuotaChoice && !gameOver && !gameClear) {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#69f0ae';
+    ctx.font = '28px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('今週のノルマを達成しました！', canvas.width / 2, canvas.height / 2 - 80);
+    ctx.fillText('今日はもう家に帰りますか？', canvas.width / 2, canvas.height / 2 - 44);
+    ctx.textAlign = 'left';
+
+    const quotaBtnW = 340, quotaBtnH = 50;
+    const quotaBtnX = canvas.width / 2 - quotaBtnW / 2;
+    drawUiButton(quotaBtnX, canvas.height / 2 - 4, quotaBtnW, quotaBtnH, 'はい・帰宅する (Y)',
+      () => handleWeekendWorkQuotaChoice(true));
+    drawUiButton(quotaBtnX, canvas.height / 2 + 54, quotaBtnW, quotaBtnH, 'いいえ・続ける (N)',
+      () => handleWeekendWorkQuotaChoice(false), { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
   }
   // 週末の過ごし方の選択画面（週間ノルマ達成後の休日、または休日出勤を断った場合）
   if (restActivityChoice && !gameOver && !gameClear) {
