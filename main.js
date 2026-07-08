@@ -557,8 +557,10 @@ function answerQuiz(answerIndex) {
   if (answer.correct) {
     if (quizState.category === 'it') internalItKnowledge++;
     else internalCommunicationSkill++;
-    showAcknowledgementNotice('クイズ正解！ 新しい知識を得た', '#69f0ae',
-      quizState.category === 'it' ? 'IT知識が上昇しました。' : 'コミュニケーション知識が上昇しました。');
+    showMessage(
+      `クイズ正解！ ${quizState.category === 'it' ? 'IT知識' : 'コミュニケーション知識'}が上昇しました`,
+      2200, '#69f0ae', '22px sans-serif'
+    );
     if (partner.active) showRandomPartnerSpeechBubble(partnerQuizCorrectLines, '#69f0ae', partnerQuizCorrectStressedLines);
   } else {
     showMessage('クイズ不正解…', 2200, '#ef9a9a', '22px sans-serif');
