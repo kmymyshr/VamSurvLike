@@ -3182,10 +3182,17 @@ function findAutoAimTarget() {
 
 // ===== 完全オートモードの移動AI =====
 // 同僚弾の弾道上にいて、これから当たりそうな場合、弾道と垂直方向へ大きく避ける
-function computeFullAutoDodgeVector() {
-  const lookaheadDistance = 220; // これより手前にある同僚弾だけを警戒する
-  const sideMargin = 30; // 弾道からこれだけ離れていれば無視する
-  let nearest = null;
+// 同僚弾を確実に避けきれるよう、脅威となる弾すべてを合成して回避方向を決める
+// （最も近い1発だけを見ると、それを避けた先で別の弾に当たってしまうことがあるため）
+const fullAutoDodgeLookaheadDistance = 260; // 早めに反応できるよう、やや手前から警戒する
+const fullAutoDodgeSideMargin = 40; // 弾道からこれだけ離れていれば無視する（余裕を持って避ける）
+const fullAutoDodgeStuckThreshold = 0.15; // 複数弾の回避方向がほぼ打ち消し合ったとみなす閾値
+let fullAutoDodgeEscapeDirection = null;
+let fullAutoDodgeEscapeTimerMs = 0;
+
+function computeFullAutoDodgeVector(dt) {
+  let vx = 0, vy = 0;
+  let hasThreat = false;
   for (const b of bullets) {
     if (b.owner !== 'partner') continue;
     const speed = Math.hypot(b.vx, b.vy) || 1;
@@ -3194,17 +3201,35 @@ function computeFullAutoDodgeVector() {
     const dx = player.x - b.x;
     const dy = player.y - b.y;
     const forward = dx * dirX + dy * dirY;
-    if (forward <= 0 || forward > lookaheadDistance) continue;
+    if (forward <= 0 || forward > fullAutoDodgeLookaheadDistance) continue;
+    const clearance = player.radius + (b.radius || 4) + fullAutoDodgeSideMargin;
     const perpendicular = dx * dirY - dy * dirX;
-    if (Math.abs(perpendicular) > player.radius + (b.radius || 4) + sideMargin) continue;
-    if (!nearest || forward < nearest.forward) {
-      nearest = { forward, dirX, dirY, perpendicular };
-    }
+    if (Math.abs(perpendicular) > clearance) continue;
+    hasThreat = true;
+    // 弾道の真上に近く、かつ迫っている弾ほど、この弾からの回避方向を強く反映する
+    const urgency = 1 - forward / fullAutoDodgeLookaheadDistance;
+    const sign = perpendicular >= 0 ? 1 : -1;
+    vx += -dirY * sign * urgency;
+    vy += dirX * sign * urgency;
   }
-  if (!nearest) return null;
-  // 弾の進行方向に対して垂直に、現在ずれている側へさらに離れる
-  const sign = nearest.perpendicular >= 0 ? 1 : -1;
-  return { x: -nearest.dirY * sign, y: nearest.dirX * sign };
+  if (!hasThreat) {
+    fullAutoDodgeEscapeTimerMs = 0;
+    return null;
+  }
+  // 既にランダム方向への脱出中なら、時間が切れるまで同じ方向を保って振動を防ぐ
+  if (fullAutoDodgeEscapeTimerMs > 0) {
+    fullAutoDodgeEscapeTimerMs -= dt * 1000;
+    return fullAutoDodgeEscapeDirection;
+  }
+  const len = Math.hypot(vx, vy);
+  // 複数の弾から受ける回避方向がほぼ打ち消し合った場合、振動する代わりにランダムな方向へ逃げる
+  if (len < fullAutoDodgeStuckThreshold) {
+    const randomAngle = Math.random() * Math.PI * 2;
+    fullAutoDodgeEscapeDirection = { x: Math.cos(randomAngle), y: Math.sin(randomAngle) };
+    fullAutoDodgeEscapeTimerMs = fullAutoEscapeDurationMs;
+    return fullAutoDodgeEscapeDirection;
+  }
+  return { x: vx / len, y: vy / len };
 }
 
 // 優先度3〜6：食事（近い順）→チョコレート→心の壁→クイズの回答（ランダムに選んだもの）の順で、拾いに行く対象を返す
@@ -3267,7 +3292,7 @@ let fullAutoEscapeTimerMs = 0;
 
 function computeFullAutoMoveVector(dt) {
   // 優先度1：同僚弾の回避
-  const dodge = computeFullAutoDodgeVector();
+  const dodge = computeFullAutoDodgeVector(dt);
   if (dodge) {
     fullAutoEscapeTimerMs = 0;
     return dodge;
