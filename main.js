@@ -85,6 +85,16 @@ const dreamMemoryUpgradeDefs = [
     describeLevel: () => '自機・同僚のSAN上限が25になる（ラスボスに遭遇しやすくなる）',
     maxLevel: 1,
     costOverride: 1
+  },
+  {
+    id: 'prayerGuard', label: '祈る',
+    describeLevel: () => 'SANが0になるダメージを受けてもSAN1で耐え、SAN20まで回復する。回復後5秒間はSANが減らない',
+    maxLevel: 1
+  },
+  {
+    id: 'gutsGuard', label: '根性',
+    describeLevel: () => '寿命が0になる攻撃を受けても寿命1で耐え、寿命20まで回復する。回復後5秒間は寿命が減らない',
+    maxLevel: 1
   }
 ];
 // 現在のレベルから次のレベルへ上げるのに必要な夢の記憶ポイント数
@@ -1225,13 +1235,36 @@ function startDeathSequence(visualType, deathEndingType) {
   };
 }
 
+// 夢の記憶ポイントの「祈る」「根性」：SAN・寿命が0になる致命傷を受けても、
+// 1で持ちこたえた直後に20まで回復し、5秒間だけその項目が減らなくなる
+const guardReviveValue = 20;
+const guardImmunityDurationMs = 5000;
+let prayerGuardTimerMs = 0;
+let prayerGuardFloor = 0;
+let gutsGuardTimerMs = 0;
+let gutsGuardFloor = 0;
+
 // SAN・寿命のいずれかが尽きたら演出を経てゲームオーバーにする（二重発火防止にgameOver/deathSequenceで一度だけ発火）
 // どちらが尽きたかで演出とバッドエンドの種類を分ける
 function checkVitalsGameOver(deathEndingType = null) {
   if (gameOver || deathSequence) return;
   if (san <= 0) {
+    if (dreamMemorySave.upgrades.prayerGuard >= 1 && prayerGuardTimerMs <= 0) {
+      san = guardReviveValue;
+      prayerGuardFloor = guardReviveValue;
+      prayerGuardTimerMs = guardImmunityDurationMs;
+      showMessage('……祈りが通じた。SAN 1で持ちこたえ、正気を取り戻した', 3000, '#ce93d8', '22px sans-serif');
+      return;
+    }
     startDeathSequence('san', deathEndingType || 'bad-san');
   } else if (lifespan <= 0) {
+    if (dreamMemorySave.upgrades.gutsGuard >= 1 && gutsGuardTimerMs <= 0) {
+      lifespan = guardReviveValue;
+      gutsGuardFloor = guardReviveValue;
+      gutsGuardTimerMs = guardImmunityDurationMs;
+      showMessage('……根性で持ちこたえた。寿命1で踏みとどまった', 3000, '#ff8a65', '22px sans-serif');
+      return;
+    }
     startDeathSequence('lifespan', deathEndingType || 'bad-lifespan');
   }
 }
@@ -4593,6 +4626,16 @@ function update() {
   // 疲労値が0～最大値の範囲を超えないようにする
   fatigue = Math.max(0, Math.min(maxFatigue, fatigue));
 
+  // 「祈る」「根性」発動直後の5秒間は、この間に受けたダメージ分を打ち消してSAN・寿命を維持する
+  if (prayerGuardTimerMs > 0) {
+    prayerGuardTimerMs -= dt * 1000;
+    san = Math.max(san, prayerGuardFloor);
+  }
+  if (gutsGuardTimerMs > 0) {
+    gutsGuardTimerMs -= dt * 1000;
+    lifespan = Math.max(lifespan, gutsGuardFloor);
+  }
+
   // 脳疲労が高い状態・SANが低い状態が一定時間続くと、寿命が少しずつ削れていく
   if (fatigue >= maxFatigue * highFatigueThresholdRatio) {
     highFatigueTimerMs += dt * 1000;
@@ -5461,7 +5504,7 @@ function draw() {
     const gridX = 40;
     const gridWidth = canvas.width - gridX * 2;
     const cellWidth = (gridWidth - colGap * (cols - 1)) / cols;
-    const cellHeight = 64;
+    const cellHeight = 58;
     const cellGap = 8;
     const gridStartY = 68;
     const rows = Math.ceil(dreamMemoryUpgradeDefs.length / cols);
