@@ -2573,32 +2573,59 @@ function drawEndingScreen() {
   drawEndScreenButtons(canvas.height / 2 + 108);
 }
 
-// ===== 背景（仮のプレースホルダー） =====
-// 著作権フリーの絵文字アイコンを薄く散らして、オフィス風の背景を演出する
+// ===== 背景（imagesフォルダの時間帯画像） =====
+// 画像の読み込みが済むまでの間だけ使う、簡単なグラデーションのフォールバック
 const backgroundGradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
 backgroundGradient.addColorStop(0, '#12161f');
 backgroundGradient.addColorStop(1, '#05060a');
-const backgroundIconChoices = ['🏢', '📎', '☕', '📄', '💻', '🗂️'];
-const backgroundIcons = Array.from({ length: 16 }, () => ({
-  x: Math.random() * canvas.width,
-  y: Math.random() * canvas.height,
-  icon: backgroundIconChoices[Math.floor(Math.random() * backgroundIconChoices.length)],
-  size: 26 + Math.random() * 22,
-  alpha: 0.05 + Math.random() * 0.06
-}));
+
+// 朝・昼・夕方・夜の背景画像を読み込んでおく
+const backgroundTimeImages = {
+  morning: (() => { const img = new Image(); img.src = 'images/background/01_morning.png'; return img; })(),
+  daytime: (() => { const img = new Image(); img.src = 'images/background/02_daytime.png'; return img; })(),
+  earlynight: (() => { const img = new Image(); img.src = 'images/background/03_earlynight.png'; return img; })(),
+  night: (() => { const img = new Image(); img.src = 'images/background/04_night.png'; return img; })()
+};
+// ゲーム内時刻と背景画像の対応（時刻の間はなだらかにクロスフェードする）
+const backgroundTimeKeyframes = [
+  { hour: dayStartHour, key: 'morning' },
+  { hour: 12, key: 'daytime' },
+  { hour: dayEndHour, key: 'earlynight' },
+  { hour: 21, key: 'night' }
+];
 
 function drawBackground() {
-  ctx.fillStyle = backgroundGradient;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.save();
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  for (const bg of backgroundIcons) {
-    ctx.globalAlpha = bg.alpha;
-    ctx.font = `${bg.size}px "Segoe UI Emoji", sans-serif`;
-    ctx.fillText(bg.icon, bg.x, bg.y);
+  const visualHour = getVisualGameHour();
+  const firstFrame = backgroundTimeKeyframes[0];
+  const lastFrame = backgroundTimeKeyframes[backgroundTimeKeyframes.length - 1];
+  const clampedHour = Math.max(firstFrame.hour, Math.min(lastFrame.hour, visualHour));
+
+  let from = firstFrame;
+  let to = lastFrame;
+  for (let i = 0; i < backgroundTimeKeyframes.length - 1; i++) {
+    if (clampedHour >= backgroundTimeKeyframes[i].hour && clampedHour <= backgroundTimeKeyframes[i + 1].hour) {
+      from = backgroundTimeKeyframes[i];
+      to = backgroundTimeKeyframes[i + 1];
+      break;
+    }
   }
-  ctx.restore();
+  const span = to.hour - from.hour;
+  const t = span > 0 ? (clampedHour - from.hour) / span : 0;
+  const fromImg = backgroundTimeImages[from.key];
+  const toImg = backgroundTimeImages[to.key];
+
+  if (fromImg.complete && fromImg.naturalWidth > 0) {
+    ctx.drawImage(fromImg, 0, 0, canvas.width, canvas.height);
+  } else {
+    ctx.fillStyle = backgroundGradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  if (t > 0 && toImg.complete && toImg.naturalWidth > 0) {
+    ctx.save();
+    ctx.globalAlpha = t;
+    ctx.drawImage(toImg, 0, 0, canvas.width, canvas.height);
+    ctx.restore();
+  }
 }
 
 // 時刻の端数も使い、1時間ごとの段差ではなく滑らかに明暗を変える。
@@ -2659,14 +2686,13 @@ function mixHexColors(fromColor, toColor, ratio) {
 }
 
 // HUD用プロフィール区画。選択した絵文字を仮の顔イラストとして使う。
-function drawHudProfilePanel(x, y, width, height, title, icon, accentColor, statLines, inactive = false, dangerLevel = 0, iconImage = null) {
+function drawHudProfilePanel(x, y, width, height, title, icon, accentColor, statLines, inactive = false, dangerLevel = 0, iconImage = null, portraitRadius = 23) {
   ctx.save();
   ctx.fillStyle = 'rgba(7, 12, 22, 0.34)';
   ctx.fillRect(x, y, width, height);
 
-  const portraitRadius = 23;
   const portraitCenterX = x + width / 2;
-  const portraitCenterY = y + 30;
+  const portraitCenterY = y + portraitRadius + 7;
   const clampedDangerLevel = Math.max(0, Math.min(1, dangerLevel));
   const portraitFrameColor = inactive
     ? '#757575'
@@ -2702,16 +2728,17 @@ function drawHudProfilePanel(x, y, width, height, title, icon, accentColor, stat
   ctx.stroke();
 
 
+  const titleY = portraitCenterY + portraitRadius + 8;
   ctx.font = 'bold 14px sans-serif';
   ctx.fillStyle = inactive ? '#9e9e9e' : accentColor;
-  ctx.fillText(title, portraitCenterX, y + 61);
+  ctx.fillText(title, portraitCenterX, titleY);
 
   ctx.font = '11px sans-serif';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
   statLines.forEach((line, index) => {
     ctx.fillStyle = line.color || (inactive ? '#9e9e9e' : '#eceff1');
-    ctx.fillText(line.text, x + 9, y + 80 + index * 14);
+    ctx.fillText(line.text, x + 9, titleY + 19 + index * 14);
   });
   ctx.restore();
 }
@@ -2943,7 +2970,7 @@ function draw() {
     }
     const partnerImg = partnerIconImageElements[partner.icon];
     if (partnerImg && partnerImg.complete && partnerImg.naturalWidth > 0) {
-      const imgSize = partner.radius * 2.4;
+      const imgSize = partner.radius * 4.8;
       ctx.drawImage(partnerImg, partner.x - imgSize / 2, partner.y - imgSize / 2, imgSize, imgSize);
     } else {
       ctx.font = '26px "Segoe UI Emoji", sans-serif';
@@ -3132,7 +3159,7 @@ function draw() {
   const partnerTitle = selectedPartnerIcon === null
     ? '同僚なし'
     : (partner.active ? '同僚' : '同僚離脱');
-  drawHudProfilePanel(164, 12, 145, 168, partnerTitle,
+  drawHudProfilePanel(164, 12, 145, 190, partnerTitle,
     selectedPartnerIcon, '#80cbc4', partner.active ? [
       { text: `SAN: ${Math.floor(partner.san)} / ${maxSan}` },
       { text: `寿命: ${Math.ceil(partner.lifespan)} / ${maxLifespan}` },
@@ -3145,20 +3172,21 @@ function draw() {
       { text: `状態: ${selectedPartnerIcon === null ? '不在' : '離脱'}` }
     ], partnerUnavailable,
     (partnerRelationshipMax - partner.relationship) / partnerRelationshipMax,
-    selectedPartnerIcon !== null ? partnerIconImageElements[selectedPartnerIcon] : null);
+    selectedPartnerIcon !== null ? partnerIconImageElements[selectedPartnerIcon] : null,
+    46);
 
-  // 共通の進行情報は、2つのプロフィール区画の下へまとめる。
+  // 共通の進行情報は、2つのプロフィール区画の下へまとめる（同僚の円形アイコン拡大に合わせて位置を下げる）。
   ctx.font = '13px sans-serif';
   ctx.fillStyle = weeklyQuotaAchievedEarly ? '#69f0ae' : '#b0bec5';
   ctx.fillText(
     `週ノルマ: 撃破 ${weeklyKills}/${weeklyKillQuota}  Score ${weeklyScoreGained}/${weeklyScoreQuota}` +
     (weeklyQuotaAchievedEarly ? '（達成！）' : ''),
-    12, 198
+    12, 220
   );
   ctx.fillStyle = 'white';
   ctx.fillText(
     '攻撃モード: ' + (autoFireEnabled ? '自動' : '手動') + (stunned ? '（行動不能）' : ''),
-    12, 216
+    12, 238
   );
 
   // 一時メッセージを画面上部の中央に表示する
