@@ -520,10 +520,10 @@ function answerQuiz(answerIndex) {
     else internalCommunicationSkill++;
     showAcknowledgementNotice('クイズ正解！ 新しい知識を得た', '#69f0ae',
       quizState.category === 'it' ? 'IT知識が上昇しました。' : 'コミュニケーション知識が上昇しました。');
-    if (partner.active) showRandomPartnerSpeechBubble(partnerQuizCorrectLines, '#69f0ae');
+    if (partner.active) showRandomPartnerSpeechBubble(partnerQuizCorrectLines, '#69f0ae', partnerQuizCorrectStressedLines);
   } else {
     showMessage('クイズ不正解…', 2200, '#ef9a9a', '22px sans-serif');
-    if (partner.active) showRandomPartnerSpeechBubble(partnerQuizWrongLines, '#ffb74d');
+    if (partner.active) showRandomPartnerSpeechBubble(partnerQuizWrongLines, '#ffb74d', partnerQuizWrongStressedLines);
   }
   quizState = null;
 }
@@ -697,8 +697,13 @@ const partnerSpeechBubbleDurationMs = 2600;
 function showPartnerSpeechBubble(text, color = '#fff3e0') {
   partnerSpeechBubble = { text, color, timer: partnerSpeechBubbleDurationMs };
 }
-function showRandomPartnerSpeechBubble(lines, color) {
-  showPartnerSpeechBubble(lines[Math.floor(Math.random() * lines.length)], color);
+// 同僚のSANが半分を切っている間は、余裕のない言い回しのレパートリーに差し替える
+function isPartnerStressed() {
+  return partner.san / maxSan < 0.5;
+}
+function showRandomPartnerSpeechBubble(lines, color, stressedLines = null) {
+  const pool = (stressedLines && isPartnerStressed()) ? stressedLines : lines;
+  showPartnerSpeechBubble(pool[Math.floor(Math.random() * pool.length)], color);
 }
 
 // ===== 攻撃をサボっていると同僚の好感度が下がる仕組み =====
@@ -713,6 +718,13 @@ const partnerNeglectLines = [
   '私だけに任せないでください！',
   'こっちは押されてます、早く！'
 ];
+const partnerNeglectStressedLines = [
+  '早くしてください！もう限界です！',
+  'いい加減にしてください、本当に！',
+  '手伝ってくれないと無理です！',
+  '一人じゃもう無理なんです、お願いします！',
+  'こっちはもう、余裕ないんです！！'
+];
 
 // ===== 同僚が当てた敵を自機が倒すと、お礼を言ってくれる仕組み =====
 const partnerThanksRelationshipChance = 0.3; // お礼と共に好感度が+1する確率
@@ -722,6 +734,13 @@ const partnerThanksLines = [
   'ナイスです！',
   'さすがです！',
   '頼りにしてます！'
+];
+const partnerThanksStressedLines = [
+  '……助かりました、本当に',
+  'はぁ…なんとかなりましたね',
+  'ギリギリでした…ありがとうございます',
+  '正直、限界でした…感謝します',
+  'よかった…もう駄目かと思いました'
 ];
 
 // ===== クイズの正解・不正解に対する同僚のコメント =====
@@ -734,6 +753,13 @@ const partnerQuizWrongLines = [
   '練習あるのみです！',
   'まあ、そういう日もあります'
 ];
+const partnerQuizWrongStressedLines = [
+  'もう、今はそれどころじゃないです…',
+  'それ、今聞かないでください…',
+  'ちょっと、集中できてないんです…',
+  'すみません、頭が回らなくて…',
+  '正直、今は無理です…'
+];
 const partnerQuizCorrectLines = [
   'さすがです！',
   'やっぱり凄いですね！',
@@ -741,6 +767,12 @@ const partnerQuizCorrectLines = [
   'よくできました！',
   'その調子です！',
   'いや、それくらい自分でも分かってましたよ'
+];
+const partnerQuizCorrectStressedLines = [
+  'よかった…少しは気が楽になりました',
+  'はぁ…なんとか当たりましたね',
+  '今は、それだけで救われます…',
+  'ほっとしました…'
 ];
 
 // ===== 同僚への誤射・同僚からの誤射に対するコメント =====
@@ -751,12 +783,24 @@ const partnerHitByPlayerLines = [
   'もう、狙ってやってません…？',
   '痛いです…気をつけてください！'
 ];
+const partnerHitByPlayerStressedLines = [
+  'いい加減にしてください！！',
+  '今それどころじゃないんですって！',
+  '本当にやめてください…！',
+  'もう限界なんです、勘弁してください！'
+];
 const partnerHitPlayerLines = [
   'ごめんなさい！',
   '邪魔しないでください！',
   '私は悪くないです！',
   'わっ、すみません！',
   '当たるところにいるのが悪いんです！'
+];
+const partnerHitPlayerStressedLines = [
+  'ご、ごめんなさい…余裕なくて…',
+  'すみません…！ちゃんと狙えなくて…',
+  '今、手元が狂ってて…すみません',
+  'ごめんなさい、余裕がないんです…'
 ];
 
 // ===== 自機がstunしたときの同僚のコメント =====
@@ -766,6 +810,12 @@ const partnerStunWorryLines = [
   'ちょっと、寝てる場合じゃないですよ！',
   '無理しないでくださいね…',
   '大丈夫ですか、しんどそうですけど…'
+];
+const partnerStunWorryStressedLines = [
+  'ちょっと、本当にまずいですよ！？',
+  'しっかりしてください、お願いします！！',
+  'こっちも余裕ないのに…！大丈夫ですか！？',
+  '倒れないでください…お願いします！'
 ];
 
 // ===== SAN・寿命の状態を反映した、同僚のランダムな一言 =====
@@ -904,7 +954,7 @@ function damagePlayerByFriendlyFire() {
   friendlyFireHitFlashTimer = friendlyFireHitEffectDuration;
   explosionShakeTimer = Math.max(explosionShakeTimer, friendlyFireHitEffectDuration);
   checkVitalsGameOver('bad-partner-shot');
-  showRandomPartnerSpeechBubble(partnerHitPlayerLines, '#ffab91');
+  showRandomPartnerSpeechBubble(partnerHitPlayerLines, '#ffab91', partnerHitPlayerStressedLines);
   return true;
 }
 
@@ -914,7 +964,7 @@ function damagePartnerByFriendlyFire() {
     specialSkillEffects.partnerSanDamageMultiplier * specialSkillEffects.friendlyFireDamageMultiplier);
   partner.lifespan = Math.max(0, partner.lifespan - partnerFriendlyFireLifespanDamage * specialSkillEffects.friendlyFireDamageMultiplier);
   partner.friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
-  showRandomPartnerSpeechBubble(partnerHitByPlayerLines, '#ff8a65');
+  showRandomPartnerSpeechBubble(partnerHitByPlayerLines, '#ff8a65', partnerHitByPlayerStressedLines);
   partner.relationship = Math.max(0,
     partner.relationship - partnerRelationshipDamagePerHit);
   return true;
@@ -2546,7 +2596,7 @@ function update() {
             fatigue = maxFatigue;
             stunned = true;
             stunTimer = stunDuration * specialSkillEffects.stunDurationMultiplier;
-            if (partner.active) showRandomPartnerSpeechBubble(partnerStunWorryLines, '#90caf9');
+            if (partner.active) showRandomPartnerSpeechBubble(partnerStunWorryLines, '#90caf9', partnerStunWorryStressedLines);
             // 疲労が限界に達したら行動不能にし、SANも減らす
             const sanMultiplier = Math.max(0.5, 1 - skillLevel * 0.04);
             damageSan(Math.ceil(
@@ -2574,7 +2624,7 @@ function update() {
     if (partnerNeglectTimerMs >= partnerNeglectIntervalMs) {
       partnerNeglectTimerMs = 0;
       adjustPartnerRelationship(-partnerNeglectRelationshipPenalty);
-      showRandomPartnerSpeechBubble(partnerNeglectLines, '#ff8a65');
+      showRandomPartnerSpeechBubble(partnerNeglectLines, '#ff8a65', partnerNeglectStressedLines);
     }
   } else {
     partnerNeglectTimerMs = 0;
@@ -2676,7 +2726,7 @@ function update() {
             updateSkillEffects();
           // 同僚が当てていた敵に自機がとどめを刺すと、お礼を言ってくれる
           if (b.owner === 'player' && en.hitByPartner && partner.active) {
-            showRandomPartnerSpeechBubble(partnerThanksLines, '#69f0ae');
+            showRandomPartnerSpeechBubble(partnerThanksLines, '#69f0ae', partnerThanksStressedLines);
             if (Math.random() < partnerThanksRelationshipChance) {
               adjustPartnerRelationship(1);
             }
@@ -3164,7 +3214,7 @@ function draw() {
     ctx.fillStyle = 'white';
     ctx.font = 'bold 32px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('同僚のアイコンを選んでください', canvas.width / 2, 90);
+    ctx.fillText('同僚を選んでください', canvas.width / 2, 90);
     ctx.textAlign = 'left';
 
     const cols = 6;
@@ -3609,6 +3659,11 @@ function draw() {
     ctx.font = '20px sans-serif';
     ctx.fillText('Pキーで再開', canvas.width / 2, canvas.height / 2 + 18);
     ctx.textAlign = 'left';
+
+    const wakeBtnW = 260, wakeBtnH = 48;
+    drawUiButton(canvas.width / 2 - wakeBtnW / 2, canvas.height / 2 + 50, wakeBtnW, wakeBtnH,
+      '目を覚ます', () => location.reload(),
+      { fillStyle: 'rgba(84, 30, 30, 0.6)', strokeStyle: '#ef9a9a' });
   }
 
   if (gameClear || gameOver) {
