@@ -4208,6 +4208,7 @@ function update() {
       if (Math.random() < partnerParryChance) {
         performBulletParry(b, partner.x, partner.y, partner.angle);
         spawnSlashEffect(partner.x, partner.y, partner.angle, partner.radius);
+        showMessage('同僚がパリィ！', 1400, '#80deea');
         showRandomPartnerSpeechBubbleIfFriendly(partnerParryLines, '#80deea');
         continue;
       }
