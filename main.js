@@ -433,7 +433,8 @@ function answerQuiz(answerIndex) {
   if (answer.correct) {
     if (quizState.category === 'it') internalItKnowledge++;
     else internalCommunicationSkill++;
-    showMessage('クイズ正解！ 内部能力が上昇した', 2800, '#69f0ae', '23px sans-serif');
+    showAcknowledgementNotice('クイズ正解！ 新しい知識を得た', '#69f0ae',
+      quizState.category === 'it' ? 'IT知識が上昇しました。' : 'コミュニケーション知識が上昇しました。');
   } else {
     showMessage('クイズ不正解…', 2200, '#ef9a9a', '22px sans-serif');
   }
@@ -1170,9 +1171,8 @@ function updateSkillEffects() {
     const specialSkillCount = Math.floor(newLevel / 5) - Math.floor(skillLevel / 5);
     // レベルが上がった場合はメッセージを表示する
     skillLevel = newLevel;
-    showMessage(`スキルレベル ${newLevel} に上昇！`, 4200, '#00ffff', '30px sans-serif', {
-      x: canvas.width - 18, y: 190, textAlign: 'right'
-    });
+    showAcknowledgementNotice(`スキルレベル ${newLevel} に上昇！`, '#00ffff',
+      '新しい成長を確認しました。');
     queueSpecialSkillSelections(specialSkillCount);
   }
 }
@@ -1192,7 +1192,8 @@ function rankUpAtWeekEnd() {
   const promotions = checkRankUp();
   if (promotions > 0) {
     const jumpNote = promotions > 1 ? `（${promotions}階級飛び級！）` : '';
-    showMessage('昇進しました！ ' + rank + ' ' + rankNames[rank-1] + jumpNote, 4500, '#ffeb3b', '32px sans-serif');
+    showAcknowledgementNotice('昇進しました！ ' + rank + ' ' + rankNames[rank-1] + jumpNote,
+      '#ffeb3b', '新しい役職での一週間が始まります。');
   }
 }
 
@@ -1363,6 +1364,21 @@ function showMessage(text, ttl = 2000, color = 'white', font = '20px sans-serif'
   messages.push({ text, ttl, initialTtl: ttl, color, font, ...options });
 }
 
+// 昇進や知識獲得など、確認するまでゲームを止める重要通知
+let acknowledgementNotice = null;
+const acknowledgementQueue = [];
+function showAcknowledgementNotice(text, color = '#fff59d', detail = '') {
+  const notice = { text, color, detail };
+  if (acknowledgementNotice) acknowledgementQueue.push(notice);
+  else acknowledgementNotice = notice;
+  mouseFireHeld = false;
+}
+
+function resumeFromAcknowledgement() {
+  acknowledgementNotice = acknowledgementQueue.shift() || null;
+  lastUpdate = Date.now();
+}
+
 function getAllowedMaxTypeIndexByRank() {
   // ランク1～10を敵番号0～9へ対応させる（低ランクでは弱い敵だけ出す）
   const maxIdx = Math.floor((rank / 10) * (enemyTypeNames.length - 1));
@@ -1441,6 +1457,7 @@ function handleWeekendWorkChoice(choice) {
 // 押されているキーを true / false で記録する
 const keys = {};
 document.addEventListener("keydown", (event) => {
+  if (acknowledgementNotice) return;
   // 特殊スキル選択中は数字キー1～3だけを受け付ける
   if (specialSkillSelectionActive) {
     const choiceIndex = Number(event.key) - 1;
@@ -1644,6 +1661,10 @@ aimJoystickEl.addEventListener('pointercancel', releaseAimJoystick);
 // draw()が毎フレーム、現在表示中のメニューに応じて再構築する
 let uiButtons = [];
 canvas.addEventListener('click', (event) => {
+  if (acknowledgementNotice) {
+    resumeFromAcknowledgement();
+    return;
+  }
   // 一日の終わりの演出で入力待ち中なら、どこをクリック／タップしても次の日へ進める
   if (dayTransitionPhase === 'waiting') {
     dayTransitionPhase = 'in';
@@ -1682,6 +1703,10 @@ fitCanvasToViewport();
 // ===== ゲーム状態の更新 =====
 // 毎フレーム、移動・攻撃・時刻・衝突などを計算する
 function update() {
+  if (acknowledgementNotice) {
+    lastUpdate = Date.now();
+    return;
+  }
   const now = gameClockMs + ((Date.now() - lastUpdate) * gameTimeScale);
   const dt = (now - gameClockMs) / 1000;
     lastUpdate = Date.now();
@@ -1749,6 +1774,7 @@ function update() {
       // 昇進判定は週末（および月末＝クリア判定の直前）にのみ行う
       if (isWeekEndDay(currentDate) || isLastDayOfMonth(currentDate)) {
         rankUpAtWeekEnd();
+        if (acknowledgementNotice) return;
       }
       if (isLastDayOfMonth(currentDate)) {
         gameClear = true;
@@ -2199,11 +2225,11 @@ function drawUiButton(x, y, w, h, label, action, options = {}) {
   uiButtons.push({ x, y, w, h, action });
 }
 
-// ゲーム終了画面（Game Over / Game Clear）共通の「もう一度プレイする」「終了する」ボタン
+// ゲーム終了画面（Game Over / Game Clear）共通の再挑戦・終了ボタン
 function drawEndScreenButtons(baseY) {
   const btnW = 300, btnH = 48;
   const btnX = canvas.width / 2 - btnW / 2;
-  drawUiButton(btnX, baseY, btnW, btnH, 'もう一度プレイする', () => location.reload());
+  drawUiButton(btnX, baseY, btnW, btnH, '・・・という夢をみたんだ', () => location.reload());
   drawUiButton(btnX, baseY + 60, btnW, btnH, '終了する', () => { window.close(); },
     { fillStyle: 'rgba(84, 30, 30, 0.6)', strokeStyle: '#ef9a9a' });
   ctx.fillStyle = '#b0bec5';
@@ -2882,6 +2908,33 @@ function draw() {
       }
       ctx.textAlign = 'left';
     }
+  }
+
+  // 重要通知は最前面に表示し、クリック／タップされるまでゲームを停止する。
+  if (acknowledgementNotice) {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.72)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const noticeX = 130, noticeY = 175, noticeW = 540, noticeH = 210;
+    ctx.fillStyle = 'rgba(12, 20, 34, 0.96)';
+    ctx.fillRect(noticeX, noticeY, noticeW, noticeH);
+    ctx.strokeStyle = acknowledgementNotice.color;
+    ctx.lineWidth = 3;
+    ctx.strokeRect(noticeX, noticeY, noticeW, noticeH);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = acknowledgementNotice.color;
+    ctx.font = 'bold 30px sans-serif';
+    ctx.fillText(acknowledgementNotice.text, canvas.width / 2, noticeY + 68);
+    if (acknowledgementNotice.detail) {
+      ctx.fillStyle = '#eceff1';
+      ctx.font = '17px sans-serif';
+      ctx.fillText(acknowledgementNotice.detail, canvas.width / 2, noticeY + 112);
+    }
+    ctx.fillStyle = '#fff59d';
+    ctx.font = '16px sans-serif';
+    ctx.fillText('クリック / タップで再開', canvas.width / 2, noticeY + 166);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
   }
 }
 // ===== メインループ =====
