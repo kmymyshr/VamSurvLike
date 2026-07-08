@@ -281,8 +281,9 @@ function applyFatigueGain(amount) {
 // 攻撃1回あたりの脳疲労増加の基準値（スキルレベル・時間帯による補正込み）
 function getBaseFiringFatigueAmount() {
   const firingDrainMultiplier = Math.max(0.8, 1 - skillLevel * 0.05);
+  const energyDrinkMultiplier = energyDrinkBuffTimerMs > 0 ? energyDrinkFatigueGainMultiplier : 1;
   return firingFatiguePerShot * firingDrainMultiplier *
-    specialSkillEffects.firingFatigueMultiplier * getTimeOfDayFatigueMultiplier();
+    specialSkillEffects.firingFatigueMultiplier * getTimeOfDayFatigueMultiplier() * energyDrinkMultiplier;
 }
 
 // 攻撃が発生したことを登録する。チェーンが止まっていれば即座に1回分を反映して新しいチェーンを開始し、
@@ -369,6 +370,39 @@ function spawnChocolate() {
     fallSpeed: 0,
     landed: false,
     remainingMs: chocolateLifetimeMs
+  };
+}
+
+// ===== 回復アイテム（栄養ドリンク） =====
+// チョコレートより効果は強いが出現頻度は低い上位互換の回復アイテム
+const energyDrinkLifetimeMs = 10000; // 出現してから消えるまでの時間（10秒）
+const energyDrinkBlinkMs = 3000; // 消える3秒前から点滅する
+const energyDrinkRadius = 22;
+const energyDrinkSanRecovery = 20; // SAN値を20回復する
+const energyDrinkFatigueReduction = 50; // 脳疲労を50下げる
+const energyDrinkLifespanCost = 5; // その代わり寿命を5消費する
+const energyDrinkBuffDurationMs = 15000; // この間、脳疲労が蓄積しにくくなる
+const energyDrinkFatigueGainMultiplier = 0.5; // 上記の間、攻撃による脳疲労増加をこの倍率に抑える
+let energyDrink = null;
+let energyDrinkSpawnTimerMs = getRandomEnergyDrinkSpawnDelay();
+let energyDrinkBuffTimerMs = 0; // 残り時間。0より大きい間は脳疲労が蓄積しにくい
+
+// 次の栄養ドリンクは15～25秒後に出現する（チョコレートより希少）
+function getRandomEnergyDrinkSpawnDelay() {
+  return 15000 + Math.random() * 10000;
+}
+
+// マップ上部から落ちてきて、窓の範囲を避けた床の上に着地する
+function spawnEnergyDrink() {
+  const target = getRandomEventPosition(energyDrinkRadius);
+  energyDrink = {
+    x: target.x,
+    y: -energyDrinkRadius - 20,
+    targetY: target.y,
+    radius: energyDrinkRadius,
+    fallSpeed: 0,
+    landed: false,
+    remainingMs: energyDrinkLifetimeMs
   };
 }
 
@@ -1148,11 +1182,15 @@ function updatePartner(dt) {
     }
     partner.wanderTimer = 1800 + Math.random() * 2600;
   }
-  // 脳疲労が60%を超えていて、着地済みのチョコレートがあれば、追従・徘徊よりも優先して取りに行く
-  const partnerWantsChocolate = !!chocolate && chocolate.landed &&
+  // 脳疲労が60%を超えていて、着地済みの回復アイテムがあれば、追従・徘徊よりも優先して取りに行く
+  // （栄養ドリンクとチョコレートが両方あれば、効果の大きい栄養ドリンクを優先する）
+  const landedEnergyDrink = (energyDrink && energyDrink.landed) ? energyDrink : null;
+  const landedChocolate = (chocolate && chocolate.landed) ? chocolate : null;
+  const partnerRecoveryTarget = landedEnergyDrink || landedChocolate;
+  const partnerWantsRecoveryItem = !!partnerRecoveryTarget &&
     partner.fatigue >= maxFatigue * partnerChocolateSeekFatigueRatio;
-  const followTarget = partnerWantsChocolate
-    ? { x: chocolate.x, y: chocolate.y }
+  const followTarget = partnerWantsRecoveryItem
+    ? { x: partnerRecoveryTarget.x, y: partnerRecoveryTarget.y }
     : partner.wandering
       ? partner.wanderTarget
       : { x: player.x + partnerFollowOffsetX, y: player.y + partnerFollowOffsetY };
@@ -1160,7 +1198,7 @@ function updatePartner(dt) {
   const fdy = followTarget.y - partner.y;
   const fdist = Math.hypot(fdx, fdy);
   if (fdist > 2) {
-    const movementSpeed = partnerMoveSpeed * (partnerWantsChocolate || partner.wandering ? 1 : partnerFollowSpeedMultiplier);
+    const movementSpeed = partnerMoveSpeed * (partnerWantsRecoveryItem || partner.wandering ? 1 : partnerFollowSpeedMultiplier);
     const step = Math.min(fdist, movementSpeed);
     partner.x += (fdx / fdist) * step;
     partner.y += (fdy / fdist) * step;
@@ -1169,22 +1207,36 @@ function updatePartner(dt) {
   clampToPlayableFloor(partner);
   pushEntityOutsideScheduledReport(partner);
 
-  // チョコレートを取りに行っていた場合、たどり着いたら食べて疲労・SAN・寿命に反映する
-  if (partnerWantsChocolate && chocolate &&
-      Math.hypot(partner.x - chocolate.x, partner.y - chocolate.y) <= partner.radius + chocolate.radius) {
-    const recoveryAmount = Math.ceil(
-      maxFatigue * chocolateRecoveryRatio * specialSkillEffects.chocolateRecoveryMultiplier
-    );
-    const reducedFatigue = Math.min(partner.fatigue, recoveryAmount);
-    partner.fatigue -= reducedFatigue;
-    partner.san = Math.min(maxSan, partner.san + chocolateSanRecovery);
-    partner.lifespan = Math.max(0, partner.lifespan - chocolateLifespanCost);
-    showMessage(
-      `同僚がチョコレートを食べた！ 脳疲労 -${Math.ceil(reducedFatigue)} / SAN +${chocolateSanRecovery} / 寿命 -${chocolateLifespanCost}`,
-      1800, '#ffcc80'
-    );
-    chocolate = null;
-    chocolateSpawnTimerMs = getRandomChocolateSpawnDelay();
+  // 回復アイテムを取りに行っていた場合、たどり着いたら摂取して疲労・SAN・寿命に反映する
+  if (partnerWantsRecoveryItem && partnerRecoveryTarget &&
+      Math.hypot(partner.x - partnerRecoveryTarget.x, partner.y - partnerRecoveryTarget.y) <=
+        partner.radius + partnerRecoveryTarget.radius) {
+    if (partnerRecoveryTarget === energyDrink) {
+      const reducedFatigue = Math.min(partner.fatigue, energyDrinkFatigueReduction);
+      partner.fatigue -= reducedFatigue;
+      partner.san = Math.min(maxSan, partner.san + energyDrinkSanRecovery);
+      partner.lifespan = Math.max(0, partner.lifespan - energyDrinkLifespanCost);
+      showMessage(
+        `同僚が栄養ドリンクを飲んだ！ 脳疲労 -${Math.ceil(reducedFatigue)} / SAN +${energyDrinkSanRecovery} / 寿命 -${energyDrinkLifespanCost}`,
+        1800, '#80deea'
+      );
+      energyDrink = null;
+      energyDrinkSpawnTimerMs = getRandomEnergyDrinkSpawnDelay();
+    } else {
+      const recoveryAmount = Math.ceil(
+        maxFatigue * chocolateRecoveryRatio * specialSkillEffects.chocolateRecoveryMultiplier
+      );
+      const reducedFatigue = Math.min(partner.fatigue, recoveryAmount);
+      partner.fatigue -= reducedFatigue;
+      partner.san = Math.min(maxSan, partner.san + chocolateSanRecovery);
+      partner.lifespan = Math.max(0, partner.lifespan - chocolateLifespanCost);
+      showMessage(
+        `同僚がチョコレートを食べた！ 脳疲労 -${Math.ceil(reducedFatigue)} / SAN +${chocolateSanRecovery} / 寿命 -${chocolateLifespanCost}`,
+        1800, '#ffcc80'
+      );
+      chocolate = null;
+      chocolateSpawnTimerMs = getRandomChocolateSpawnDelay();
+    }
   }
 
   // 脳疲労が100に達したら、50（または時間帯の下限、どちらか高い方）まで下がるまで攻撃を控えて休ませる。
@@ -2598,6 +2650,50 @@ function update() {
     }
   }
 
+  // 栄養ドリンクの効果時間を減らす（残っている間は脳疲労が蓄積しにくい）
+  energyDrinkBuffTimerMs = Math.max(0, energyDrinkBuffTimerMs - dt * 1000);
+
+  // 栄養ドリンクの出現待ち、取得判定、時間切れを処理する
+  if (energyDrink && !energyDrink.landed) {
+    // 画面上部から落下してくる演出。着地するまでは取得判定を行わない
+    energyDrink.fallSpeed += chocolateFallGravityPerSec2 * dt;
+    energyDrink.y += energyDrink.fallSpeed * dt;
+    if (energyDrink.y >= energyDrink.targetY) {
+      energyDrink.y = energyDrink.targetY;
+      energyDrink.landed = true;
+    }
+  } else if (energyDrink) {
+    energyDrink.remainingMs -= dt * 1000;
+    const distanceToEnergyDrink = Math.hypot(
+      player.x - energyDrink.x,
+      player.y - energyDrink.y
+    );
+
+    if (distanceToEnergyDrink <= player.radius + energyDrink.radius) {
+      const reducedFatigue = Math.min(fatigue, energyDrinkFatigueReduction);
+      fatigue -= reducedFatigue;
+      san = Math.min(maxSan, san + energyDrinkSanRecovery);
+      lifespan = Math.max(0, lifespan - energyDrinkLifespanCost);
+      energyDrinkBuffTimerMs = energyDrinkBuffDurationMs;
+      showMessage(
+        `栄養ドリンク取得！ 脳疲労 -${Math.ceil(reducedFatigue)} / SAN +${energyDrinkSanRecovery} / 寿命 -${energyDrinkLifespanCost}`,
+        1800, '#80deea'
+      );
+      checkVitalsGameOver();
+      energyDrink = null;
+      energyDrinkSpawnTimerMs = getRandomEnergyDrinkSpawnDelay();
+      if (gameOver || deathSequence) return;
+    } else if (energyDrink.remainingMs <= 0) {
+      energyDrink = null;
+      energyDrinkSpawnTimerMs = getRandomEnergyDrinkSpawnDelay();
+    }
+  } else {
+    energyDrinkSpawnTimerMs -= dt * 1000;
+    if (energyDrinkSpawnTimerMs <= 0) {
+      spawnEnergyDrink();
+    }
+  }
+
   // 15時から点滅し、短い猶予の後に残った昼食を片付ける
   if (lunchState && lunchState.expirationStartedAtMs !== null &&
       gameClockMs - lunchState.expirationStartedAtMs >= lunchExpirationDurationMs) {
@@ -3671,6 +3767,37 @@ function draw() {
           `${Math.max(0, chocolate.remainingMs / 1000).toFixed(1)}秒`,
           chocolate.x,
           chocolate.y + chocolate.radius + 12
+        );
+      }
+      ctx.restore();
+    }
+  }
+
+  // 栄養ドリンクを描く。消滅直前は一定間隔で表示を切り替えて点滅させる
+  if (energyDrink) {
+    const shouldShowEnergyDrink = energyDrink.remainingMs > energyDrinkBlinkMs ||
+      Math.floor(energyDrink.remainingMs / 200) % 2 === 0;
+
+    if (shouldShowEnergyDrink) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(energyDrink.x, energyDrink.y, energyDrink.radius, 0, Math.PI * 2);
+      ctx.fillStyle = '#16282b';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(128, 222, 234, 0.85)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.font = '34px "Segoe UI Emoji", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('🧃', energyDrink.x, energyDrink.y);
+      if (energyDrink.landed) {
+        ctx.font = '12px sans-serif';
+        ctx.fillStyle = '#80deea';
+        ctx.fillText(
+          `${Math.max(0, energyDrink.remainingMs / 1000).toFixed(1)}秒`,
+          energyDrink.x,
+          energyDrink.y + energyDrink.radius + 12
         );
       }
       ctx.restore();
