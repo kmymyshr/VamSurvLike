@@ -69,8 +69,8 @@ const dreamMemoryUpgradeDefs = [
     describeLevel: (lv) => `ゲーム開始時から、誤射・接触ダメージを${lv}回防ぐバリアを持つ`
   },
   {
-    id: 'partnerBond', label: '同僚との初期信頼度',
-    describeLevel: (lv) => `同僚との初期信頼度が+${lv * 5}され、反撃されにくくなる`
+    id: 'partnerBond', label: '同僚との初期関係性',
+    describeLevel: (lv) => `同僚との初期関係性が+${lv * 5}され、反撃されにくくなる`
   },
   {
     id: 'quotaEase', label: '週間ノルマ緩和',
@@ -1328,6 +1328,25 @@ function startGameAfterGreeting() {
   }
 }
 
+// タイトル画面の「夢と同じ設定で進める」：性別・同僚選択画面を省略し、
+// 前回と同じ自機・同僚を自動で選んだ状態のまま、同僚の挨拶へ直接つなげる
+function startWithLastRunSettings() {
+  const lastRun = dreamMemorySave.lastRun;
+  if (!lastRun || !lastRun.partnerIcon) return;
+  gameTimeScale = 1;
+  startScreen = false;
+  setupStep = null;
+  selectedGender = lastRun.playerGender;
+  selectedPlayerIcon = lastRun.playerGender;
+  selectedPartnerIcon = lastRun.partnerIcon;
+  const greetingLines = partnerGenderById[lastRun.partnerIcon] === 'female'
+    ? partnerIconGreetingLinesFemale
+    : partnerIconGreetingLinesMale;
+  const line = greetingLines[Math.floor(Math.random() * greetingLines.length)];
+  startIconGreeting(lastRun.partnerIcon, line, () => { startGameAfterGreeting(); },
+    partnerIconImageElements[lastRun.partnerIcon]);
+}
+
 // ===== 同僚 =====
 const partnerMoveSpeed = 3.2;
 const partnerFollowSpeedMultiplier = 0.45;
@@ -1341,7 +1360,7 @@ const partnerContactSanMultiplier = 3; // 接触時のSANダメージ = 敵の�
 const partnerInvincibleDuration = 1200;
 const partnerLossSanPenalty = 20; // 同僚が力尽きたとき、プレイヤーが受けるSANダメージ
 const partnerRelationshipMax = 100;
-// 夢の記憶ポイントの「同僚との初期信頼度」で底上げされる（上限は超えない）
+// 夢の記憶ポイントの「同僚との初期関係性」で底上げされる（上限は超えない）
 const partnerRelationshipInitial = Math.min(partnerRelationshipMax, 50 + dreamMemorySave.upgrades.partnerBond * 5);
 const partnerRelationshipSafeFireThreshold = 50;
 const partnerRelationshipDamagePerHit = 15;
@@ -2815,6 +2834,11 @@ function beginGameplay() {
   playerBarrierCharges = dreamMemorySave.upgrades.barrierCharges; // 夢の記憶ポイントの「初期『心の壁』バリア」で底上げされる
   resetWeeklyQuotaForNewWeek();
   initPartner();
+  // 前回と同じ自機・同僚で始めた場合、関係性は前回終了時の値+20から始まる
+  // （分岐等に影響するのは100までだが、余裕を持たせて120まで許容する）
+  if (shouldShowReunionScene()) {
+    partner.relationship = Math.min(120, dreamMemorySave.lastRun.relationship + 20);
+  }
 }
 
 // 週間ノルマ未達成時：休日出勤するか休むかを処理する
@@ -4636,11 +4660,21 @@ function draw() {
       `夢の記憶ポイントで強化 (P: ${dreamMemorySave.points})`, () => { dreamMemoryShopActive = true; },
       { fillStyle: 'rgba(74, 20, 140, 0.55)', strokeStyle: '#ce93d8', font: 'bold 15px sans-serif' });
 
+    // 前回プレイした自機・同僚の組み合わせが記録されている時だけ、選択画面を省略するボタンを出す
+    const hasLastRunCombo = !!(dreamMemorySave.lastRun && dreamMemorySave.lastRun.partnerIcon);
+    let helpTextY = canvas.height / 2 + 134;
+    if (hasLastRunCombo) {
+      drawUiButton(btnX, canvas.height / 2 + 116, btnW, 40,
+        '夢と同じ設定で進める', startWithLastRunSettings,
+        { fillStyle: 'rgba(20, 70, 90, 0.55)', strokeStyle: '#80deea', font: 'bold 15px sans-serif' });
+      helpTextY = canvas.height / 2 + 178;
+    }
+
     ctx.fillStyle = '#cfd8dc';
     ctx.font = '16px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('P = 一時停止 / 再開　F = 自動攻撃切替', canvas.width / 2, canvas.height / 2 + 134);
-    ctx.fillText('WASD・左スティック = 移動　マウス・ドラッグ / 右スティック = 照準・攻撃', canvas.width / 2, canvas.height / 2 + 160);
+    ctx.fillText('P = 一時停止 / 再開　F = 自動攻撃切替', canvas.width / 2, helpTextY);
+    ctx.fillText('WASD・左スティック = 移動　マウス・ドラッグ / 右スティック = 照準・攻撃', canvas.width / 2, helpTextY + 26);
     ctx.textAlign = 'left';
     return;
   }
