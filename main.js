@@ -154,6 +154,34 @@ let startScreen = false;
 // 'player-icon' → 'partner-icon' → null（完了、startScreenへ）の順に進む起動時のセットアップ画面
 let setupStep = 'player-icon';
 
+// ===== アイコン選択後のひとことメッセージ演出（表示→フェードアウトして次の画面へ） =====
+const playerIconGreetingLines = [
+  'よし、今日も気合入れていくぞ！',
+  '負けてられない、やってやるぞ！',
+  '今日も一日、全力でいこう！'
+];
+const partnerIconGreetingLines = [
+  'よろしくお願いします！一緒に頑張りましょう！',
+  '私も負けていられません！全力で支えます！',
+  '頼りにしてます。一緒に乗り越えましょう！'
+];
+const iconGreetingHoldMs = 1400; // ひとことを表示し続ける時間
+const iconGreetingFadeMs = 500; // フェードアウトにかける時間
+let iconGreetingPhase = null; // null / 'hold' / 'fadeout'
+let iconGreetingTimer = 0;
+let iconGreetingIcon = '';
+let iconGreetingText = '';
+let iconGreetingOnComplete = null;
+
+// アイコンの下にひとことを表示し、少し経ったらフェードアウトしてonCompleteへ進む
+function startIconGreeting(icon, text, onComplete) {
+  iconGreetingIcon = icon;
+  iconGreetingText = text;
+  iconGreetingPhase = 'hold';
+  iconGreetingTimer = iconGreetingHoldMs;
+  iconGreetingOnComplete = onComplete;
+}
+
 // ===== エンディング =====
 // 'true' | 'normal' | 'bad-san' | 'bad-lifespan' | 'bad-partner-shot' のいずれか。gameOver / gameClear になる瞬間に確定する
 let endingType = null;
@@ -1522,17 +1550,23 @@ function explodeEnemy(enemyIndex) {
 }
 
 // ===== 各種選択の実行処理（キーボード・タップ両方から呼ばれる） =====
-// 自分のアイコンを選び、同僚のアイコン選択画面へ進む
+// 自分のアイコンを選び、ひとことメッセージのあと同僚のアイコン選択画面へ進む
 function selectPlayerIcon(icon) {
   selectedPlayerIcon = icon;
-  setupStep = 'partner-icon';
+  const line = playerIconGreetingLines[Math.floor(Math.random() * playerIconGreetingLines.length)];
+  startIconGreeting(icon, line, () => { setupStep = 'partner-icon'; });
 }
 
-// 同僚のアイコンを選ぶ（nullなら「同僚なし」）。選択後、通常のスタート画面へ進む
+// 同僚のアイコンを選ぶ（nullなら「同僚なし」）。選択後、ひとことメッセージを挟んでスタート画面へ進む
 function selectPartnerIcon(icon) {
   selectedPartnerIcon = icon;
-  setupStep = null;
-  startScreen = true;
+  if (icon === null) {
+    setupStep = null;
+    startScreen = true;
+    return;
+  }
+  const line = partnerIconGreetingLines[Math.floor(Math.random() * partnerIconGreetingLines.length)];
+  startIconGreeting(icon, line, () => { setupStep = null; startScreen = true; });
 }
 
 // スタート画面：通常速度(1)か3倍速(2)でゲームを開始する
@@ -1577,6 +1611,8 @@ document.addEventListener("keydown", (event) => {
     }
     return;
   }
+  // アイコン選択後のひとことメッセージ演出中は、フェードして次へ進むまで入力を受け付けない
+  if (iconGreetingPhase) return;
   // 起動時のセットアップ画面（自分のアイコン→同僚のアイコンの順）では数字キーで選ぶ
   if (setupStep === 'player-icon') {
     const idx = Number(event.key) - 1;
@@ -1822,6 +1858,21 @@ function update() {
     return;
   }
   gameClockMs = now;
+
+  // アイコン選択後のひとことメッセージ演出：表示→フェードアウト→次の画面へ
+  if (iconGreetingPhase) {
+    iconGreetingTimer -= dt * 1000;
+    if (iconGreetingPhase === 'hold' && iconGreetingTimer <= 0) {
+      iconGreetingPhase = 'fadeout';
+      iconGreetingTimer = iconGreetingFadeMs;
+    } else if (iconGreetingPhase === 'fadeout' && iconGreetingTimer <= 0) {
+      iconGreetingPhase = null;
+      const onComplete = iconGreetingOnComplete;
+      iconGreetingOnComplete = null;
+      if (onComplete) onComplete();
+    }
+    return;
+  }
 
   // 爆発後の短い時間、Canvas全体をランダムに揺らす
   explosionFlashTimer = Math.max(0, explosionFlashTimer - dt * 1000);
@@ -2614,6 +2665,27 @@ function draw() {
   // タップ可能な矩形を、今フレームの表示内容に合わせて作り直す
   uiButtons = [];
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // アイコン選択直後のひとことメッセージ演出（表示→フェードアウト）
+  if (iconGreetingPhase) {
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const alpha = iconGreetingPhase === 'fadeout'
+      ? Math.max(0, Math.min(1, iconGreetingTimer / iconGreetingFadeMs))
+      : 1;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.textAlign = 'center';
+    ctx.font = '96px "Segoe UI Emoji", sans-serif';
+    ctx.fillStyle = 'white';
+    ctx.fillText(iconGreetingIcon, canvas.width / 2, canvas.height / 2 - 20);
+    ctx.font = 'bold 26px sans-serif';
+    ctx.fillStyle = '#ffe082';
+    ctx.fillText(iconGreetingText, canvas.width / 2, canvas.height / 2 + 60);
+    ctx.restore();
+    ctx.textAlign = 'left';
+    return;
+  }
 
   if (setupStep === 'player-icon' || setupStep === 'partner-icon') {
     ctx.fillStyle = 'black';
