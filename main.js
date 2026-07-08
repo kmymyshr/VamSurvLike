@@ -5125,7 +5125,9 @@ function drawLifespanCrackEffect() {
   // 寿命が減るほど、ひびの本数が増え、既存のひびもさらに伸びていく
   const totalProgress = ratio * lifespanCracks.length;
   const visibleCount = Math.ceil(totalProgress);
-  ctx.strokeStyle = `rgba(15, 15, 20, ${0.55 + ratio * 0.4})`;
+  // 本物の画面割れに見えすぎないよう、約1秒周期で透過度をゆらす
+  const crackPulse = 0.6 + 0.4 * (0.5 + 0.5 * Math.sin(gameClockMs * (2 * Math.PI / 1000)));
+  ctx.strokeStyle = `rgba(15, 15, 20, ${(0.55 + ratio * 0.4) * crackPulse})`;
   ctx.lineWidth = 1.5;
   ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
   ctx.shadowBlur = 3;
