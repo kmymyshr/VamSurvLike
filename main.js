@@ -3141,6 +3141,11 @@ function findNearestEnemyToPlayer() {
     return (!closest || d < closest.d) ? { en: candidate, d } : closest;
   }, null);
 }
+// スマホ用自動照準のターゲットを返す。定時報告が出ている間は、同僚の自律攻撃と同様にそちらを優先する
+function findAutoAimTarget() {
+  if (scheduledReport) return { en: scheduledReport };
+  return findNearestEnemyToPlayer();
+}
 
 // ===== メニュー選択のタップ／クリック対応 =====
 // draw()が毎フレーム、現在表示中のメニューに応じて再構築する
@@ -3673,8 +3678,8 @@ function update() {
     }
 
     // 攻撃モードに関係なく、自分は常にマウスカーソルの方向を向く。
-    // スマホ用の自動照準設定が有効な間は、代わりに最も近い敵の方向を向く
-    const autoAimTarget = mobileAutoAimEnabled ? findNearestEnemyToPlayer() : null;
+    // スマホ用の自動照準設定が有効な間は、代わりに定時報告（出ていれば優先）か最も近い敵の方向を向く
+    const autoAimTarget = mobileAutoAimEnabled ? findAutoAimTarget() : null;
     if (autoAimTarget) {
       player.angle = Math.atan2(autoAimTarget.en.y - player.y, autoAimTarget.en.x - player.x);
     } else {
