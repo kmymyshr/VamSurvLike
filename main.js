@@ -1407,12 +1407,21 @@ const partnerNeglectStressedLines = [
 
 // ===== 全く攻撃せず長時間経過すると、同僚が叱咤しながら自機を攻撃してくる仕組み =====
 const partnerScoldAttackThresholdMs = 15000; // これだけ一切攻撃しないと叱咤攻撃が発生する
-const partnerScoldAttackIntervalMs = 8000; // 発生後、まだ攻撃していなければこの間隔で繰り返す
+const partnerScoldAttackIntervalMs = 4000; // 発生後、まだ攻撃していなければこの間隔で繰り返す
 let partnerScoldAttackTimerMs = 0;
 const partnerScoldAttackLines = [
   'いい加減にしてください！目、覚まさせますよ！',
   'ちゃんと働いてください！これでも喰らえ！',
   'サボってる暇はないんです！しっかりしてください！'
+];
+
+// ===== 関係性が0の間、定期的に怒りのコメントを表示する仕組み =====
+const partnerRelationshipZeroCommentIntervalMs = 6000;
+let partnerRelationshipZeroCommentTimerMs = 0;
+const partnerRelationshipZeroLines = [
+  'もう許せない！',
+  'この会社辞めて下さい！',
+  '近づかないで下さい！！'
 ];
 
 // ===== 同僚が当てた敵を自機が倒すと、お礼を言ってくれる仕組み =====
@@ -1839,12 +1848,15 @@ function updatePartner(dt) {
         }, null).en
         : null;
       // 関係性が閾値以下になると、悪化度に応じた確率で敵ではなく自分を狙う。
+      // 関係性が0まで落ちきった場合は、敵よりも自機を狙う頻度の方が高くなる
       const relationshipHostility = Math.max(0,
         (partnerRelationshipRetaliationThreshold - partner.relationship) /
         partnerRelationshipRetaliationThreshold);
-      const retaliationChance = partner.relationship <= partnerRelationshipRetaliationThreshold
-        ? 0.2 + relationshipHostility * 0.3
-        : 0;
+      const retaliationChance = partner.relationship <= 0
+        ? 0.7
+        : partner.relationship <= partnerRelationshipRetaliationThreshold
+          ? 0.2 + relationshipHostility * 0.3
+          : 0;
       const retaliating = Math.random() < retaliationChance;
       // 定時報告が出ている間は、通常の仕事より優先して狙う。
       const target = retaliating ? player : (scheduledReport || nearestEnemy);
@@ -3760,6 +3772,17 @@ function update() {
     }
   } else {
     partnerScoldAttackTimerMs = 0;
+  }
+
+  // 関係性が0の間、定期的に怒りのコメントを表示する
+  if (partner.active && partner.relationship <= 0) {
+    partnerRelationshipZeroCommentTimerMs += dt * 1000;
+    if (partnerRelationshipZeroCommentTimerMs >= partnerRelationshipZeroCommentIntervalMs) {
+      partnerRelationshipZeroCommentTimerMs = 0;
+      showRandomPartnerSpeechBubble(partnerRelationshipZeroLines, '#ff1744');
+    }
+  } else {
+    partnerRelationshipZeroCommentTimerMs = 0;
   }
 
   // 時々ランダムで、SAN・寿命の状態を反映した一言を同僚が呟く
