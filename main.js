@@ -180,6 +180,13 @@ function spawnHitSpark(x, y, big = false) {
     rays: Array.from({ length: big ? 8 : 5 }, () => Math.random() * Math.PI * 2)
   });
 }
+
+// ===== 役職スキル「連携力」で弾が反射した瞬間の専用エフェクト =====
+const synergyBeams = [];
+const synergyBeamDurationMs = 350;
+function spawnSynergyBeam(x1, y1, x2, y2) {
+  synergyBeams.push({ x1, y1, x2, y2, timer: synergyBeamDurationMs });
+}
 const baseFireRate = 350; // 基本の発射間隔（従来の半分、ミリ秒）
 let lastFire = 0;
 let score = 0;
@@ -2802,6 +2809,12 @@ function update() {
     if (hitSparks[hi].timer <= 0) hitSparks.splice(hi, 1);
   }
 
+  // 「連携力」の反射エフェクトの表示時間を減らす
+  for (let si = synergyBeams.length - 1; si >= 0; si--) {
+    synergyBeams[si].timer -= dt * 1000;
+    if (synergyBeams[si].timer <= 0) synergyBeams.splice(si, 1);
+  }
+
   // 爆発後の短い時間、Canvas全体をランダムに揺らす
   explosionFlashTimer = Math.max(0, explosionFlashTimer - dt * 1000);
   friendlyFireHitFlashTimer = Math.max(0, friendlyFireHitFlashTimer - dt * 1000);
@@ -3383,6 +3396,8 @@ function update() {
         if (nearestIndex >= 0) {
           synergyUsesToday++;
           synergyTriggered = true;
+          const targetEnemy = enemies[nearestIndex];
+          spawnSynergyBeam(partner.x, partner.y, targetEnemy.x, targetEnemy.y);
           showMessage('連携力発動！ 弾が最寄りの敵へ反射した', 1800, '#ffd54f');
           defeatEnemyInstantly(nearestIndex);
         }
@@ -4289,6 +4304,35 @@ function draw() {
     ctx.restore();
   }
 
+  // 「連携力」で弾が最寄りの敵へ反射した瞬間の稲妻状エフェクト
+  for (const beam of synergyBeams) {
+    const progress = 1 - beam.timer / synergyBeamDurationMs;
+    const alpha = Math.max(0, 1 - progress);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    // ジグザグの稲妻に見えるよう、中間点を少しランダムにずらして描く
+    const midX = (beam.x1 + beam.x2) / 2 + (Math.sin(gameClockMs / 20 + beam.x1) * 12);
+    const midY = (beam.y1 + beam.y2) / 2 + (Math.cos(gameClockMs / 20 + beam.y1) * 12);
+    ctx.strokeStyle = '#ffd54f';
+    ctx.lineWidth = 5;
+    ctx.shadowColor = '#ffd54f';
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.moveTo(beam.x1, beam.y1);
+    ctx.lineTo(midX, midY);
+    ctx.lineTo(beam.x2, beam.y2);
+    ctx.stroke();
+    ctx.strokeStyle = '#fff9e6';
+    ctx.lineWidth = 2;
+    ctx.shadowBlur = 0;
+    ctx.beginPath();
+    ctx.moveTo(beam.x1, beam.y1);
+    ctx.lineTo(midX, midY);
+    ctx.lineTo(beam.x2, beam.y2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   // 回復アイテムを描く。消滅直前は一定間隔で表示を切り替えて点滅させる
   if (chocolate) {
     const shouldShowChocolate = chocolate.remainingMs > chocolateBlinkMs ||
@@ -4568,6 +4612,20 @@ function draw() {
     { text: `Rank: ${rank} ${rankNames[rank - 1]}` },
     { text: `Skill:${skillLevel}  EXP:${Math.floor(exp)}` }
   ], false, 0, genderImageElements[selectedPlayerIcon], 46);
+
+  // 役職スキル「連携力」が有効な場合、プロフィール区画内に点滅する小さなアイコンで状態を示す
+  if (rankSkillLevels.has('synergy')) {
+    const remainingSynergyUses = synergyDailyLimit - synergyUsesToday;
+    const synergyBlinkOn = Math.floor(gameClockMs / 500) % 2 === 0;
+    ctx.save();
+    ctx.globalAlpha = synergyBlinkOn ? 1 : 0.35;
+    ctx.font = '13px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = remainingSynergyUses > 0 ? '#ffd54f' : '#757575';
+    ctx.fillText(`🔗連携力 残${Math.max(0, remainingSynergyUses)}`, 21, 222);
+    ctx.restore();
+  }
 
   const partnerUnavailable = !partner.active;
   const partnerTitle = selectedPartnerIcon === null
