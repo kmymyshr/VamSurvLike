@@ -743,6 +743,97 @@ const partnerQuizCorrectLines = [
   'いや、それくらい自分でも分かってましたよ'
 ];
 
+// ===== 同僚への誤射・同僚からの誤射に対するコメント =====
+const partnerHitByPlayerLines = [
+  'いたっ！',
+  '何するんですか！',
+  'ちょっと、危ないですよ！',
+  'もう、狙ってやってません…？',
+  '痛いです…気をつけてください！'
+];
+const partnerHitPlayerLines = [
+  'ごめんなさい！',
+  '邪魔しないでください！',
+  '私は悪くないです！',
+  'わっ、すみません！',
+  '当たるところにいるのが悪いんです！'
+];
+
+// ===== 自機がstunしたときの同僚のコメント =====
+const partnerStunWorryLines = [
+  '大丈夫ですか！？',
+  'しっかりしてください…！',
+  'ちょっと、寝てる場合じゃないですよ！',
+  '無理しないでくださいね…',
+  '大丈夫ですか、しんどそうですけど…'
+];
+
+// ===== SAN・寿命の状態を反映した、同僚のランダムな一言 =====
+const partnerStatusCommentIntervalMs = 20000; // これくらいの間隔でコメントするか判定する
+const partnerStatusCommentChance = 0.4; // 判定時にコメントする確率
+let partnerStatusCommentTimerMs = 0;
+
+const partnerStatusSanLowLines = [
+  'かなり疲れた顔してますよ…大丈夫ですか？',
+  'SAN、削れてきてませんか…？',
+  '無理しすぎじゃないですか…心配です',
+  '顔色悪いですよ、休めるときに休んでくださいね',
+  'メンタル、もちますか…？',
+  'ちょっと様子がおかしいですよ…'
+];
+const partnerStatusSanMidLines = [
+  'まあまあ調子は良さそうですね',
+  '悪くない感じですね、この調子で',
+  'ぼちぼち頑張りましょう',
+  'まだ余裕はありそうですね',
+  '普通にやれてると思いますよ'
+];
+const partnerStatusSanHighLines = [
+  '今日は調子良さそうですね！',
+  'メンタル絶好調じゃないですか！',
+  'いい顔してますね、その調子です！',
+  '余裕そうで何よりです',
+  '今なら何でもできそうですね！'
+];
+const partnerStatusLifespanLowLines = [
+  '……最近、根詰めすぎじゃないですか？',
+  '体、大丈夫ですか…本当に心配です',
+  'そろそろ休んだほうがいいと思います…',
+  '無理は禁物ですよ、本当に…',
+  'このままだと倒れちゃいますよ…？',
+  '少しでいいので、休んでください…'
+];
+const partnerStatusLifespanMidLines = [
+  '無理しすぎない程度に頑張りましょう',
+  'ぼちぼち、健康にも気をつけてくださいね',
+  'まだ大丈夫そうですけど、油断は禁物ですよ',
+  '適度に休憩も挟みましょうね'
+];
+const partnerStatusLifespanHighLines = [
+  '元気そうで安心しました！',
+  '体調は良さそうですね！',
+  'その元気、見習いたいです',
+  '絶好調ですね、羨ましいです！'
+];
+
+// SAN・寿命どちらかの状態を反映した一言をランダムに表示する
+function triggerPartnerStatusComment() {
+  if (!partner.active) return;
+  if (Math.random() < 0.5) {
+    const ratio = san / maxSan;
+    const pool = ratio <= 0.3 ? partnerStatusSanLowLines
+      : ratio <= 0.7 ? partnerStatusSanMidLines
+      : partnerStatusSanHighLines;
+    showRandomPartnerSpeechBubble(pool, '#ce93d8');
+  } else {
+    const ratio = lifespan / maxLifespan;
+    const pool = ratio <= 0.3 ? partnerStatusLifespanLowLines
+      : ratio <= 0.7 ? partnerStatusLifespanMidLines
+      : partnerStatusLifespanHighLines;
+    showRandomPartnerSpeechBubble(pool, '#80cbc4');
+  }
+}
+
 const partner = {
   active: false, // 「同僚なし」を選んだ場合や、力尽きた後はfalseのまま
   x: 0, y: 0, angle: 0,
@@ -813,6 +904,7 @@ function damagePlayerByFriendlyFire() {
   friendlyFireHitFlashTimer = friendlyFireHitEffectDuration;
   explosionShakeTimer = Math.max(explosionShakeTimer, friendlyFireHitEffectDuration);
   checkVitalsGameOver('bad-partner-shot');
+  showRandomPartnerSpeechBubble(partnerHitPlayerLines, '#ffab91');
   return true;
 }
 
@@ -822,6 +914,7 @@ function damagePartnerByFriendlyFire() {
     specialSkillEffects.partnerSanDamageMultiplier * specialSkillEffects.friendlyFireDamageMultiplier);
   partner.lifespan = Math.max(0, partner.lifespan - partnerFriendlyFireLifespanDamage * specialSkillEffects.friendlyFireDamageMultiplier);
   partner.friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
+  showRandomPartnerSpeechBubble(partnerHitByPlayerLines, '#ff8a65');
   partner.relationship = Math.max(0,
     partner.relationship - partnerRelationshipDamagePerHit);
   return true;
@@ -2453,6 +2546,7 @@ function update() {
             fatigue = maxFatigue;
             stunned = true;
             stunTimer = stunDuration * specialSkillEffects.stunDurationMultiplier;
+            if (partner.active) showRandomPartnerSpeechBubble(partnerStunWorryLines, '#90caf9');
             // 疲労が限界に達したら行動不能にし、SANも減らす
             const sanMultiplier = Math.max(0.5, 1 - skillLevel * 0.04);
             damageSan(Math.ceil(
@@ -2484,6 +2578,15 @@ function update() {
     }
   } else {
     partnerNeglectTimerMs = 0;
+  }
+
+  // 時々ランダムで、SAN・寿命の状態を反映した一言を同僚が呟く
+  partnerStatusCommentTimerMs += dt * 1000;
+  if (partnerStatusCommentTimerMs >= partnerStatusCommentIntervalMs) {
+    partnerStatusCommentTimerMs = 0;
+    if (Math.random() < partnerStatusCommentChance) {
+      triggerPartnerStatusComment();
+    }
   }
 
   // 敵をプレイヤーへ向けて移動する。当たり判定の半径は固定
