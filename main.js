@@ -3250,6 +3250,128 @@ function performBulletParry(bullet, fromX, fromY, actorAngle) {
   spawnDeflectEffect(bullet.x, bullet.y);
 }
 
+// ===== ラスボス（自機・同僚のSANが同時に20を切ると出現する、名状しがたい巨大な敵） =====
+// 通常の敵は出現を止め、パリィで打ち返した弾だけが有効打になる特別な戦闘に切り替わる
+const bossSanTriggerThreshold = 20;
+const bossWidthRatio = 0.7; // 画面幅に対するラスボスの幅の割合
+const bossHeight = 210; // ラスボスが窓を覆う高さ
+const bossDescendDurationSec = 4.5; // 降りてくるのにかかる時間
+const bossHoleCount = 5; // 弾を撃ってくる「穴」の数
+const bossFireIntervalMs = 1300;
+const bossBulletSpeed = 4.2;
+const bossBulletDamageSan = 12;
+const bossBulletDamageLifespan = 3;
+const bossMaxHp = 500;
+let bossEventOnCooldown = false; // 一度発生したら、両者のSANが閾値を上回るまで再発生しない
+let bossEvent = null; // null、または { phase: 'descending'|'active', descendProgress, hp, maxHp, fireTimerMs, savedEnemies }
+
+function getBossGeometry() {
+  const width = canvas.width * bossWidthRatio;
+  const x = (canvas.width - width) / 2;
+  const descendProgress = bossEvent ? bossEvent.descendProgress : 0;
+  const topY = -bossHeight + bossHeight * descendProgress;
+  return { x, y: topY, width, height: bossHeight };
+}
+
+// 両者のSANが同時に閾値を切ったら、ラスボス出現を開始する（発生中・クールダウン中は何もしない）
+function checkBossEventTrigger() {
+  if (bossEvent || !partner.active) return;
+  const bothLow = san < bossSanTriggerThreshold && partner.san < bossSanTriggerThreshold;
+  if (bothLow && !bossEventOnCooldown) {
+    startBossEvent();
+    bossEventOnCooldown = true;
+  } else if (!bothLow) {
+    bossEventOnCooldown = false;
+  }
+}
+
+function startBossEvent() {
+  bossEvent = {
+    phase: 'descending',
+    descendProgress: 0,
+    hp: bossMaxHp,
+    maxHp: bossMaxHp,
+    fireTimerMs: bossFireIntervalMs,
+    savedEnemies: enemies.slice()
+  };
+  enemies.length = 0; // 通常の敵は一時的に退避させ、ラスボス戦の間は出現しない
+  showMessage('……何かが、窓の向こうから降りてくる。', 3400, '#ff1744', '26px sans-serif');
+}
+
+function updateBossEvent(dt) {
+  if (bossEvent.phase === 'descending') {
+    bossEvent.descendProgress = Math.min(1, bossEvent.descendProgress + dt / bossDescendDurationSec);
+    if (bossEvent.descendProgress >= 1) {
+      bossEvent.phase = 'active';
+      showMessage('ラスボスが姿を現した！ パリィで弾を打ち返せ！', 3600, '#ff1744', '24px sans-serif');
+    }
+    return;
+  }
+  bossEvent.fireTimerMs -= dt * 1000;
+  if (bossEvent.fireTimerMs <= 0) {
+    bossEvent.fireTimerMs = bossFireIntervalMs;
+    fireBossBullets();
+  }
+}
+
+// ラスボスの「穴」の位置（画面座標）を配列で返す
+function getBossHolePositions() {
+  const geo = getBossGeometry();
+  const holes = [];
+  for (let i = 0; i < bossHoleCount; i++) {
+    const hx = geo.x + (geo.width / (bossHoleCount + 1)) * (i + 1);
+    const hy = geo.y + geo.height * 0.65;
+    holes.push({ x: hx, y: hy });
+  }
+  return holes;
+}
+
+function fireBossBullets() {
+  for (const hole of getBossHolePositions()) {
+    const angle = Math.atan2(player.y - hole.y, player.x - hole.x) + (Math.random() - 0.5) * 0.35;
+    bullets.push({
+      x: hole.x,
+      y: hole.y,
+      vx: Math.cos(angle) * bossBulletSpeed,
+      vy: Math.sin(angle) * bossBulletSpeed,
+      radius: 7,
+      damage: 1,
+      bounces: 0,
+      owner: 'boss'
+    });
+  }
+}
+
+// ラスボスの当たり判定は、見た目の矩形に対する単純な範囲判定にする
+function isPointInBossHitbox(x, y) {
+  if (!bossEvent || bossEvent.phase !== 'active') return false;
+  const geo = getBossGeometry();
+  return x >= geo.x && x <= geo.x + geo.width && y >= geo.y && y <= geo.y + geo.height;
+}
+
+// 同僚と同じ誤射ダメージ量で、ラスボス弾による被弾を処理する（パリィ成功時はここに来ない）
+function damagePlayerByBossBullet() {
+  if (friendlyFireInvincibleTimer > 0) return;
+  if (playerBarrierCharges > 0) {
+    playerBarrierCharges--;
+    friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
+    return;
+  }
+  san = Math.max(0, san - bossBulletDamageSan * specialSkillEffects.sanDamageMultiplier);
+  lifespan = Math.max(0, lifespan - bossBulletDamageLifespan);
+  friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
+  friendlyFireHitFlashTimer = friendlyFireHitEffectDuration;
+  explosionShakeTimer = Math.max(explosionShakeTimer, friendlyFireHitEffectDuration);
+  checkVitalsGameOver();
+}
+
+function defeatBossEvent() {
+  showMessage('ラスボスを退けた！ 日常が戻ってくる……', 3800, '#69f0ae', '26px sans-serif');
+  enemies.push(...bossEvent.savedEnemies);
+  score += 200;
+  bossEvent = null;
+}
+
 // ===== パリィ（バットのように、タイミングよく振ると同僚弾を最寄りの敵へ打ち返す） =====
 const deflectRange = 90; // これより近くにある同僚弾だけをパリィできる（やや緩めの判定）
 const partnerParryChance = 0.3; // 同僚が自機弾の誤射を受けそうな時、デフォルトでパリィする確率
@@ -3262,7 +3384,7 @@ function attemptDeflectPartnerBullet() {
   let target = null;
   let targetDist = Infinity;
   for (const b of bullets) {
-    if (b.owner !== 'partner') continue;
+    if (b.owner !== 'partner' && b.owner !== 'boss') continue;
     const d = Math.hypot(b.x - player.x, b.y - player.y);
     if (d <= deflectRange + b.radius && d < targetDist) {
       target = b;
@@ -3294,7 +3416,7 @@ function computeFullAutoDodgeVector(dt) {
   let vx = 0, vy = 0;
   let hasThreat = false;
   for (const b of bullets) {
-    if (b.owner !== 'partner') continue;
+    if (b.owner !== 'partner' && b.owner !== 'boss') continue;
     const speed = Math.hypot(b.vx, b.vy) || 1;
     const dirX = b.vx / speed;
     const dirY = b.vy / speed;
@@ -3665,6 +3787,12 @@ function update() {
     if (gameOver || deathSequence) return;
   }
 
+  // ラスボスの発生判定・進行を処理する。発生中は時間経過・通常の敵の出現を止め、
+  // ラスボスとだけ戦う特別な状況にする
+  checkBossEventTrigger();
+  if (bossEvent) {
+    updateBossEvent(dt);
+  } else {
   // ゲーム内時刻を進める
   if (now - lastHourTime >= hourMs) {
     const passed = Math.floor((now - lastHourTime) / hourMs);
@@ -3706,6 +3834,7 @@ function update() {
     } else {
       spawnWave(scheduledReport ? 1 : maxEnemies);
     }
+  }
   }
 
   // 各敵の納期をカウントダウンし、0になった敵を爆発させる
@@ -4252,6 +4381,28 @@ function update() {
       bullets.splice(i, 1);
       if (gameOver || deathSequence) return;
       continue;
+    } else if (b.owner === 'boss' &&
+        Math.hypot(b.x - player.x, b.y - player.y) <= b.radius + player.radius) {
+      // 特殊スキル「オートパリィ」：ラスボス弾に対しても被弾しそうな瞬間に自動でパリィする
+      if (Math.random() < specialSkillEffects.autoParryChance) {
+        performBulletParry(b, player.x, player.y, player.angle);
+        spawnSlashEffect(player.x, player.y, player.angle, player.radius);
+        showMessage('オートパリィ発動！', 1400, '#fff176');
+        continue;
+      }
+      damagePlayerByBossBullet();
+      bullets.splice(i, 1);
+      if (gameOver || deathSequence) return;
+      continue;
+    }
+    // ラスボスへの命中判定。パリィで打ち返した弾（'deflected'）だけが有効打になり、通常の弾は素通りする
+    if (bossEvent && bossEvent.phase === 'active' && b.owner === 'deflected' &&
+        isPointInBossHitbox(b.x, b.y)) {
+      bossEvent.hp -= (b.damage || 1);
+      spawnHitSpark(b.x, b.y, true);
+      bullets.splice(i, 1);
+      if (bossEvent.hp <= 0) defeatBossEvent();
+      continue;
     }
     // 固定ターゲット「定時報告」への命中判定
     if (scheduledReport &&
@@ -4645,6 +4796,92 @@ function drawBackground() {
   // 背景を少し薄暗くして、敵・アイコン・文字などの前景を見やすくする
   ctx.fillStyle = 'rgba(6, 10, 18, 0.3)';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+// ラスボス出現中の画面演出（暗く赤みがかった夜のような雰囲気）と、仮の見た目を描く
+function drawBossEvent() {
+  if (!bossEvent) return;
+  const geo = getBossGeometry();
+
+  // 画面全体を、赤黒く沈んだ夜のような色合いに染める
+  ctx.save();
+  const dusk = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  dusk.addColorStop(0, 'rgba(60, 0, 0, 0.55)');
+  dusk.addColorStop(0.45, 'rgba(20, 0, 10, 0.35)');
+  dusk.addColorStop(1, 'rgba(0, 0, 0, 0.45)');
+  ctx.fillStyle = dusk;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
+
+  // ラスボス本体（正式な画像を用意するまでの仮の見た目）：
+  // 不定形にうごめく暗いかたまり＋ゆらぐ触手＋赤く光る眼（穴）
+  ctx.save();
+  ctx.fillStyle = 'rgba(12, 4, 22, 0.96)';
+  const bumps = 7;
+  ctx.beginPath();
+  ctx.moveTo(geo.x, geo.y);
+  for (let i = 0; i <= bumps; i++) {
+    const t = i / bumps;
+    const bx = geo.x + geo.width * t;
+    const wob = Math.sin(gameClockMs / 400 + i * 1.7) * 10;
+    const by = geo.y + geo.height * 0.85 + wob;
+    ctx.lineTo(bx, by);
+  }
+  ctx.lineTo(geo.x + geo.width, geo.y);
+  ctx.closePath();
+  ctx.fill();
+
+  // 触手：下端からゆらゆら垂れ下がる線
+  ctx.strokeStyle = 'rgba(12, 4, 22, 0.9)';
+  ctx.lineWidth = 10;
+  ctx.lineCap = 'round';
+  for (let i = 0; i < bossHoleCount + 2; i++) {
+    const tx = geo.x + (geo.width / (bossHoleCount + 1)) * i;
+    const sway = Math.sin(gameClockMs / 350 + i * 2.1) * 18;
+    ctx.beginPath();
+    ctx.moveTo(tx, geo.y + geo.height * 0.85);
+    ctx.quadraticCurveTo(tx + sway, geo.y + geo.height + 20, tx + sway * 1.4, geo.y + geo.height + 46);
+    ctx.stroke();
+  }
+
+  // 弾を撃ってくる「穴」の位置に、赤く脈打つ眼を描く
+  for (const hole of getBossHolePositions()) {
+    const pulse = 0.6 + 0.4 * Math.sin(gameClockMs / 220 + hole.x);
+    ctx.beginPath();
+    ctx.fillStyle = `rgba(255, 30, 30, ${0.7 * pulse})`;
+    ctx.shadowColor = '#ff1744';
+    ctx.shadowBlur = 14;
+    ctx.arc(hole.x, hole.y, 12, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+    ctx.beginPath();
+    ctx.arc(hole.x, hole.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // HPバー（降りきって本格的な戦闘が始まってから表示する）
+  if (bossEvent.phase === 'active') {
+    const barW = canvas.width * 0.6;
+    const barX = (canvas.width - barW) / 2;
+    const barY = geo.y + geo.height + 60;
+    const hpRatio = Math.max(0, bossEvent.hp / bossEvent.maxHp);
+    ctx.save();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(barX, barY, barW, 16);
+    ctx.fillStyle = '#ff1744';
+    ctx.fillRect(barX, barY, barW * hpRatio, 16);
+    ctx.strokeStyle = 'white';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(barX, barY, barW, 16);
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('ラスボス', canvas.width / 2, barY - 8);
+    ctx.textAlign = 'left';
+    ctx.restore();
+  }
 }
 
 // 時刻の端数も使い、1時間ごとの段差ではなく滑らかに明暗を変える。
@@ -5211,6 +5448,7 @@ function draw() {
   }
 
   drawBackground();
+  drawBossEvent();
   // 画面端に固定で置かれた、コーヒーメーカーと冷蔵庫
   drawStation(coffeeMakerPosition.x, coffeeMakerPosition.y, '☕', 'COFFEE', '#a1887f');
   drawStation(fridgePosition.x, fridgePosition.y, '🧊', 'FRIDGE', '#80deea');
