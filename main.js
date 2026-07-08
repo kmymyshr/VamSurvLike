@@ -95,6 +95,12 @@ const dreamMemoryUpgradeDefs = [
     id: 'gutsGuard', label: '根性',
     describeLevel: () => '寿命が0になる攻撃を受けても寿命1で耐え、寿命20まで回復する。回復後5秒間は寿命が減らない',
     maxLevel: 1
+  },
+  {
+    id: 'invincibleTest', label: '無敵（テスト用）',
+    describeLevel: () => 'SAN・寿命が0にならず、脳疲労も常に0のままになる（テスト用）',
+    maxLevel: 1,
+    costOverride: 1
   }
 ];
 // 現在のレベルから次のレベルへ上げるのに必要な夢の記憶ポイント数
@@ -1253,6 +1259,12 @@ let gutsGuardFloor = 0;
 // どちらが尽きたかで演出とバッドエンドの種類を分ける
 function checkVitalsGameOver(deathEndingType = null) {
   if (gameOver || deathSequence) return;
+  // 「無敵（テスト用）」：SAN・寿命が0にならないようにする
+  if (dreamMemorySave.upgrades.invincibleTest >= 1) {
+    san = Math.max(san, 1);
+    lifespan = Math.max(lifespan, 1);
+    return;
+  }
   if (san <= 0) {
     if (dreamMemorySave.upgrades.prayerGuard >= 1 && prayerGuardTimerMs <= 0) {
       san = guardReviveValue;
@@ -4778,6 +4790,8 @@ function update() {
 
   // 疲労値が0～最大値の範囲を超えないようにする
   fatigue = Math.max(0, Math.min(maxFatigue, fatigue));
+  // 「無敵（テスト用）」：脳疲労を常に0のままにする
+  if (dreamMemorySave.upgrades.invincibleTest >= 1) fatigue = 0;
 
   // 「祈る」「根性」発動直後の5秒間は、この間に受けたダメージ分を打ち消してSAN・寿命を維持する
   if (prayerGuardTimerMs > 0) {
@@ -5752,9 +5766,9 @@ function draw() {
     const gridX = 40;
     const gridWidth = canvas.width - gridX * 2;
     const cellWidth = (gridWidth - colGap * (cols - 1)) / cols;
-    const cellHeight = 58;
-    const cellGap = 8;
-    const gridStartY = 68;
+    const cellHeight = 52;
+    const cellGap = 6;
+    const gridStartY = 64;
     const rows = Math.ceil(dreamMemoryUpgradeDefs.length / cols);
 
     dreamMemoryUpgradeDefs.forEach((def, index) => {
@@ -5775,20 +5789,20 @@ function draw() {
       ctx.lineWidth = 1;
       ctx.strokeRect(cellX, cellY, cellWidth, cellHeight);
 
-      const btnW = 100, btnH = 24;
+      const btnW = 100, btnH = 22;
       const btnX = cellX + cellWidth - btnW - 10;
-      const btnY = cellY + cellHeight - btnH - 8;
+      const btnY = cellY + cellHeight - btnH - 6;
       const textMaxWidth = cellWidth - 20;
 
       ctx.fillStyle = 'white';
       ctx.font = 'bold 13px sans-serif';
-      ctx.fillText(`${def.label}  Lv.${level}/${maxLevel}`, cellX + 10, cellY + 16);
+      ctx.fillText(`${def.label}  Lv.${level}/${maxLevel}`, cellX + 10, cellY + 14);
       ctx.fillStyle = '#cfd8dc';
       ctx.font = '11px sans-serif';
       const descText = maxed ? '既に最大レベルまで強化済み' : def.describeLevel(level + 1);
       const descLines = wrapTextToWidth(descText, textMaxWidth).slice(0, 2);
       descLines.forEach((line, i) => {
-        ctx.fillText(line, cellX + 10, cellY + 31 + i * 13);
+        ctx.fillText(line, cellX + 10, cellY + 27 + i * 12);
       });
 
       if (maxed) {
@@ -5814,8 +5828,8 @@ function draw() {
     });
 
     const gridBottom = gridStartY + rows * (cellHeight + cellGap) - cellGap;
-    const backBtnW = 200, backBtnH = 32;
-    drawUiButton(canvas.width / 2 - backBtnW / 2, gridBottom + 10, backBtnW, backBtnH,
+    const backBtnW = 200, backBtnH = 28;
+    drawUiButton(canvas.width / 2 - backBtnW / 2, gridBottom + 8, backBtnW, backBtnH,
       '強化終了', () => { dreamMemoryShopActive = false; },
       { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
     return;
