@@ -1143,6 +1143,8 @@ function processTimedHourEvents(previousHour, newHour) {
     if (hour === lunchHour) startLunchEvent();
     if (hour === lunchExpirationHour) beginLunchExpiration();
     if (hour === scheduledReportHour) spawnScheduledReport();
+    // DAY7ごとの18時に「巨大案件」（中ボス）が発生する
+    if (hour === dayEndHour && dayNumber % 7 === 0 && !midBossEvent) startMidBossEvent();
     const weekday = currentDate.getDay();
     const isWeekday = weekday >= 1 && weekday <= 5 && !isHoliday(currentDate);
     if (isWeekday && quizHours.includes(hour) && weeklyQuizCount < maxWeeklyQuizCount && !quizState &&
@@ -3333,9 +3335,12 @@ const parryBulletSpeedMultiplier = 1.5; // パリィした弾は、パリィ前�
 function performBulletParry(bullet, fromX, fromY, actorAngle) {
   const speed = (Math.hypot(bullet.vx, bullet.vy) || 6) * parryBulletSpeedMultiplier;
   let angle;
-  if (bullet.sourceHole && bossEvent && !bullet.sourceHole.destroyed) {
-    // ラスボス弾は、それを撃った発射口へ打ち返す
-    const holePos = getBossHoleAbsolutePosition(bullet.sourceHole);
+  if (bullet.sourceHole && !bullet.sourceHole.destroyed &&
+      (bullet.sourceHoleKind === 'midBoss' ? midBossEvent : bossEvent)) {
+    // ラスボス・中ボス弾は、それを撃った発射口へ打ち返す
+    const holePos = bullet.sourceHoleKind === 'midBoss'
+      ? getMidBossHoleAbsolutePosition(bullet.sourceHole)
+      : getBossHoleAbsolutePosition(bullet.sourceHole);
     angle = Math.atan2(holePos.y - bullet.y, holePos.x - bullet.x);
   } else {
     const nearest = findNearestEnemyTo(fromX, fromY);
@@ -3595,7 +3600,8 @@ function fireBossBullets() {
       damage: 1,
       bounces: 0,
       owner: 'boss',
-      sourceHole: hole // パリィで打ち返した時、この発射口へ向けて反射させるために覚えておく
+      sourceHole: hole, // パリィで打ち返した時、この発射口へ向けて反射させるために覚えておく
+      sourceHoleKind: 'boss'
     });
   }
 }
@@ -3692,6 +3698,184 @@ function finishBossTrueEnd() {
   location.reload();
 }
 
+// ===== 中ボス「巨大案件」（DAY7ごと・18時に出現する）=====
+// ラスボスと似た動作（発射口・移動・退場演出）だが、通常攻撃でも発射口を破壊できる
+const midBossWidthRatio = 0.4; // 画面幅に対する矩形の幅の割合
+const midBossHeight = 90;
+const midBossDescendDurationSec = 2.5;
+const midBossHoleCount = 3;
+const midBossHoleRadius = 14;
+const midBossHoleFlashDurationMs = 220;
+const midBossFireIntervalMs = 1300;
+const midBossBulletSpeed = 4.0;
+const midBossBulletDamageSan = 8;
+const midBossBulletDamageLifespan = 2;
+const midBossMoveRangeX = 30;
+const midBossMoveRangeY = 16;
+const midBossHitsPerHoleBase = 100; // DAY7時点の耐久力（自機初期状態の通常攻撃100発相当）
+const midBossScoreReward = 150; // 通常の敵より多めのスコア
+const midBossRetreatDurationMs = 3000; // 振動・フェードアウトして消えるまでの時間
+let midBossEvent = null; // null、または { phase, holes, hitsPerHole, descendProgress, fireTimerMs, offsetX, offsetY, moveTargetX, moveTargetY, moveTimerMs, retreatTimerMs }
+
+// DAY7=1倍、DAY14=2倍、DAY21=3倍、DAY28以降=5倍（暫定）
+function getMidBossDurabilityMultiplier(day) {
+  const cycle = Math.round(day / 7);
+  if (cycle <= 1) return 1;
+  if (cycle === 2) return 2;
+  if (cycle === 3) return 3;
+  return 5;
+}
+
+function getMidBossGeometry() {
+  const width = canvas.width * midBossWidthRatio;
+  const offsetX = midBossEvent ? midBossEvent.offsetX : 0;
+  const offsetY = (midBossEvent && midBossEvent.phase === 'active') ? midBossEvent.offsetY : 0;
+  const x = (canvas.width - width) / 2 + offsetX;
+  const descendProgress = midBossEvent ? midBossEvent.descendProgress : 0;
+  const topY = -midBossHeight + midBossHeight * descendProgress + offsetY;
+  return { x, y: topY, width, height: midBossHeight };
+}
+
+function generateMidBossHoles() {
+  const holes = [];
+  for (let i = 0; i < midBossHoleCount; i++) {
+    holes.push({ relX: (i + 1) / (midBossHoleCount + 1), relY: 0.6, hitsTaken: 0, destroyed: false, flashTimerMs: 0 });
+  }
+  return holes;
+}
+
+function getMidBossHoleAbsolutePosition(hole) {
+  const geo = getMidBossGeometry();
+  return { x: geo.x + geo.width * hole.relX, y: geo.y + geo.height * hole.relY };
+}
+
+function startMidBossEvent() {
+  midBossEvent = {
+    phase: 'descending',
+    descendProgress: 0,
+    holes: generateMidBossHoles(),
+    hitsPerHole: Math.round(midBossHitsPerHoleBase * getMidBossDurabilityMultiplier(dayNumber)),
+    fireTimerMs: midBossFireIntervalMs,
+    offsetX: 0, offsetY: 0, moveTargetX: 0, moveTargetY: 0, moveTimerMs: 0,
+    retreatTimerMs: 0
+  };
+  showMessage('「巨大案件」が発生した！ 定時までに片付けられず、居残りが確定した……', 3800, '#ff8a65', '22px sans-serif');
+}
+
+function updateMidBossEvent(dt) {
+  if (midBossEvent.phase === 'descending') {
+    midBossEvent.descendProgress = Math.min(1, midBossEvent.descendProgress + dt / midBossDescendDurationSec);
+    if (midBossEvent.descendProgress >= 1) {
+      midBossEvent.phase = 'active';
+      showMessage('「巨大案件」出現！ 発射口を破壊して片付けろ！', 3000, '#ff8a65', '22px sans-serif');
+    }
+    return;
+  }
+  if (midBossEvent.phase === 'retreat') {
+    midBossEvent.retreatTimerMs += dt * 1000;
+    if (midBossEvent.retreatTimerMs >= midBossRetreatDurationMs) {
+      finishMidBossEvent();
+    }
+    return;
+  }
+
+  // 本体が上下左右にゆっくり動き回る
+  midBossEvent.moveTimerMs -= dt * 1000;
+  if (midBossEvent.moveTimerMs <= 0) {
+    midBossEvent.moveTargetX = (Math.random() * 2 - 1) * midBossMoveRangeX;
+    midBossEvent.moveTargetY = (Math.random() * 2 - 1) * midBossMoveRangeY;
+    midBossEvent.moveTimerMs = 1200 + Math.random() * 1400;
+  }
+  const moveEase = Math.min(1, dt * bossMoveEaseFactor);
+  midBossEvent.offsetX += (midBossEvent.moveTargetX - midBossEvent.offsetX) * moveEase;
+  midBossEvent.offsetY += (midBossEvent.moveTargetY - midBossEvent.offsetY) * moveEase;
+
+  for (const hole of midBossEvent.holes) {
+    if (hole.flashTimerMs > 0) hole.flashTimerMs = Math.max(0, hole.flashTimerMs - dt * 1000);
+  }
+
+  midBossEvent.fireTimerMs -= dt * 1000;
+  if (midBossEvent.fireTimerMs <= 0) {
+    midBossEvent.fireTimerMs = midBossFireIntervalMs;
+    fireMidBossBullets();
+  }
+}
+
+function fireMidBossBullets() {
+  for (const hole of midBossEvent.holes) {
+    if (hole.destroyed) continue;
+    const pos = getMidBossHoleAbsolutePosition(hole);
+    const target = (partner.active && Math.random() < 0.5) ? partner : player;
+    const angle = Math.atan2(target.y - pos.y, target.x - pos.x) + (Math.random() - 0.5) * 0.3;
+    bullets.push({
+      x: pos.x, y: pos.y,
+      vx: Math.cos(angle) * midBossBulletSpeed,
+      vy: Math.sin(angle) * midBossBulletSpeed,
+      radius: 6, damage: 1, bounces: 0, owner: 'midBoss',
+      sourceHole: hole,
+      sourceHoleKind: 'midBoss'
+    });
+  }
+}
+
+function findHitMidBossHole(x, y) {
+  if (!midBossEvent || midBossEvent.phase !== 'active') return null;
+  for (const hole of midBossEvent.holes) {
+    if (hole.destroyed) continue;
+    const pos = getMidBossHoleAbsolutePosition(hole);
+    if (Math.hypot(x - pos.x, y - pos.y) <= midBossHoleRadius + 6) return hole;
+  }
+  return null;
+}
+
+function registerMidBossHoleHit(hole, hitX, hitY) {
+  hole.hitsTaken++;
+  hole.flashTimerMs = midBossHoleFlashDurationMs;
+  spawnHitSpark(hitX, hitY, hole.hitsTaken >= midBossEvent.hitsPerHole);
+  if (hole.hitsTaken < midBossEvent.hitsPerHole) return;
+  hole.destroyed = true;
+  if (!midBossEvent.holes.every(h => h.destroyed)) return;
+  score += midBossScoreReward;
+  showMessage(`「巨大案件」を片付けた！ Score +${midBossScoreReward}`, 2800, '#69f0ae', '22px sans-serif');
+  midBossEvent.phase = 'retreat';
+  midBossEvent.retreatTimerMs = 0;
+}
+
+// 「巨大案件」を撃破し終えた後：24時を過ぎていれば、その場ですぐに一日を終了する
+function finishMidBossEvent() {
+  midBossEvent = null;
+  if (currentHour >= dayEndHour && !gameOver && !deathSequence) {
+    endWorkday();
+  }
+}
+
+function damagePlayerByMidBossBullet() {
+  if (friendlyFireInvincibleTimer > 0) return;
+  if (playerBarrierCharges > 0) {
+    playerBarrierCharges--;
+    friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
+    return;
+  }
+  san = Math.max(0, san - midBossBulletDamageSan * specialSkillEffects.sanDamageMultiplier);
+  lifespan = Math.max(0, lifespan - midBossBulletDamageLifespan);
+  friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
+  friendlyFireHitFlashTimer = friendlyFireHitEffectDuration;
+  explosionShakeTimer = Math.max(explosionShakeTimer, friendlyFireHitEffectDuration);
+  checkVitalsGameOver();
+}
+
+function damagePartnerByMidBossBullet() {
+  if (!partner.active || partner.friendlyFireInvincibleTimer > 0) return;
+  if (partner.barrierCharges > 0) {
+    partner.barrierCharges--;
+    partner.friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
+    return;
+  }
+  partner.san = Math.max(0, partner.san - midBossBulletDamageSan);
+  partner.lifespan = Math.max(0, partner.lifespan - midBossBulletDamageLifespan);
+  partner.friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
+}
+
 // ===== パリィ（バットのように、タイミングよく振ると同僚弾を最寄りの敵へ打ち返す） =====
 const deflectRange = 90; // これより近くにある同僚弾だけをパリィできる（やや緩めの判定）
 // 同僚が被弾しそうな時にパリィする確率。デフォルト30%で、夢の記憶ポイントの
@@ -3705,7 +3889,7 @@ function attemptDeflectPartnerBullet() {
   spawnSlashEffect(player.x, player.y, player.angle, player.radius); // 命中の有無に関わらず、振った動作自体を見せる
   // 範囲内の条件を満たす弾は、まとめて同時にパリィする（1発だけに限らない）
   const targets = bullets.filter(b => {
-    if (b.owner !== 'partner' && b.owner !== 'boss') return false;
+    if (b.owner !== 'partner' && b.owner !== 'boss' && b.owner !== 'midBoss') return false;
     const d = Math.hypot(b.x - player.x, b.y - player.y);
     return d <= deflectRange + b.radius;
   });
@@ -3736,7 +3920,7 @@ function computeFullAutoDodgeVector(dt) {
   let vx = 0, vy = 0;
   let hasThreat = false;
   for (const b of bullets) {
-    if (b.owner !== 'partner' && b.owner !== 'boss') continue;
+    if (b.owner !== 'partner' && b.owner !== 'boss' && b.owner !== 'midBoss') continue;
     const speed = Math.hypot(b.vx, b.vy) || 1;
     const dirX = b.vx / speed;
     const dirY = b.vy / speed;
@@ -4120,6 +4304,12 @@ function update() {
     updateBossEvent(dt);
     if (gameOver || deathSequence) return;
   } else {
+  // 「巨大案件」（中ボス）の進行を処理する。通常の敵・時間経過は止めず並行して進む
+  if (midBossEvent) {
+    updateMidBossEvent(dt);
+    if (gameOver || deathSequence) return;
+  }
+
   // ゲーム内時刻を進める
   if (now - lastHourTime >= hourMs) {
     const passed = Math.floor((now - lastHourTime) / hourMs);
@@ -4127,8 +4317,14 @@ function update() {
     lastHourTime += passed * hourMs;
     currentHour += passed;
     processTimedHourEvents(previousHour, currentHour);
-    // 終業時刻になっても定時報告が残っていれば、24時まで残業として居残る
-    if (currentHour >= dayEndHour && scheduledReport && currentHour < maxOvertimeHour) {
+    // 「巨大案件」が残っていれば、24時になっても時刻をそこで止めて片付くまで居残る
+    if (midBossEvent && currentHour >= maxOvertimeHour) {
+      currentHour = maxOvertimeHour;
+      lastHourTime = gameClockMs;
+      return;
+    }
+    // 終業時刻になっても定時報告や「巨大案件」が残っていれば、24時まで残業として居残る
+    if (currentHour >= dayEndHour && (scheduledReport || midBossEvent) && currentHour < maxOvertimeHour) {
       if (previousHour < dayEndHour) {
         showMessage(`${dayEndHour}時：定時報告が終わらず残業に…（${maxOvertimeHour}時まで）`,
           3800, '#ff8a65', '22px sans-serif');
@@ -4142,8 +4338,8 @@ function update() {
     }
   }
 
-  // 残業中（定時報告が終わらないまま終業時刻を過ぎている間）は、SAN・寿命が継続的に削れていく
-  if (scheduledReport && currentHour >= dayEndHour) {
+  // 残業中（定時報告や「巨大案件」が残ったまま終業時刻を過ぎている間）は、SAN・寿命が継続的に削れていく
+  if ((scheduledReport || midBossEvent) && currentHour >= dayEndHour) {
     san = Math.max(0, san - overtimeSanDrainPerSec * dt);
     lifespan = Math.max(0, lifespan - overtimeLifespanDrainPerSec * dt);
     if (partner.active) {
@@ -4736,6 +4932,32 @@ function update() {
       bullets.splice(i, 1);
       if (gameOver || deathSequence) return;
       continue;
+    } else if (b.owner === 'midBoss' && partner.active &&
+        Math.hypot(b.x - partner.x, b.y - partner.y) <= b.radius + partner.radius) {
+      // 同僚のオートパリィ（「巨大案件」の弾に対しても同じ確率で発動する）
+      if (Math.random() < partnerParryChance) {
+        performBulletParry(b, partner.x, partner.y, partner.angle);
+        spawnSlashEffect(partner.x, partner.y, partner.angle, partner.radius);
+        showMessage('同僚がパリィ！', 1400, '#80deea');
+        showRandomPartnerSpeechBubbleIfFriendly(partnerParryLines, '#80deea');
+        continue;
+      }
+      damagePartnerByMidBossBullet();
+      bullets.splice(i, 1);
+      continue;
+    } else if (b.owner === 'midBoss' &&
+        Math.hypot(b.x - player.x, b.y - player.y) <= b.radius + player.radius) {
+      // 特殊スキル「オートパリィ」：「巨大案件」の弾に対しても同様に自動でパリィする
+      if (Math.random() < specialSkillEffects.autoParryChance) {
+        performBulletParry(b, player.x, player.y, player.angle);
+        spawnSlashEffect(player.x, player.y, player.angle, player.radius);
+        showMessage('オートパリィ発動！', 1400, '#fff176');
+        continue;
+      }
+      damagePlayerByMidBossBullet();
+      bullets.splice(i, 1);
+      if (gameOver || deathSequence) return;
+      continue;
     }
     // ラスボスへの命中判定。パリィで打ち返した弾（'deflected'）が発射口に当たった時だけ有効打になる。
     // 発射口以外に当たった弾や、通常の弾はそのまま素通りする
@@ -4743,6 +4965,15 @@ function update() {
       const hitHole = findHitBossHole(b.x, b.y);
       if (hitHole) {
         registerBossHoleHit(hitHole, b.x, b.y);
+        bullets.splice(i, 1);
+        continue;
+      }
+    }
+    // 「巨大案件」への命中判定。こちらは通常の攻撃（自機の弾）でも発射口を破壊できる
+    if (midBossEvent && (b.owner === 'player' || b.owner === 'deflected')) {
+      const hitMidHole = findHitMidBossHole(b.x, b.y);
+      if (hitMidHole) {
+        registerMidBossHoleHit(hitMidHole, b.x, b.y);
         bullets.splice(i, 1);
         continue;
       }
@@ -5306,6 +5537,81 @@ function drawBossFinalTransition() {
     ctx.fillText('END', canvas.width / 2, canvas.height / 2 + 140);
   }
   ctx.restore();
+}
+
+// 中ボス「巨大案件」の見た目を描く（正式な画像を用意するまでの仮の矩形）
+function drawMidBossEvent() {
+  if (!midBossEvent) return;
+  const geo = getMidBossGeometry();
+
+  const retreating = midBossEvent.phase === 'retreat';
+  const retreatProgress = retreating
+    ? Math.min(1, midBossEvent.retreatTimerMs / midBossRetreatDurationMs)
+    : 0;
+  const retreatAlpha = 1 - retreatProgress;
+  const retreatOffsetY = -retreatProgress * (midBossHeight + 200);
+  const retreatShakeX = retreating ? Math.sin(gameClockMs / 35) * 8 * (1 - retreatProgress * 0.3) : 0;
+
+  ctx.save();
+  ctx.globalAlpha = retreatAlpha;
+  const bodyX = geo.x + retreatShakeX;
+  const bodyY = geo.y + retreatOffsetY;
+  ctx.fillStyle = 'rgba(84, 60, 20, 0.92)';
+  ctx.fillRect(bodyX, bodyY, geo.width, geo.height);
+  ctx.strokeStyle = '#ffb74d';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(bodyX, bodyY, geo.width, geo.height);
+  ctx.fillStyle = '#ffe0b2';
+  ctx.font = 'bold 16px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('巨大案件', bodyX + geo.width / 2, bodyY + 22);
+  ctx.textAlign = 'left';
+
+  for (const hole of midBossEvent.holes) {
+    const pos = getMidBossHoleAbsolutePosition(hole);
+    const hx = pos.x + retreatShakeX;
+    const hy = pos.y + retreatOffsetY;
+    if (hole.destroyed) {
+      ctx.beginPath();
+      ctx.fillStyle = 'rgba(15, 15, 15, 0.85)';
+      ctx.arc(hx, hy, midBossHoleRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(90, 90, 90, 0.6)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      continue;
+    }
+    const pulse = 0.6 + 0.4 * Math.sin(gameClockMs / 220 + pos.x);
+    const damageRatio = hole.hitsTaken / midBossEvent.hitsPerHole;
+    ctx.beginPath();
+    ctx.fillStyle = `rgba(255, ${Math.round(140 + damageRatio * 60)}, 30, ${0.55 * pulse})`;
+    ctx.shadowColor = '#ff8a65';
+    ctx.shadowBlur = 14;
+    ctx.arc(hx, hy, midBossHoleRadius, 0, Math.PI * 2);
+    ctx.fill();
+    if (hole.flashTimerMs > 0) {
+      ctx.shadowBlur = 0;
+      ctx.beginPath();
+      ctx.fillStyle = `rgba(255, 255, 255, ${hole.flashTimerMs / midBossHoleFlashDurationMs})`;
+      ctx.arc(hx, hy, midBossHoleRadius * 1.3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+
+  if (midBossEvent.phase === 'active') {
+    const destroyedHoles = midBossEvent.holes.filter(h => h.destroyed).length;
+    ctx.save();
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(
+      `巨大案件：発射口 ${destroyedHoles}/${midBossEvent.holes.length} 破壊`,
+      canvas.width / 2, geo.y + geo.height + 20
+    );
+    ctx.textAlign = 'left';
+    ctx.restore();
+  }
 }
 
 // 時刻の端数も使い、1時間ごとの段差ではなく滑らかに明暗を変える。
@@ -5911,6 +6217,7 @@ function draw() {
 
   drawBackground();
   drawBossEvent();
+  drawMidBossEvent();
   // 画面端に固定で置かれた、コーヒーメーカーと冷蔵庫
   drawStation(coffeeMakerPosition.x, coffeeMakerPosition.y, '☕', 'COFFEE', '#a1887f');
   drawStation(fridgePosition.x, fridgePosition.y, '🧊', 'FRIDGE', '#80deea');
@@ -6545,7 +6852,31 @@ function draw() {
   ctx.fillStyle = holidayFlag ? '#ffeb3b' : 'white';
   const hourStr = String(currentHour).padStart(2,'0') + ':00';
   const dateStr = `DAY${dayNumber} ${currentDate.getFullYear()}/${String(currentDate.getMonth()+1).padStart(2,'0')}/${String(currentDate.getDate()).padStart(2,'0')} ${hourStr} (${yName})`;
-  ctx.fillText(dateStr, canvas.width - 12 - ctx.measureText(dateStr).width, 28);
+  const dateStrWidth = ctx.measureText(dateStr).width;
+  const dateStrX = canvas.width - 12 - dateStrWidth;
+  ctx.fillText(dateStr, dateStrX, 28);
+
+  // 「巨大案件」で24時のまま時刻が止まっている間、鉛筆で取り消し線を何本も引いたような見た目にする
+  if (midBossEvent && currentHour >= maxOvertimeHour) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(40, 40, 40, 0.8)';
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    const scribbleLineCount = 5;
+    for (let i = 0; i < scribbleLineCount; i++) {
+      const baseY = 12 + i * 5;
+      ctx.beginPath();
+      ctx.moveTo(dateStrX - 4, baseY + Math.sin(gameClockMs / 260 + i) * 2);
+      const segs = 6;
+      for (let s = 1; s <= segs; s++) {
+        const sx = dateStrX - 4 + (dateStrWidth + 8) * (s / segs);
+        const sy = baseY + (Math.random() - 0.5) * 4;
+        ctx.lineTo(sx, sy);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
 
   // 休日出勤中（土日）のみ表示する、切り上げて帰宅するためのボタン
   if ((currentDate.getDay() === 0 || currentDate.getDay() === 6) &&
