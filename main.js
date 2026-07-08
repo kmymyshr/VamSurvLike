@@ -412,7 +412,7 @@ function applyFatigueGain(amount) {
     } else {
       stunned = true;
       stunTimer = stunDuration * specialSkillEffects.stunDurationMultiplier;
-      if (partner.active) showRandomPartnerSpeechBubble(partnerStunWorryLines, '#90caf9', partnerStunWorryStressedLines);
+      if (partner.active) showRandomPartnerSpeechBubbleIfFriendly(partnerStunWorryLines, '#90caf9', partnerStunWorryStressedLines);
     }
     // 疲労が限界に達したら行動不能にし、SANも減らす
     const sanMultiplier = Math.max(0.5, 1 - skillLevel * 0.04);
@@ -1025,7 +1025,7 @@ function answerQuiz(answerIndex) {
       `クイズ正解！ ${quizState.category === 'it' ? 'IT知識' : 'コミュニケーション知識'}が上昇しました`,
       2200, '#69f0ae', '22px sans-serif'
     );
-    if (partner.active) showRandomPartnerSpeechBubble(partnerQuizCorrectLines, '#69f0ae', partnerQuizCorrectStressedLines);
+    if (partner.active) showRandomPartnerSpeechBubbleIfFriendly(partnerQuizCorrectLines, '#69f0ae', partnerQuizCorrectStressedLines);
   } else {
     showMessage('クイズ不正解…', 2200, '#ef9a9a', '22px sans-serif');
     if (partner.active) showRandomPartnerSpeechBubble(partnerQuizWrongLines, '#ffb74d', partnerQuizWrongStressedLines);
@@ -1365,6 +1365,12 @@ function showRandomPartnerSpeechBubble(lines, color, stressedLines = null) {
   showPartnerSpeechBubble(pool[Math.floor(Math.random() * pool.length)], color);
 }
 
+// 関係性が0〜20（同僚が敵対的になっている状態）の間は、謝罪や好意的な発言は表示しない
+function showRandomPartnerSpeechBubbleIfFriendly(lines, color, stressedLines = null) {
+  if (partner.relationship <= 20) return;
+  showRandomPartnerSpeechBubble(lines, color, stressedLines);
+}
+
 // ===== 攻撃をサボっていると同僚の好感度が下がる仕組み =====
 const partnerNeglectThresholdMs = 5000; // これだけ攻撃しないと苦言を呈し始める
 const partnerNeglectIntervalMs = 2000; // 苦言を呈したあとも、さらにこの間隔で好感度が下がり続ける
@@ -1549,16 +1555,27 @@ function triggerPartnerStatusComment() {
   if (!partner.active) return;
   if (Math.random() < 0.5) {
     const ratio = san / maxSan;
+    const isPositive = ratio > 0.7;
     const pool = ratio <= 0.3 ? partnerStatusSanLowLines
       : ratio <= 0.7 ? partnerStatusSanMidLines
       : partnerStatusSanHighLines;
-    showRandomPartnerSpeechBubble(pool, '#ce93d8');
+    // 好調さを称える発言（Highの発言）だけは、関係性が低い間は表示しない
+    if (isPositive) {
+      showRandomPartnerSpeechBubbleIfFriendly(pool, '#ce93d8');
+    } else {
+      showRandomPartnerSpeechBubble(pool, '#ce93d8');
+    }
   } else {
     const ratio = lifespan / maxLifespan;
+    const isPositive = ratio > 0.7;
     const pool = ratio <= 0.3 ? partnerStatusLifespanLowLines
       : ratio <= 0.7 ? partnerStatusLifespanMidLines
       : partnerStatusLifespanHighLines;
-    showRandomPartnerSpeechBubble(pool, '#80cbc4');
+    if (isPositive) {
+      showRandomPartnerSpeechBubbleIfFriendly(pool, '#80cbc4');
+    } else {
+      showRandomPartnerSpeechBubble(pool, '#80cbc4');
+    }
   }
 }
 
@@ -1632,7 +1649,9 @@ function damagePartnerSan(amount) {
   partner.san = Math.max(0, partner.san - amount * specialSkillEffects.partnerSanDamageMultiplier);
 }
 // 味方の弾はSANと寿命を直接削る。連続被弾は専用の短い無敵時間で抑える。
-function damagePlayerByFriendlyFire(lines = partnerHitPlayerLines, stressedLines = partnerHitPlayerStressedLines, color = '#ffab91') {
+// isHostileAction: 叱咤攻撃など、同僚がわざと自機を狙った場合はtrue。
+// この場合は謝罪ではなく怒りの発言なので、関係性が低くても常に表示する
+function damagePlayerByFriendlyFire(lines = partnerHitPlayerLines, stressedLines = partnerHitPlayerStressedLines, color = '#ffab91', isHostileAction = false) {
   if (friendlyFireInvincibleTimer > 0) return false;
   if (playerBarrierCharges > 0) {
     playerBarrierCharges--;
@@ -1646,7 +1665,11 @@ function damagePlayerByFriendlyFire(lines = partnerHitPlayerLines, stressedLines
   friendlyFireHitFlashTimer = friendlyFireHitEffectDuration;
   explosionShakeTimer = Math.max(explosionShakeTimer, friendlyFireHitEffectDuration);
   checkVitalsGameOver('bad-partner-shot');
-  showRandomPartnerSpeechBubble(lines, color, stressedLines);
+  if (isHostileAction) {
+    showRandomPartnerSpeechBubble(lines, color, stressedLines);
+  } else {
+    showRandomPartnerSpeechBubbleIfFriendly(lines, color, stressedLines);
+  }
   return true;
 }
 
@@ -3748,7 +3771,7 @@ function update() {
     partnerScoldAttackTimerMs += dt * 1000;
     if (partnerScoldAttackTimerMs >= partnerScoldAttackIntervalMs) {
       partnerScoldAttackTimerMs = 0;
-      damagePlayerByFriendlyFire(partnerScoldAttackLines, null, '#ff8a65');
+      damagePlayerByFriendlyFire(partnerScoldAttackLines, null, '#ff8a65', true);
     }
   } else {
     partnerScoldAttackTimerMs = 0;
@@ -3883,7 +3906,7 @@ function update() {
             updateSkillEffects();
           // 同僚が当てていた敵に自機がとどめを刺すと、お礼を言ってくれる
           if (b.owner === 'player' && en.hitByPartner && partner.active) {
-            showRandomPartnerSpeechBubble(partnerThanksLines, '#69f0ae', partnerThanksStressedLines);
+            showRandomPartnerSpeechBubbleIfFriendly(partnerThanksLines, '#69f0ae', partnerThanksStressedLines);
             if (Math.random() < partnerThanksRelationshipChance) {
               adjustPartnerRelationship(1);
             }
