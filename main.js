@@ -486,6 +486,10 @@ const mousePosition = { x: player.x + 100, y: player.y };
 const autoFireStunSafetyMargin = 15; // この値だけ余裕を残した時点で連射を控え始める
 let autoFireResting = false;
 
+// ===== 完全オートモード（移動・照準・攻撃をすべて自動化する） =====
+let fullAutoModeEnabled = false;
+let fullAutoQuizChoiceIndex = null; // クイズの選択肢をランダムに1つ選び、同じ問題の間は選び直さない
+
 // 1秒ごと、または1発ごとに変化する疲労関連の値
 const movingDrainPerSec = 6; // 移動時の1秒あたりの疲労量（現在は未使用）
 const firingFatiguePerShot = 10; // 1発撃つごとに増える疲労量（stunになりにくいよう軽減）
@@ -3147,6 +3151,100 @@ function findAutoAimTarget() {
   return findNearestEnemyToPlayer();
 }
 
+// ===== 完全オートモードの移動AI =====
+// 同僚弾の弾道上にいて、これから当たりそうな場合、弾道と垂直方向へ大きく避ける
+function computeFullAutoDodgeVector() {
+  const lookaheadDistance = 220; // これより手前にある同僚弾だけを警戒する
+  const sideMargin = 30; // 弾道からこれだけ離れていれば無視する
+  let nearest = null;
+  for (const b of bullets) {
+    if (b.owner !== 'partner') continue;
+    const speed = Math.hypot(b.vx, b.vy) || 1;
+    const dirX = b.vx / speed;
+    const dirY = b.vy / speed;
+    const dx = player.x - b.x;
+    const dy = player.y - b.y;
+    const forward = dx * dirX + dy * dirY;
+    if (forward <= 0 || forward > lookaheadDistance) continue;
+    const perpendicular = dx * dirY - dy * dirX;
+    if (Math.abs(perpendicular) > player.radius + (b.radius || 4) + sideMargin) continue;
+    if (!nearest || forward < nearest.forward) {
+      nearest = { forward, dirX, dirY, perpendicular };
+    }
+  }
+  if (!nearest) return null;
+  // 弾の進行方向に対して垂直に、現在ずれている側へさらに離れる
+  const sign = nearest.perpendicular >= 0 ? 1 : -1;
+  return { x: -nearest.dirY * sign, y: nearest.dirX * sign };
+}
+
+// 昼食（近い順）→クイズの回答（ランダムに選んだもの）→チョコレートの優先順位で、拾いに行く対象を返す
+function findFullAutoSeekTarget() {
+  if (lunchState && lunchState.items.length > 0) {
+    return lunchState.items.reduce((closest, item) => {
+      const d = Math.hypot(item.x - player.x, item.y - player.y);
+      return (!closest || d < closest.d) ? { x: item.x, y: item.y, d } : closest;
+    }, null);
+  }
+  if (quizState && Date.now() >= quizAnswerUnlockAt && quizState.answerTokens.length > 0) {
+    if (fullAutoQuizChoiceIndex === null || fullAutoQuizChoiceIndex >= quizState.answerTokens.length) {
+      fullAutoQuizChoiceIndex = Math.floor(Math.random() * quizState.answerTokens.length);
+    }
+    const token = quizState.answerTokens[fullAutoQuizChoiceIndex];
+    if (token) return { x: token.x, y: token.y };
+  } else {
+    fullAutoQuizChoiceIndex = null;
+  }
+  if (chocolate && chocolate.landed) {
+    return { x: chocolate.x, y: chocolate.y };
+  }
+  return null;
+}
+
+// 近い敵から離れようとする反発ベクトルを返す（敵との接触を避けるため）
+function computeFullAutoEnemyAvoidanceVector() {
+  const avoidMargin = 70; // 敵の半径に加えて、これだけの余裕を保とうとする
+  let vx = 0, vy = 0;
+  for (const e of enemies) {
+    const dx = player.x - e.x;
+    const dy = player.y - e.y;
+    const dist = Math.hypot(dx, dy);
+    const threshold = player.radius + (e.radius || 0) + avoidMargin;
+    if (dist > 0 && dist < threshold) {
+      const strength = (threshold - dist) / threshold;
+      vx += (dx / dist) * strength;
+      vy += (dy / dist) * strength;
+    }
+  }
+  return { x: vx, y: vy };
+}
+
+// 完全オートモード中の移動方向（-1〜1に正規化済み）を決める。
+// 1) 同僚弾の回避を最優先 → 2) 昼食・クイズ・チョコレートを拾いに行く → 3) 近い敵からは離れる
+function computeFullAutoMoveVector() {
+  const dodge = computeFullAutoDodgeVector();
+  if (dodge) return dodge;
+
+  let vx = 0, vy = 0;
+  const seekTarget = findFullAutoSeekTarget();
+  if (seekTarget) {
+    const dx = seekTarget.x - player.x;
+    const dy = seekTarget.y - player.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > 4) {
+      vx += dx / dist;
+      vy += dy / dist;
+    }
+  }
+  const avoid = computeFullAutoEnemyAvoidanceVector();
+  vx += avoid.x;
+  vy += avoid.y;
+
+  const len = Math.hypot(vx, vy);
+  if (len < 0.001) return { x: 0, y: 0 };
+  return { x: vx / len, y: vy / len };
+}
+
 // ===== メニュー選択のタップ／クリック対応 =====
 // draw()が毎フレーム、現在表示中のメニューに応じて再構築する
 let uiButtons = [];
@@ -3645,15 +3743,25 @@ function update() {
     let moving = false;
     const currentMoveSpeed = player.speed * specialSkillEffects.moveSpeedMultiplier *
       getEnergyDrinkMoveSpeedMultiplier() * getCoffeeMoveSpeedMultiplier();
-    if (keys["w"]) { player.y -= currentMoveSpeed; moving = true; }
-    if (keys["s"]) { player.y += currentMoveSpeed; moving = true; }
-    if (keys["a"]) { player.x -= currentMoveSpeed; moving = true; }
-    if (keys["d"]) { player.x += currentMoveSpeed; moving = true; }
-    // タッチの仮想移動スティックによるプレイヤー移動
-    if (touchMoveVector.x !== 0 || touchMoveVector.y !== 0) {
-      player.x += touchMoveVector.x * currentMoveSpeed;
-      player.y += touchMoveVector.y * currentMoveSpeed;
-      moving = true;
+    if (fullAutoModeEnabled) {
+      // 完全オートモード中は、手動操作の代わりにAIが移動方向を決める
+      const autoVec = computeFullAutoMoveVector();
+      if (autoVec.x !== 0 || autoVec.y !== 0) {
+        player.x += autoVec.x * currentMoveSpeed;
+        player.y += autoVec.y * currentMoveSpeed;
+        moving = true;
+      }
+    } else {
+      if (keys["w"]) { player.y -= currentMoveSpeed; moving = true; }
+      if (keys["s"]) { player.y += currentMoveSpeed; moving = true; }
+      if (keys["a"]) { player.x -= currentMoveSpeed; moving = true; }
+      if (keys["d"]) { player.x += currentMoveSpeed; moving = true; }
+      // タッチの仮想移動スティックによるプレイヤー移動
+      if (touchMoveVector.x !== 0 || touchMoveVector.y !== 0) {
+        player.x += touchMoveVector.x * currentMoveSpeed;
+        player.y += touchMoveVector.y * currentMoveSpeed;
+        moving = true;
+      }
     }
     // プレイヤーが画面外・窓の範囲へ出ないよう座標を制限する
     clampToPlayableFloor(player);
@@ -3678,8 +3786,8 @@ function update() {
     }
 
     // 攻撃モードに関係なく、自分は常にマウスカーソルの方向を向く。
-    // スマホ用の自動照準設定が有効な間は、代わりに定時報告（出ていれば優先）か最も近い敵の方向を向く
-    const autoAimTarget = mobileAutoAimEnabled ? findAutoAimTarget() : null;
+    // スマホ用の自動照準・完全オートモードが有効な間は、代わりに定時報告（出ていれば優先）か最も近い敵の方向を向く
+    const autoAimTarget = (mobileAutoAimEnabled || fullAutoModeEnabled) ? findAutoAimTarget() : null;
     if (autoAimTarget) {
       player.angle = Math.atan2(autoAimTarget.en.y - player.y, autoAimTarget.en.x - player.x);
     } else {
@@ -3695,15 +3803,16 @@ function update() {
     const currentFireRate = baseFireRate * (1 + fatigueRatio * fireRateMultiplier) *
       specialSkillEffects.fireRateMultiplier * getEnergyDrinkFireRateMultiplier() *
       getCoffeeFireRateMultiplier() * getRankSkillFireRateMultiplier();
-    // 自動攻撃モードは、stunになる手前で自動的に連射を控え、疲労が半分程度まで下がったら再開する
+    // 自動攻撃モード・完全オートモードは、stunになる手前で自動的に連射を控え、疲労が半分程度まで下がったら再開する
+    const autoFiringActive = autoFireEnabled || fullAutoModeEnabled;
     if (fatigue >= maxFatigue - autoFireStunSafetyMargin) {
       autoFireResting = true;
     } else if (autoFireResting && fatigue <= Math.max(maxFatigue * 0.5, getFatigueRecoveryFloor())) {
       autoFireResting = false;
     }
-    // 自動攻撃モードは、射線上に同僚がいる間は誤射を避けて撃たない
-    const autoFireBlockedByPartner = autoFireEnabled && wouldPlayerShotHitPartner(player.angle);
-    const wantsToFire = (autoFireEnabled && !autoFireResting && !autoFireBlockedByPartner) || mouseFireHeld;
+    // 自動攻撃モード・完全オートモードは、射線上に同僚がいる間は誤射を避けて撃たない
+    const autoFireBlockedByPartner = autoFiringActive && wouldPlayerShotHitPartner(player.angle);
+    const wantsToFire = (autoFiringActive && !autoFireResting && !autoFireBlockedByPartner) || mouseFireHeld;
     if (wantsToFire && !stunned) {
       if (now - lastFire >= currentFireRate) {
         updateSkillEffects();
@@ -5322,10 +5431,17 @@ function draw() {
   );
   ctx.fillStyle = 'white';
   ctx.fillText(
-    '攻撃モード: ' + (autoFireEnabled ? '自動' : '手動') + (stunned ? '（行動不能）' :
-      (autoFireEnabled && autoFireResting ? '（疲労のため一時休止）' : '')),
+    '攻撃モード: ' + (fullAutoModeEnabled ? '完全オート' : (autoFireEnabled ? '自動' : '手動')) +
+      (stunned ? '（行動不能）' :
+        ((autoFireEnabled || fullAutoModeEnabled) && autoFireResting ? '（疲労のため一時休止）' : '')),
     12, 268
   );
+  // 完全オートモードの切り替えボタン（移動・照準・攻撃・昼食/クイズ/チョコレート取得・回避まですべて自動化する）
+  drawUiButton(12, 278, 176, 32, `完全オートモード: ${fullAutoModeEnabled ? 'ON' : 'OFF'}`,
+    () => { fullAutoModeEnabled = !fullAutoModeEnabled; },
+    fullAutoModeEnabled
+      ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 13px sans-serif' }
+      : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 13px sans-serif' });
 
   // 一時メッセージを画面上部の中央に表示する
   drawPendingMessages();
