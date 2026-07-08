@@ -3198,13 +3198,19 @@ function computeFullAutoDodgeVector() {
   return { x: -nearest.dirY * sign, y: nearest.dirX * sign };
 }
 
-// 昼食（近い順）→クイズの回答（ランダムに選んだもの）→チョコレートの優先順位で、拾いに行く対象を返す
+// 優先度3〜6：食事（近い順）→チョコレート→心の壁→クイズの回答（ランダムに選んだもの）の順で、拾いに行く対象を返す
 function findFullAutoSeekTarget() {
   if (lunchState && lunchState.items.length > 0) {
     return lunchState.items.reduce((closest, item) => {
       const d = Math.hypot(item.x - player.x, item.y - player.y);
       return (!closest || d < closest.d) ? { x: item.x, y: item.y, d } : closest;
     }, null);
+  }
+  if (chocolate && chocolate.landed) {
+    return { x: chocolate.x, y: chocolate.y };
+  }
+  if (heartWall && heartWall.landed) {
+    return { x: heartWall.x, y: heartWall.y };
   }
   if (quizState && Date.now() >= quizAnswerUnlockAt && quizState.answerTokens.length > 0) {
     if (fullAutoQuizChoiceIndex === null || fullAutoQuizChoiceIndex >= quizState.answerTokens.length) {
@@ -3215,22 +3221,12 @@ function findFullAutoSeekTarget() {
   } else {
     fullAutoQuizChoiceIndex = null;
   }
-  // チョコレートと心の壁は、着地済みのものが両方あれば近い方を優先する
-  const bonusItems = [];
-  if (chocolate && chocolate.landed) bonusItems.push(chocolate);
-  if (heartWall && heartWall.landed) bonusItems.push(heartWall);
-  if (bonusItems.length > 0) {
-    return bonusItems.reduce((closest, item) => {
-      const d = Math.hypot(item.x - player.x, item.y - player.y);
-      return (!closest || d < closest.d) ? { x: item.x, y: item.y, d } : closest;
-    }, null);
-  }
   return null;
 }
 
-// 近い敵から離れようとする反発ベクトルを返す（敵との接触を避けるため）
+// 優先度2：近い敵から離れようとする反発ベクトルを返す（敵との接触を避けるため。かなり近づいてから反応する）
 function computeFullAutoEnemyAvoidanceVector() {
-  const avoidMargin = 70; // 敵の半径に加えて、これだけの余裕を保とうとする
+  const avoidMargin = 24; // 敵の半径に加えて、これだけの余裕を保とうとする
   let vx = 0, vy = 0;
   for (const e of enemies) {
     const dx = player.x - e.x;
@@ -3246,55 +3242,54 @@ function computeFullAutoEnemyAvoidanceVector() {
   return { x: vx, y: vy };
 }
 
-// 完全オートモード中の移動方向（-1〜1に正規化済み）を決める。
-// 1) 同僚弾の回避を最優先 → 2) 昼食・クイズ・チョコレートを拾いに行く → 3) 近い敵からは離れる
-// 周囲の反発がほぼ打ち消し合って板挟みになった時、振動せずランダムな方向へ抜け出すための状態
+// 完全オートモード中の移動方向（-1〜1に正規化済み）を、優先度順に1つだけ選んで決める
+// （複数の意図を混ぜず、優先度が高いものだけに従うことで振動を防ぐ）
+// 優先度1: 同僚弾の回避 → 優先度2: 近い敵からの回避 → 優先度3〜6: 食事・チョコレート・心の壁・クイズ
+// 敵の反発がほぼ打ち消し合って板挟みになった時、振動せずランダムな方向へ抜け出すための状態
 const fullAutoStuckVectorThreshold = 0.15; // 合成ベクトルの大きさがこれ未満なら「板挟み」とみなす
 const fullAutoEscapeDurationMs = 500; // 一度ランダムな方向へ逃げ始めたら、この間は同じ方向を保つ
 let fullAutoEscapeDirection = null;
 let fullAutoEscapeTimerMs = 0;
 
 function computeFullAutoMoveVector(dt) {
+  // 優先度1：同僚弾の回避
   const dodge = computeFullAutoDodgeVector();
   if (dodge) {
-    fullAutoEscapeTimerMs = 0; // 弾を回避できている間は脱出モードをリセットする
+    fullAutoEscapeTimerMs = 0;
     return dodge;
   }
 
-  let vx = 0, vy = 0;
-  const seekTarget = findFullAutoSeekTarget();
-  if (seekTarget) {
-    const dx = seekTarget.x - player.x;
-    const dy = seekTarget.y - player.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist > 4) {
-      vx += dx / dist;
-      vy += dy / dist;
-    }
-  }
+  // 優先度2：近い敵からの回避（敵がいなければ何もしない）
   const avoid = computeFullAutoEnemyAvoidanceVector();
-  vx += avoid.x;
-  vy += avoid.y;
+  const avoidLen = Math.hypot(avoid.x, avoid.y);
+  const hasNearbyThreat = avoidLen > 0;
 
-  // 既にランダム方向への脱出中なら、時間が切れるまでは同じ方向を保って振動を防ぐ
-  if (fullAutoEscapeTimerMs > 0) {
-    fullAutoEscapeTimerMs -= dt * 1000;
-    return fullAutoEscapeDirection;
+  if (hasNearbyThreat) {
+    // 既にランダム方向への脱出中なら、時間が切れるまでは同じ方向を保って振動を防ぐ
+    if (fullAutoEscapeTimerMs > 0) {
+      fullAutoEscapeTimerMs -= dt * 1000;
+      return fullAutoEscapeDirection;
+    }
+    // 反発がほぼ打ち消し合い、どちらへ動いてもダメージを受けかねない板挟み状態になったら、
+    // 振動する代わりにランダムな方向へ一定時間逃げて突破する
+    if (avoidLen < fullAutoStuckVectorThreshold) {
+      const randomAngle = Math.random() * Math.PI * 2;
+      fullAutoEscapeDirection = { x: Math.cos(randomAngle), y: Math.sin(randomAngle) };
+      fullAutoEscapeTimerMs = fullAutoEscapeDurationMs;
+      return fullAutoEscapeDirection;
+    }
+    return { x: avoid.x / avoidLen, y: avoid.y / avoidLen };
   }
+  fullAutoEscapeTimerMs = 0;
 
-  const len = Math.hypot(vx, vy);
-  const hasNearbyThreat = avoid.x !== 0 || avoid.y !== 0;
-  // 周囲からの反発がほぼ打ち消し合い、どちらへ動いてもダメージを受けかねない板挟み状態になったら、
-  // 振動する代わりにランダムな方向へ一定時間逃げて突破する
-  if (hasNearbyThreat && len < fullAutoStuckVectorThreshold) {
-    const randomAngle = Math.random() * Math.PI * 2;
-    fullAutoEscapeDirection = { x: Math.cos(randomAngle), y: Math.sin(randomAngle) };
-    fullAutoEscapeTimerMs = fullAutoEscapeDurationMs;
-    return fullAutoEscapeDirection;
-  }
-
-  if (len < 0.001) return { x: 0, y: 0 };
-  return { x: vx / len, y: vy / len };
+  // 優先度3〜6：避けるべきものがなければ、食事・チョコレート・心の壁・クイズの順で拾いに行く
+  const seekTarget = findFullAutoSeekTarget();
+  if (!seekTarget) return { x: 0, y: 0 };
+  const dx = seekTarget.x - player.x;
+  const dy = seekTarget.y - player.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist <= 4) return { x: 0, y: 0 };
+  return { x: dx / dist, y: dy / dist };
 }
 
 // ===== メニュー選択のタップ／クリック対応 =====
