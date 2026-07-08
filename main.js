@@ -158,8 +158,8 @@ function spawnEnemy(typeIndex) {
 }
 
 // 現在の仕事（敵）を全て片付けるまで、次のウェーブは出現しない
-function spawnWave() {
-  for (let i = 0; i < maxEnemies; i++) spawnEnemy();
+function spawnWave(count = maxEnemies) {
+  for (let i = 0; i < count; i++) spawnEnemy();
 }
 
 // ゲーム開始時の最初のウェーブを生成する
@@ -362,7 +362,7 @@ function getRandomEventPosition(radius = 24) {
 // --- 定時報告：3日ごとの16時に現れる、移動しない高耐久ターゲット ---
 const scheduledReportIntervalDays = 3;
 const scheduledReportHour = 16;
-const scheduledReportBaseHp = 70;
+const scheduledReportBaseHp = 45; // 倒しやすいよう引き下げ
 const scheduledReportRadius = 38;
 let scheduledReport = null;
 
@@ -2428,12 +2428,12 @@ function update() {
     if (gameOver || deathSequence) return;
   }
 
-  // 全滅したら少し間を置いて次のウェーブ（仕事）を出す
+  // 全滅したら少し間を置いて次のウェーブ（仕事）を出す。定時報告が出ている間は同時出現数を1体にする
   if (enemies.length === 0) {
     if (waveCooldownMs > 0) {
       waveCooldownMs -= dt * 1000;
     } else {
-      spawnWave();
+      spawnWave(scheduledReport ? 1 : maxEnemies);
     }
   }
 
