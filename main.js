@@ -443,8 +443,10 @@ const quizHours = [10, 15];
 const quizChancePerOpportunity = 0.2;
 const maxWeeklyQuizCount = 2;
 const quizAnswerRadius = 23;
+const quizAnswerLockDurationMs = 1500; // 出現直後に誤って踏んで回答してしまわないための猶予時間
 let weeklyQuizCount = 0;
 let quizState = null;
+let quizAnswerUnlockAt = 0; // この時刻（Date.now()基準）を過ぎるまで選択肢に触れても回答にならない
 let internalItKnowledge = 0;
 let internalCommunicationSkill = 0;
 const quizQuestions = [
@@ -485,6 +487,7 @@ function startQuizEvent() {
     answerTokens
   };
   weeklyQuizCount++;
+  quizAnswerUnlockAt = Date.now() + quizAnswerLockDurationMs;
   showMessage('突発クイズ！ マップ上の番号を取って回答', 2800, '#90caf9', '22px sans-serif');
 }
 
@@ -2037,8 +2040,8 @@ function update() {
     }
   }
 
-  // マップ上の番号アイコンへ触れるとクイズへ回答する
-  if (quizState) {
+  // マップ上の番号アイコンへ触れるとクイズへ回答する（出現直後の誤回答を防ぐため、少しの間は反応しない）
+  if (quizState && Date.now() >= quizAnswerUnlockAt) {
     for (let i = quizState.answerTokens.length - 1; i >= 0; i--) {
       const token = quizState.answerTokens[i];
       if (Math.hypot(player.x - token.x, player.y - token.y) <= player.radius + token.radius) {
@@ -2924,6 +2927,7 @@ function draw() {
 
   // クイズ回答用の番号アイコンと設問
   if (quizState) {
+    const quizAnswerLocked = Date.now() < quizAnswerUnlockAt;
     const numberIcons = ['1️⃣', '2️⃣', '3️⃣'];
     for (const token of quizState.answerTokens) {
       ctx.save();
@@ -2939,6 +2943,17 @@ function draw() {
       ctx.textBaseline = 'middle';
       ctx.fillText(numberIcons[token.number - 1], token.x, token.y);
       ctx.restore();
+
+      // 出現直後は、点滅する矢印で選択肢の位置を知らせるだけにして誤って踏まないようにする
+      if (quizAnswerLocked && Math.floor(Date.now() / 250) % 2 === 0) {
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'alphabetic';
+        ctx.font = 'bold 26px sans-serif';
+        ctx.fillStyle = '#fff59d';
+        ctx.fillText('↓', token.x, token.y - token.radius - 10);
+        ctx.restore();
+      }
     }
 
     ctx.save();
