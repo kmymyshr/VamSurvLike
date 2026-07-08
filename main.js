@@ -29,75 +29,102 @@ const deathPortraitCtx = deathPortraitCanvas.getContext('2d');
 
 console.log('main.js loaded');
 
-// ===== 周回プレイの引き継ぎ（覚醒ポイント） =====
+// ===== 周回プレイの引き継ぎ（夢の記憶ポイント） =====
 // クリア・ゲームオーバーを問わず、「・・・という夢をみました」を選んだ時点のScoreの一部が
-// 「覚醒ポイント」としてブラウザに永続化され、次回以降のタイトル画面で初期パラメータの強化に使える
-const awakeningStorageKey = 'vamSurvLike_awakening_v1';
-const awakeningScoreDivisor = 10; // Scoreをこの値で割った分だけ覚醒ポイントを獲得する
-const awakeningUpgradeMaxLevel = 5;
-const awakeningUpgradeDefs = [
+// 「夢の記憶ポイント」としてブラウザに永続化され、次回以降のタイトル画面で初期パラメータの強化に使える
+const dreamMemoryStorageKey = 'vamSurvLike_dreamMemory_v1';
+const dreamMemoryScoreDivisor = 10; // Scoreをこの値で割った分だけ夢の記憶ポイントを獲得する
+const dreamMemoryUpgradeMaxLevel = 5;
+const dreamMemoryUpgradeDefs = [
   {
     id: 'skillLevel', label: '初期特殊スキルレベル',
     describeLevel: (lv) => `ゲーム開始時のスキルレベルが+${lv}される`
   },
   {
-    id: 'vitals', label: '初期SAN・寿命',
-    describeLevel: (lv) => `ゲーム開始時のSAN・寿命の上限が+${lv * 10}される`
+    id: 'maxSan', label: '初期SAN上限',
+    describeLevel: (lv) => `ゲーム開始時のSANの上限が+${lv * 10}される`
+  },
+  {
+    id: 'maxLifespan', label: '初期寿命上限',
+    describeLevel: (lv) => `ゲーム開始時の寿命の上限が+${lv * 10}される`
   },
   {
     id: 'fatigueCap', label: '初期脳疲労の上限緩和',
     describeLevel: (lv) => `脳疲労の上限が+${lv * 10}され、疲労で動けなくなりにくくなる`
+  },
+  {
+    id: 'startScore', label: '初期スコア',
+    describeLevel: (lv) => `ゲーム開始時のScoreが+${lv * 20}された状態で始まる`
+  },
+  {
+    id: 'bulletDamage', label: '初期攻撃力',
+    describeLevel: (lv) => `弾の基本威力が+${lv}される`
+  },
+  {
+    id: 'moveSpeed', label: '初期移動速度',
+    describeLevel: (lv) => `自機の移動速度が+${(lv * 0.3).toFixed(1)}される`
+  },
+  {
+    id: 'barrierCharges', label: '初期「心の壁」バリア',
+    describeLevel: (lv) => `ゲーム開始時から、誤射・接触ダメージを${lv}回防ぐバリアを持つ`
+  },
+  {
+    id: 'partnerBond', label: '同僚との初期信頼度',
+    describeLevel: (lv) => `同僚との初期信頼度が+${lv * 5}され、反撃されにくくなる`
+  },
+  {
+    id: 'quotaEase', label: '週間ノルマ緩和',
+    describeLevel: (lv) => `週間ノルマが${lv * 3}%緩和される`
   }
 ];
-// 現在のレベルから次のレベルへ上げるのに必要な覚醒ポイント数
-function awakeningUpgradeCost(currentLevel) {
+// 現在のレベルから次のレベルへ上げるのに必要な夢の記憶ポイント数
+function dreamMemoryUpgradeCost(currentLevel) {
   return 5 + currentLevel * 4;
 }
 
-function loadAwakeningSave() {
-  const fallback = { points: 0, upgrades: { skillLevel: 0, vitals: 0, fatigueCap: 0 } };
+function loadDreamMemorySave() {
+  const fallbackUpgrades = {};
+  dreamMemoryUpgradeDefs.forEach(def => { fallbackUpgrades[def.id] = 0; });
+  const fallback = { points: 0, upgrades: fallbackUpgrades };
   try {
-    const raw = localStorage.getItem(awakeningStorageKey);
+    const raw = localStorage.getItem(dreamMemoryStorageKey);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw);
-    const upgrades = parsed.upgrades || {};
-    return {
-      points: Math.max(0, Math.floor(parsed.points) || 0),
-      upgrades: {
-        skillLevel: Math.max(0, Math.min(awakeningUpgradeMaxLevel, Math.floor(upgrades.skillLevel) || 0)),
-        vitals: Math.max(0, Math.min(awakeningUpgradeMaxLevel, Math.floor(upgrades.vitals) || 0)),
-        fatigueCap: Math.max(0, Math.min(awakeningUpgradeMaxLevel, Math.floor(upgrades.fatigueCap) || 0))
-      }
-    };
+    const rawUpgrades = parsed.upgrades || {};
+    const upgrades = {};
+    dreamMemoryUpgradeDefs.forEach(def => {
+      upgrades[def.id] = Math.max(0, Math.min(dreamMemoryUpgradeMaxLevel, Math.floor(rawUpgrades[def.id]) || 0));
+    });
+    return { points: Math.max(0, Math.floor(parsed.points) || 0), upgrades };
   } catch (e) {
     return fallback;
   }
 }
-function saveAwakeningSave() {
+function saveDreamMemorySave() {
   try {
-    localStorage.setItem(awakeningStorageKey, JSON.stringify(awakeningSave));
+    localStorage.setItem(dreamMemoryStorageKey, JSON.stringify(dreamMemorySave));
   } catch (e) {
     // localStorageが使えない環境（プライベートブラウズ等）では、保存できなくても致命的ではないため無視する
   }
 }
-let awakeningSave = loadAwakeningSave();
+let dreamMemorySave = loadDreamMemorySave();
 
-// 覚醒ポイントを消費して、指定した強化を1レベル上げる
-function purchaseAwakeningUpgrade(id) {
-  const level = awakeningSave.upgrades[id];
-  if (level >= awakeningUpgradeMaxLevel) return;
-  const cost = awakeningUpgradeCost(level);
-  if (awakeningSave.points < cost) return;
-  awakeningSave.points -= cost;
-  awakeningSave.upgrades[id] = level + 1;
-  saveAwakeningSave();
+// 夢の記憶ポイントを消費して、指定した強化を1レベル上げる
+function purchaseDreamMemoryUpgrade(id) {
+  const level = dreamMemorySave.upgrades[id];
+  if (level >= dreamMemoryUpgradeMaxLevel) return;
+  const cost = dreamMemoryUpgradeCost(level);
+  if (dreamMemorySave.points < cost) return;
+  dreamMemorySave.points -= cost;
+  dreamMemorySave.upgrades[id] = level + 1;
+  saveDreamMemorySave();
 }
 
 const player = {
   x: 400,
   y: 300,
   radius: 15,
-  speed: 4,
+  speed: 4 + dreamMemorySave.upgrades.moveSpeed * 0.3, // 夢の記憶ポイントの「初期移動速度」で底上げされる
   angle: 0 // 自分が向いている角度（ラジアン）
 };
 // 画面外のランダムな位置を決め、座標を { x, y } で返す
@@ -254,13 +281,13 @@ function spawnSynergyBeam(x1, y1, x2, y2) {
 }
 const baseFireRate = 350; // 基本の発射間隔（従来の半分、ミリ秒）
 let lastFire = 0;
-let score = 0;
+let score = dreamMemorySave.upgrades.startScore * 20; // 夢の記憶ポイントの「初期スコア」で底上げされる
 let gameOver = false;
 let gameClear = false;
 // 起動時はまずモード選択（startScreen）を表示し、その後 'gender' → 'partner-icon' → null（完了、ゲーム開始）と進む
 let startScreen = true;
 let setupStep = null;
-let awakeningShopActive = false; // タイトル画面から開く、覚醒ポイントでの強化画面
+let dreamMemoryShopActive = false; // タイトル画面から開く、夢の記憶ポイントでの強化画面
 
 // ===== アイコン選択後のひとことメッセージ演出（表示→フェードアウトして次の画面へ） =====
 const playerIconGreetingLines = [
@@ -327,7 +354,7 @@ let explosionShakeTimer = 0;
 let friendlyFireHitFlashTimer = 0;
 
 // ===== 脳疲労システム =====
-const maxFatigue = 100 + awakeningSave.upgrades.fatigueCap * 10; // 覚醒ポイントの「初期脳疲労の上限緩和」で底上げされる
+const maxFatigue = 100 + dreamMemorySave.upgrades.fatigueCap * 10; // 夢の記憶ポイントの「初期脳疲労の上限緩和」で底上げされる
 let fatigue = 0; // 0が元気な状態、maxFatigueが疲労の限界
 
 // 時間帯が進むほど、回復してもここより下がらなくなる「脳疲労の下限」。
@@ -449,7 +476,7 @@ const idleRecoveryPerSec = 12; // 待機時の1秒あたりの回復量
 const timeOfDayFatigueMultiplierMax = 1.8; // 終業時刻ごろに到達する最大倍率（残業中はさらにやや伸びる）
 const stunRecoveryPerSec = 18; // 行動不能中は通常より早く疲労を回復する
 const fireRateMultiplier = 1.5; // 疲労が多いほど発射間隔を延ばす倍率
-const baseBulletDamage = 2; // 疲労がないときの基本攻撃力
+const baseBulletDamage = 2 + dreamMemorySave.upgrades.bulletDamage; // 疲労がないときの基本攻撃力（夢の記憶ポイントの「初期攻撃力」で底上げされる）
 
 // ===== 回復アイテム（チョコレート） =====
 const chocolateLifetimeMs = 10000; // 出現してから消えるまでの時間（10秒）
@@ -1037,7 +1064,7 @@ function endWorkday() {
   }
 }
 // ===== SAN（精神力）システム =====
-const maxSan = 100 + awakeningSave.upgrades.vitals * 10; // 覚醒ポイントの「初期SAN・寿命」で底上げされる
+const maxSan = 100 + dreamMemorySave.upgrades.maxSan * 10; // 夢の記憶ポイントの「初期SAN上限」で底上げされる
 let san = maxSan;
 
 // SANが減少する量
@@ -1057,7 +1084,7 @@ let friendlyFireInvincibleTimer = 0;
 // ===== 寿命（健康）システム =====
 // SANダメージの蓄積や、脳疲労・SANの悪い状態が長く続くことで少しずつ削れていく。
 // 0になったらSANとは別にゲームオーバーになる（＝一時的にSANを回復させても、慢性的な消耗の蓄積だけは元に戻らない）
-const maxLifespan = 100 + awakeningSave.upgrades.vitals * 10; // 覚醒ポイントの「初期SAN・寿命」で底上げされる
+const maxLifespan = 100 + dreamMemorySave.upgrades.maxLifespan * 10; // 夢の記憶ポイントの「初期寿命上限」で底上げされる
 let lifespan = maxLifespan;
 const sanDamageToLifespanRatio = 0.15; // SANダメージを受けるたびに、その15%ぶん寿命も削れる
 const highFatigueThresholdRatio = 0.8; // 脳疲労がこの割合を超えている状態を「高疲労」とみなす
@@ -1149,7 +1176,8 @@ const partnerContactSanMultiplier = 3; // 接触時のSANダメージ = 敵の�
 const partnerInvincibleDuration = 1200;
 const partnerLossSanPenalty = 20; // 同僚が力尽きたとき、プレイヤーが受けるSANダメージ
 const partnerRelationshipMax = 100;
-const partnerRelationshipInitial = 50;
+// 夢の記憶ポイントの「同僚との初期信頼度」で底上げされる（上限は超えない）
+const partnerRelationshipInitial = Math.min(partnerRelationshipMax, 50 + dreamMemorySave.upgrades.partnerBond * 5);
 const partnerRelationshipSafeFireThreshold = 50;
 const partnerRelationshipDamagePerHit = 15;
 const partnerRelationshipRetaliationThreshold = 40;
@@ -1759,11 +1787,14 @@ function nextMonday(date) {
   return d;
 }
 
+// 夢の記憶ポイントの「週間ノルマ緩和」による軽減倍率（レベルごとに3%緩和、最大15%）
+const weeklyQuotaEaseMultiplier = 1 - dreamMemorySave.upgrades.quotaEase * 0.03;
+
 // ランクに応じて今週のノルマを再設定する
 // 集中して手を止めずにプレイしてようやく届く程度の、ぎりぎり達成できる水準にしてある
 function resetWeeklyQuotaForNewWeek() {
-  weeklyKillQuota = 20 + (rank - 1) * 7;
-  weeklyScoreQuota = 80 + (rank - 1) * 30;
+  weeklyKillQuota = Math.round((20 + (rank - 1) * 7) * weeklyQuotaEaseMultiplier);
+  weeklyScoreQuota = Math.round((80 + (rank - 1) * 30) * weeklyQuotaEaseMultiplier);
   weeklyKills = 0;
   weeklyScoreGained = 0;
   weeklyQuotaAchievedEarly = false;
@@ -1834,7 +1865,7 @@ const rankThresholds = [0, 40, 120, 280, 550, 950, 1500, 2300, 3500, 6000]; // �
 let exp = 0;
 const baseExpPerLevel = 20; // 最初のレベルアップに必要な経験値（序盤が上がりやすいよう引き下げ）
 const expPerLevelGrowth = 6; // レベルが1上がるごとに、次のレベルアップに必要な経験値が増える量
-let skillLevel = awakeningSave.upgrades.skillLevel; // 覚醒ポイントの「初期特殊スキルレベル」で底上げされる
+let skillLevel = dreamMemorySave.upgrades.skillLevel; // 夢の記憶ポイントの「初期特殊スキルレベル」で底上げされる
 
 // 指定レベルに到達するまでの累積必要経験値（レベルが上がるほど1レベルあたりの必要量が増える等差数列の和）
 function expThresholdForLevel(level) {
@@ -2613,7 +2644,7 @@ function beginGameplay() {
   lastHourTime = 0;
   dayStartTime = 0;
   dayNumber = 1;
-  playerBarrierCharges = 0;
+  playerBarrierCharges = dreamMemorySave.upgrades.barrierCharges; // 夢の記憶ポイントの「初期『心の壁』バリア」で底上げされる
   resetWeeklyQuotaForNewWeek();
   initPartner();
 }
@@ -2717,8 +2748,8 @@ document.addEventListener("keydown", (event) => {
     goHomeFromWeekendWork();
     return;
   }
-  // スタート画面では通常開始か3倍加速開始を選ぶ（覚醒ポイントの強化画面を開いている間は無効）
-  if (startScreen && !awakeningShopActive) {
+  // スタート画面では通常開始か3倍加速開始を選ぶ（夢の記憶ポイントの強化画面を開いている間は無効）
+  if (startScreen && !dreamMemoryShopActive) {
     if (event.key === '1' || event.key === 'Enter') {
       selectMode(1);
     } else if (event.key === '2') {
@@ -2726,8 +2757,8 @@ document.addEventListener("keydown", (event) => {
     }
     return;
   }
-  if (awakeningShopActive && event.key === 'Escape') {
-    awakeningShopActive = false;
+  if (dreamMemoryShopActive && event.key === 'Escape') {
+    dreamMemoryShopActive = false;
     return;
   }
 
@@ -3785,10 +3816,10 @@ function drawEndScreenButtons(baseY) {
   const btnW = 300, btnH = 48;
   const btnX = canvas.width / 2 - btnW / 2;
   drawUiButton(btnX, baseY, btnW, btnH, '・・・という夢をみました', () => {
-    // クリア・ゲームオーバーを問わず、Scoreの一部を覚醒ポイントとして持ち越し、次周のタイトル画面で使えるようにする
-    const earnedAwakeningPoints = Math.floor(score / awakeningScoreDivisor);
-    awakeningSave.points += earnedAwakeningPoints;
-    saveAwakeningSave();
+    // クリア・ゲームオーバーを問わず、Scoreの一部を夢の記憶ポイントとして持ち越し、次周のタイトル画面で使えるようにする
+    const earnedDreamMemoryPoints = Math.floor(score / dreamMemoryScoreDivisor);
+    dreamMemorySave.points += earnedDreamMemoryPoints;
+    saveDreamMemorySave();
     location.reload();
   });
   drawUiButton(btnX, baseY + 60, btnW, btnH, '終了する', () => { window.close(); },
@@ -3878,7 +3909,7 @@ function drawEndingScreen() {
   ctx.fillText(`Final Score: ${score}`, canvas.width / 2, canvas.height / 2 + 54);
   ctx.font = '15px sans-serif';
   ctx.fillStyle = '#ce93d8';
-  ctx.fillText(`「・・・という夢をみました」を選ぶと、覚醒ポイント +${Math.floor(score / awakeningScoreDivisor)} を次周に持ち越せます`,
+  ctx.fillText(`「・・・という夢をみました」を選ぶと、夢の記憶ポイント +${Math.floor(score / dreamMemoryScoreDivisor)} を次周に持ち越せます`,
     canvas.width / 2, canvas.height / 2 + 76);
   ctx.font = 'bold 26px sans-serif';
   ctx.fillStyle = cfg.labelColor;
@@ -4271,47 +4302,48 @@ function draw() {
     return;
   }
 
-  if (awakeningShopActive) {
+  if (dreamMemoryShopActive) {
     drawSetupBackground();
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ffd54f';
-    ctx.font = 'bold 30px sans-serif';
-    ctx.fillText('覚醒ポイントで強化', canvas.width / 2, 64);
+    ctx.font = 'bold 24px sans-serif';
+    ctx.fillText('夢の記憶ポイントで強化', canvas.width / 2, 34);
     ctx.fillStyle = '#e1bee7';
-    ctx.font = 'bold 18px sans-serif';
-    ctx.fillText(`保有ポイント: ${awakeningSave.points}`, canvas.width / 2, 96);
+    ctx.font = 'bold 15px sans-serif';
+    ctx.fillText(`保有ポイント: ${dreamMemorySave.points}`, canvas.width / 2, 56);
     ctx.textAlign = 'left';
 
-    const cardX = 90;
-    const cardWidth = canvas.width - 180;
-    const cardHeight = 110;
-    const cardGap = 16;
-    let cardY = 125;
-    awakeningUpgradeDefs.forEach((def) => {
-      const level = awakeningSave.upgrades[def.id];
-      const maxed = level >= awakeningUpgradeMaxLevel;
-      const cost = maxed ? null : awakeningUpgradeCost(level);
-      const affordable = !maxed && awakeningSave.points >= cost;
+    // 10項目を1画面に収めるため、1行あたりの高さを抑えたコンパクトな一覧表示にする
+    const rowX = 60;
+    const rowWidth = canvas.width - 120;
+    const rowHeight = 42;
+    const rowGap = 4;
+    let rowY = 70;
+    dreamMemoryUpgradeDefs.forEach((def) => {
+      const level = dreamMemorySave.upgrades[def.id];
+      const maxed = level >= dreamMemoryUpgradeMaxLevel;
+      const cost = maxed ? null : dreamMemoryUpgradeCost(level);
+      const affordable = !maxed && dreamMemorySave.points >= cost;
 
-      ctx.fillStyle = 'rgba(103, 58, 183, 0.35)';
-      ctx.fillRect(cardX, cardY, cardWidth, cardHeight);
+      ctx.fillStyle = 'rgba(103, 58, 183, 0.30)';
+      ctx.fillRect(rowX, rowY, rowWidth, rowHeight);
       ctx.strokeStyle = '#ce93d8';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(cardX, cardY, cardWidth, cardHeight);
+      ctx.lineWidth = 1;
+      ctx.strokeRect(rowX, rowY, rowWidth, rowHeight);
+
+      const btnW = 110, btnH = 30;
+      const btnX = rowX + rowWidth - btnW - 10;
+      const btnY = rowY + (rowHeight - btnH) / 2;
+      const textMaxWidth = btnX - (rowX + 14) - 10;
 
       ctx.fillStyle = 'white';
-      ctx.font = 'bold 20px sans-serif';
-      ctx.fillText(`${def.label}  Lv.${level} / ${awakeningUpgradeMaxLevel}`, cardX + 20, cardY + 32);
-      ctx.fillStyle = '#e0e0e0';
-      ctx.font = '15px sans-serif';
-      ctx.fillText(
-        maxed ? '既に最大レベルまで強化済み' : `次のレベル: ${def.describeLevel(level + 1)}`,
-        cardX + 20, cardY + 58
-      );
+      ctx.font = 'bold 13px sans-serif';
+      ctx.fillText(`${def.label}  Lv.${level}/${dreamMemoryUpgradeMaxLevel}`, rowX + 14, rowY + 16);
+      ctx.fillStyle = '#cfd8dc';
+      ctx.font = '11px sans-serif';
+      const descText = maxed ? '既に最大レベルまで強化済み' : def.describeLevel(level + 1);
+      ctx.fillText(wrapTextToWidth(descText, textMaxWidth)[0] || '', rowX + 14, rowY + 32);
 
-      const btnW = 150, btnH = 40;
-      const btnX = cardX + cardWidth - btnW - 20;
-      const btnY = cardY + (cardHeight - btnH) / 2;
       if (maxed) {
         ctx.fillStyle = 'rgba(60, 60, 60, 0.6)';
         ctx.fillRect(btnX, btnY, btnW, btnH);
@@ -4319,25 +4351,25 @@ function draw() {
         ctx.lineWidth = 2;
         ctx.strokeRect(btnX, btnY, btnW, btnH);
         ctx.fillStyle = '#9e9e9e';
-        ctx.font = 'bold 16px sans-serif';
+        ctx.font = 'bold 13px sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText('MAX', btnX + btnW / 2, btnY + btnH / 2);
         ctx.textAlign = 'left';
         ctx.textBaseline = 'alphabetic';
       } else {
-        drawUiButton(btnX, btnY, btnW, btnH, `強化する (${cost}P)`,
-          () => purchaseAwakeningUpgrade(def.id),
+        drawUiButton(btnX, btnY, btnW, btnH, `強化 (${cost}P)`,
+          () => purchaseDreamMemoryUpgrade(def.id),
           affordable
-            ? { fillStyle: 'rgba(103, 58, 183, 0.7)', strokeStyle: '#ce93d8', font: 'bold 14px sans-serif' }
-            : { fillStyle: 'rgba(60, 60, 60, 0.5)', strokeStyle: '#616161', textColor: '#9e9e9e', font: 'bold 14px sans-serif' });
+            ? { fillStyle: 'rgba(103, 58, 183, 0.7)', strokeStyle: '#ce93d8', font: 'bold 13px sans-serif' }
+            : { fillStyle: 'rgba(60, 60, 60, 0.5)', strokeStyle: '#616161', textColor: '#9e9e9e', font: 'bold 13px sans-serif' });
       }
-      cardY += cardHeight + cardGap;
+      rowY += rowHeight + rowGap;
     });
 
-    const backBtnW = 200, backBtnH = 44;
-    drawUiButton(canvas.width / 2 - backBtnW / 2, cardY + 10, backBtnW, backBtnH,
-      'タイトルへ戻る', () => { awakeningShopActive = false; },
+    const backBtnW = 200, backBtnH = 36;
+    drawUiButton(canvas.width / 2 - backBtnW / 2, rowY + 8, backBtnW, backBtnH,
+      'タイトルへ戻る', () => { dreamMemoryShopActive = false; },
       { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
     return;
   }
@@ -4365,7 +4397,7 @@ function draw() {
     drawUiButton(btnX, canvas.height / 2 + 4, btnW, btnH, '3倍加速モード (2)',
       () => selectMode(3));
     drawUiButton(btnX, canvas.height / 2 + 68, btnW, 40,
-      `覚醒ポイントで強化 (P: ${awakeningSave.points})`, () => { awakeningShopActive = true; },
+      `夢の記憶ポイントで強化 (P: ${dreamMemorySave.points})`, () => { dreamMemoryShopActive = true; },
       { fillStyle: 'rgba(74, 20, 140, 0.55)', strokeStyle: '#ce93d8', font: 'bold 15px sans-serif' });
 
     ctx.fillStyle = '#cfd8dc';
