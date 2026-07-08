@@ -4144,7 +4144,7 @@ function draw() {
     ctx.fillStyle = 'white';
     ctx.font = '48px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('Survivors風ゲーム', canvas.width / 2, canvas.height / 2 - 130);
+    ctx.fillText('ワーキングデッド', canvas.width / 2, canvas.height / 2 - 130);
     ctx.textAlign = 'left';
 
     const btnW = 340, btnH = 54;
