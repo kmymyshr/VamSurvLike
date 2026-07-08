@@ -794,6 +794,8 @@ function resetPlayerAndPartnerPositionForNewDay() {
   clampToPlayableFloor(player);
   partner.x = player.x + partnerFollowOffsetX;
   partner.y = player.y + partnerFollowOffsetY;
+  partner.vx = 0;
+  partner.vy = 0;
   clampToPlayableFloor(partner);
 }
 
@@ -1350,6 +1352,8 @@ function startWithLastRunSettings() {
 // ===== 同僚 =====
 const partnerMoveSpeed = 3.2;
 const partnerFollowSpeedMultiplier = 0.45;
+// 同僚の速度が目標速度へ近づく割合（1フレームあたり）。小さいほど慣性が強く、滑るような動きになる
+const partnerVelocitySmoothing = 0.12;
 const partnerWanderChance = 0.8;
 const partnerChocolateSeekFatigueRatio = 0.6; // 脳疲労がこの割合を超えたら、チョコレートを優先して取りに行く
 const partnerFollowOffsetX = -95;
@@ -1572,6 +1576,7 @@ function triggerPartnerStatusComment() {
 const partner = {
   active: false, // 「同僚なし」を選んだ場合や、力尽きた後はfalseのまま
   x: 0, y: 0, angle: 0,
+  vx: 0, vy: 0, // 慣性のある滑らかな移動のための現在速度
   radius: 13,
   icon: '',
   fatigue: 0,
@@ -1611,6 +1616,8 @@ function initPartner() {
   partner.x = player.x + partnerFollowOffsetX;
   partner.y = player.y + partnerFollowOffsetY;
   partner.angle = 0;
+  partner.vx = 0;
+  partner.vy = 0;
   partner.fatigue = 0;
   partner.san = maxSan;
   partner.lifespan = maxLifespan;
@@ -1742,15 +1749,25 @@ function updatePartner(dt) {
     : partner.wandering
       ? partner.wanderTarget
       : { x: player.x + partnerFollowOffsetX, y: player.y + partnerFollowOffsetY };
+  // 目標地点へ向かう「望ましい速度」を求め、実際の速度はそこへ少しずつ近づけることで
+  // 急な方向転換・停止でも滑るような慣性のある動きになる
   const fdx = followTarget.x - partner.x;
   const fdy = followTarget.y - partner.y;
   const fdist = Math.hypot(fdx, fdy);
+  const movementSpeed = partnerMoveSpeed * (partnerWantsRecoveryItem || partner.wandering ? 1 : partnerFollowSpeedMultiplier);
+  let desiredVx = 0;
+  let desiredVy = 0;
   if (fdist > 2) {
-    const movementSpeed = partnerMoveSpeed * (partnerWantsRecoveryItem || partner.wandering ? 1 : partnerFollowSpeedMultiplier);
-    const step = Math.min(fdist, movementSpeed);
-    partner.x += (fdx / fdist) * step;
-    partner.y += (fdy / fdist) * step;
-    partner.angle = Math.atan2(fdy, fdx);
+    const speed = Math.min(fdist, movementSpeed);
+    desiredVx = (fdx / fdist) * speed;
+    desiredVy = (fdy / fdist) * speed;
+  }
+  partner.vx += (desiredVx - partner.vx) * partnerVelocitySmoothing;
+  partner.vy += (desiredVy - partner.vy) * partnerVelocitySmoothing;
+  partner.x += partner.vx;
+  partner.y += partner.vy;
+  if (Math.hypot(partner.vx, partner.vy) > 0.05) {
+    partner.angle = Math.atan2(partner.vy, partner.vx);
   }
   clampToPlayableFloor(partner);
   pushEntityOutsideScheduledReport(partner);
