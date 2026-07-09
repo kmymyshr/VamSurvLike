@@ -3352,40 +3352,40 @@ const partnerAdventureScenes = {
     start: 'intro',
     nodes: {
       intro: {
-        text: '休日、同僚を誘って近くのカフェへ入った。「今日は何を話そうか」と同僚が笑いかけてくる。',
+        text: '急にごめんね、休みの日にメッセージしちゃった。ちょっとだけ、話し相手になってくれる？',
         choices: [
-          { label: '最近の仕事の悩みを相談する', next: 'consult',
+          { label: '実はさ、最近ちょっと仕事のことで悩んでて…', next: 'consult',
             effects: () => adjustPartnerRelationship(15) },
-          { label: '同僚の好きなことを聞いてみる', next: 'hobby',
+          { label: '全然いいよ！休みの日っていつも何してるの？', next: 'hobby',
             effects: () => { adjustPartnerRelationship(10); grantSpecialSkillById('communication'); } },
-          { label: '特に話さず、黙って店内を眺める', next: 'silence',
+          { label: '（既読だけつけて、少し考える）', next: 'silence',
             effects: () => {} }
         ]
       },
       consult: {
-        text: '同僚は真剣に話を聞いてくれた。「一緒に頑張ろう」と力強く言ってくれる。',
+        text: '大変だったね…。でも、一緒に頑張ろう！わたしもついてるから。',
         choices: [
-          { label: 'ありがとう、と素直に伝える', next: null,
+          { label: 'ありがとう、そう言ってもらえると救われるよ', next: null,
             effects: () => { adjustPartnerRelationship(10); specialSkillEffects.partnerDamageMultiplier *= 1.1; } },
-          { label: '照れくさくて、つい話をそらす', next: null,
+          { label: '（照れくさくて、スタンプだけ送る）', next: null,
             effects: () => adjustPartnerRelationship(3) }
         ]
       },
       hobby: {
-        text: '同僚は嬉しそうに趣味の話をしてくれた。意外な特技があるらしい。',
+        text: '休みの日は、実はこっそりカフェ巡りにハマっててさ。意外でしょ？',
         choices: [
-          { label: 'その特技を今度教えてもらう約束をする', next: null,
+          { label: '気になる！今度詳しく教えてよ', next: null,
             effects: () => grantSpecialSkillById('learning-power') },
-          { label: '自分の好きなことも話してみる', next: null,
+          { label: '実は自分も、最近ハマってることがあってさ', next: null,
             effects: () => adjustPartnerRelationship(8) }
         ]
       },
       silence: {
-        text: '会話は弾まなかった。ふと隣を見ると、同僚は少し寂しそうな顔をしていた。',
+        text: '…既読スルーされちゃったかな。大丈夫？',
         choices: [
-          { label: '思い切って話しかけてみる', next: null,
+          { label: 'ごめん、返信遅くなった。実はさ…', next: null,
             effects: () => adjustPartnerRelationship(5) },
-          { label: 'そのまま静かに過ごす', next: null,
+          { label: '（そのまま、既読無視を続ける）', next: null,
             effects: () => adjustPartnerRelationship(-5) }
         ]
       }
@@ -9122,7 +9122,7 @@ function draw() {
     ctx.fillStyle = '#ff8a80';
     ctx.font = '26px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('……名状しがたきものの気配がする……', canvas.width / 2, canvas.height / 2 - 90);
+    ctx.fillText('……何か不吉で嫌な予感がする……', canvas.width / 2, canvas.height / 2 - 90);
     ctx.textAlign = 'left';
 
     const encBtnW = 460, encBtnH = 50;
