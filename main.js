@@ -8048,17 +8048,27 @@ function draw() {
         ctx.stroke();
       }
 
-      // 「自宅警備員」：サラリーマンと同じフォント・サイズ、白地に黒縁で固定表示する
+      // 「自宅警備員」：少し小さめのフォントに、半文字ぶんの文字間隔を空け、弱めのコントラストで固定表示する
       ctx.save();
       ctx.translate(targetCenterX, titleY - 30);
       ctx.rotate(-0.05);
-      ctx.textAlign = 'center';
-      ctx.font = 'bold 38px "Comic Sans MS", "Chalkboard SE", "Marker Felt", cursive, sans-serif';
-      ctx.lineWidth = 5;
-      ctx.strokeStyle = '#000000';
-      ctx.strokeText('自宅警備員', 0, 0);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillText('自宅警備員', 0, 0);
+      const homeGuardFontSize = 28;
+      ctx.font = `bold ${homeGuardFontSize}px "Comic Sans MS", "Chalkboard SE", "Marker Felt", cursive, sans-serif`;
+      const homeGuardChars = Array.from('自宅警備員');
+      const homeGuardLetterSpacing = homeGuardFontSize * 0.5;
+      const homeGuardCharWidths = homeGuardChars.map(c => ctx.measureText(c).width);
+      const homeGuardTotalWidth = homeGuardCharWidths.reduce((sum, w) => sum + w, 0) +
+        homeGuardLetterSpacing * (homeGuardChars.length - 1);
+      ctx.textAlign = 'left';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+      let homeGuardX = -homeGuardTotalWidth / 2;
+      homeGuardChars.forEach((c, i) => {
+        ctx.strokeText(c, homeGuardX, 0);
+        ctx.fillText(c, homeGuardX, 0);
+        homeGuardX += homeGuardCharWidths[i] + homeGuardLetterSpacing;
+      });
       ctx.restore();
       ctx.restore();
     }
