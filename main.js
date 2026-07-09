@@ -3985,8 +3985,8 @@ const bossBulletDamageLifespan = 3;
 // 5段階、各段階ごとに性質の異なる発射口を持つ（耐久力は以前の設定の約30%に調整済み）
 const bossStageDefs = [
   {
-    stage: 1, name: 'ダークテトラッド', nameEn: 'Dark Tetrad',
-    holeCount: 4, hitsPerHole: 25, layout: 'fixed'
+    stage: 1, name: '視野狭窄', nameEn: 'Tunnel Vision',
+    holeCount: 4, hitsPerHole: 25, layout: 'fixed', revive: true
   },
   {
     stage: 2, name: 'シャドウ', nameEn: 'Shadow',
@@ -4016,6 +4016,13 @@ const bossHoleWanderEaseFactorSlow = 0.5; // 第2段階（シャドウ）：ゆ�
 // 第4段階（承認欲求）：被弾していない間、耐久力が少しずつ回復する
 const bossRegenGraceMs = 1500;
 const bossRegenPerSec = 3;
+// 第1段階（視野狭窄）：個別に破壊しても、この時間が経つと体力半分の状態で復活する（全て同時に破壊しないと突破できない）
+const bossReviveDelayMs = 4000;
+// 段階ごとに、窓の下のガラス面へうっすらと表示する解説文（[見出し, 説明1, 説明2]）。無い段階は表示しない
+const bossStageGlassTexts = {
+  1: ['視野狭窄', '全体が見えず、一部だけに意識が固定される。', '全体をバランスよく攻撃する必要がある。'],
+  3: ['確証バイアス', '自分の考えに合う情報ばかり集め、反証を軽視する傾向。', 'パリィによる反撃のみ有効。']
+};
 // 本体が上下左右にゆっくり動き回る範囲と、目標地点を変える間隔
 const bossMoveRangeX = 50;
 const bossMoveRangeY = 26;
@@ -4076,13 +4083,14 @@ function generateBossHoles(stage) {
   const def = bossStageDefs[stage - 1];
   const holes = [];
   if (stage === 1) {
-    // 第1段階「ダークテトラッド」：横一列に均等配置し、位置は変わらない
+    // 第1段階「視野狭窄」：横一列に均等配置し、位置は変わらない。4つそれぞれが独自の体力を持つ
     for (let i = 0; i < def.holeCount; i++) {
       holes.push({
         relX: (i + 1) / (def.holeCount + 1), relY: 0.65,
         hitsTaken: 0, destroyed: false, flashTimerMs: 0, maxHits: def.hitsPerHole,
         // 発射口ごとにランダムな初期位相を持たせ、全ての穴が同時に発射しないようにする
-        fireTimerMs: Math.random() * bossFireIntervalMs
+        fireTimerMs: Math.random() * bossFireIntervalMs,
+        revive: true, showHealthBar: true
       });
     }
     return holes;
@@ -4185,7 +4193,17 @@ function updateBossEvent(dt) {
   // 発射口の点滅（被弾エフェクト）を減衰させ、段階に応じて穴自体を動かしたり回復させたりする
   for (const hole of bossEvent.holes) {
     if (hole.flashTimerMs > 0) hole.flashTimerMs = Math.max(0, hole.flashTimerMs - dt * 1000);
-    if (hole.destroyed) continue;
+    if (hole.destroyed) {
+      // 第1段階「視野狭窄」：個別に破壊されても、一定時間後に体力半分の状態で復活する
+      if (hole.revive) {
+        hole.reviveTimerMs -= dt * 1000;
+        if (hole.reviveTimerMs <= 0) {
+          hole.destroyed = false;
+          hole.hitsTaken = hole.maxHits / 2;
+        }
+      }
+      continue;
+    }
     if (hole.wanderTargetRelX !== undefined) {
       hole.wanderTimerMs -= dt * 1000;
       if (hole.wanderTimerMs <= 0) {
@@ -4238,6 +4256,7 @@ function registerBossHoleHit(hole, hitX, hitY) {
   spawnHitSpark(hitX, hitY, false);
   if (hole.hitsTaken < hole.maxHits) return;
   hole.destroyed = true;
+  if (hole.revive) hole.reviveTimerMs = bossReviveDelayMs;
   if (!bossEvent.holes.every(h => h.destroyed)) return;
   if (bossEvent.stage < bossStageDefs.length) {
     bossEvent.stage++;
@@ -6503,17 +6522,18 @@ function drawBossEvent() {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.restore();
 
-  // 第3段階「確証バイアス」限定：窓の下のガラス部分あたりに、うっすらと解説文を表示する（背景より前、ラスボスより後ろ）
-  if (bossEvent.stage === 3) {
+  // 特定の段階限定：窓の下のガラス部分あたりに、うっすらと解説文を表示する（背景より前、ラスボスより後ろ）
+  const stageGlassTextLines = bossStageGlassTexts[bossEvent.stage];
+  if (stageGlassTextLines) {
     ctx.save();
     ctx.globalAlpha = 0.18;
     ctx.fillStyle = '#cccccc';
     ctx.textAlign = 'center';
     ctx.font = 'bold 20px sans-serif';
-    ctx.fillText('確証バイアス', canvas.width / 2, windowZoneBottomY - 46);
+    ctx.fillText(stageGlassTextLines[0], canvas.width / 2, windowZoneBottomY - 46);
     ctx.font = '13px sans-serif';
-    ctx.fillText('自分の考えに合う情報ばかり集め、反証を軽視する傾向。', canvas.width / 2, windowZoneBottomY - 24);
-    ctx.fillText('パリィによる反撃のみ有効。', canvas.width / 2, windowZoneBottomY - 6);
+    ctx.fillText(stageGlassTextLines[1], canvas.width / 2, windowZoneBottomY - 24);
+    ctx.fillText(stageGlassTextLines[2], canvas.width / 2, windowZoneBottomY - 6);
     ctx.restore();
     ctx.textAlign = 'left';
   }
@@ -6560,6 +6580,14 @@ function drawBossEvent() {
           ctx.strokeStyle = 'rgba(90, 90, 90, 0.6)';
           ctx.lineWidth = 2;
           ctx.stroke();
+          // 第1段階「視野狭窄」：復活までの残り時間を表示する
+          if (hole.revive && hole.reviveTimerMs > 0) {
+            ctx.fillStyle = '#eeeeee';
+            ctx.font = 'bold 12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText((hole.reviveTimerMs / 1000).toFixed(1), hx, hy + 4);
+            ctx.textAlign = 'left';
+          }
           continue;
         }
         if (hole.disguiseRole) {
@@ -6607,6 +6635,19 @@ function drawBossEvent() {
           ctx.fillStyle = `rgba(255, 255, 255, ${hole.flashTimerMs / bossHoleFlashDurationMs})`;
           ctx.arc(hx, hy, bossHoleRadius * 1.35, 0, Math.PI * 2);
           ctx.fill();
+        }
+        // 第1段階「視野狭窄」：発射口ごとに独自の体力バーを表示する
+        if (hole.showHealthBar) {
+          const barW = bossHoleRadius * 2, barH = 5;
+          const barX = hx - barW / 2, barY = hy - bossHoleRadius - 14;
+          ctx.shadowBlur = 0;
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+          ctx.fillRect(barX, barY, barW, barH);
+          ctx.fillStyle = '#ff1744';
+          ctx.fillRect(barX, barY, barW * (1 - damageRatio), barH);
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(barX, barY, barW, barH);
         }
       }
     }
