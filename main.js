@@ -1006,6 +1006,477 @@ function pushEntityOutsideScheduledReport(entity) {
   clampToPlayableFloor(entity);
 }
 
+// ===== 固定敵（IT用語モチーフの特殊な出現敵） =====
+// 週に3回程度、平日のランダムなタイミングで1体だけ出現する、移動しない特殊な敵。
+// 名称はIT・セキュリティ用語から取り、現実の攻撃内容にちなんだ攻撃パターン・被弾時の悪影響を持つ。
+const fixedEnemyCheckHour = 13; // 平日13時に判定する（昼食・定時報告・クイズと時間帯が被らないように選定）
+const fixedEnemySpawnChance = 0.6; // 平日5日 × 60% ≈ 週3回程度の出現
+const fixedEnemyBulletSpeed = 5;
+const fixedEnemyBulletRadius = 6;
+const decoyBaseSanDamage = 8; // 「おとり」系（フィッシング等）に触れた時の共通の基礎ダメージ
+const decoyBaseFatigueDamage = 10;
+const decoyRadius = 18;
+const disguiseBaseSanDamage = 6; // なりすまし・中間者攻撃系が同僚に命中した時の共通の基礎ダメージ
+const disguiseBaseRelationshipDamage = 6;
+
+// 攻撃名・現実の用語内容・ゲーム内の攻撃パターン/効果を対応させた定義一覧
+const fixedEnemyDefs = [
+  {
+    id: 'dos', name: 'DoS攻撃', icon: '💥', hpBase: 34, radius: 28,
+    info: 'サーバーやネットワークに大量のリクエストを送り、サービスを停止・遅延させる攻撃。',
+    attackType: 'burst', intervalMs: 2600, burstCount: 3, spreadRad: 0.3, bulletSan: 5, bulletLifespan: 1,
+    effect: { id: 'fireRateDebuff', magnitude: 1500 }
+  },
+  {
+    id: 'ddos', name: 'DDoS攻撃', icon: '🌐', hpBase: 46, radius: 30,
+    info: '複数の端末、特にボットネットを使って行う大規模なDoS攻撃。',
+    attackType: 'burst', intervalMs: 3400, burstCount: 5, spreadRad: 0.5, bulletSan: 4, bulletLifespan: 1,
+    spawnsMinionOnAttack: true, minionMax: 3,
+    effect: { id: 'moveSpeedDebuff', magnitude: 1800 }
+  },
+  {
+    id: 'xss', name: 'XSS', icon: '🧬', hpBase: 32, radius: 27,
+    info: 'Webサイトに悪意あるスクリプトを埋め込み、利用者のブラウザ上で実行させる攻撃。',
+    attackType: 'burst', intervalMs: 2200, burstCount: 1, spreadRad: 0.1, bulletSan: 6, bulletLifespan: 1,
+    effect: { id: 'controlsReverse', magnitude: 2500 }
+  },
+  {
+    id: 'sql-injection', name: 'SQLインジェクション', icon: '🗄️', hpBase: 34, radius: 28,
+    info: '入力欄などから不正なSQL文を送り、データベースを不正操作する攻撃。',
+    attackType: 'pulse', intervalMs: 1000,
+    effect: { id: 'scoreDrain', magnitude: 3 }
+  },
+  {
+    id: 'csrf', name: 'CSRF', icon: '🎭', hpBase: 30, radius: 27,
+    info: 'ログイン中の利用者に意図しない操作をさせる攻撃。',
+    attackType: 'burst', intervalMs: 2000, burstCount: 1, spreadRad: 0.05, bulletSan: 5, bulletLifespan: 1,
+    effect: { id: 'fireLock', magnitude: 1200 }
+  },
+  {
+    id: 'phishing', name: 'フィッシング', icon: '🎣', hpBase: 30, radius: 27,
+    info: '本物に見せかけたメールやサイトで、ID・パスワード・カード情報などを盗む攻撃。',
+    attackType: 'decoy', intervalMs: 6000, decoyIcon: '🎣',
+    effect: { id: 'fatigueDamage', magnitude: 20 }
+  },
+  {
+    id: 'malware', name: 'マルウェア感染', icon: '🦠', hpBase: 34, radius: 28,
+    info: 'ウイルス、ワーム、トロイの木馬などの悪意あるソフトを端末に感染させる攻撃。',
+    attackType: 'burst', intervalMs: 2600, burstCount: 1, spreadRad: 0.2, bulletSan: 5, bulletLifespan: 1,
+    effect: { id: 'infect', magnitude: 4000 }
+  },
+  {
+    id: 'ransomware', name: 'ランサムウェア', icon: '🔒', hpBase: 42, radius: 30,
+    info: 'ファイルやシステムを暗号化し、復旧と引き換えに金銭を要求する攻撃。',
+    attackType: 'pulse', intervalMs: 5000,
+    effect: { id: 'scoreDrain', magnitude: 18 }
+  },
+  {
+    id: 'bruteforce', name: 'ブルートフォース攻撃', icon: '🔨', hpBase: 26, radius: 26,
+    info: 'パスワードを総当たりで試してログインを突破しようとする攻撃。',
+    attackType: 'burst', intervalMs: 900, burstCount: 1, spreadRad: 0.05, bulletSan: 4, bulletLifespan: 1
+  },
+  {
+    id: 'dictionary-attack', name: '辞書攻撃', icon: '📖', hpBase: 26, radius: 26,
+    info: 'よく使われる単語や流出済みパスワードリストを使ってログインを試す攻撃。',
+    attackType: 'burst', intervalMs: 1400, burstCount: 1, pattern: [-0.35, 0, 0.35], bulletSan: 5, bulletLifespan: 1
+  },
+  {
+    id: 'password-list-attack', name: 'パスワードリスト攻撃', icon: '📋', hpBase: 28, radius: 26,
+    info: '他サービスから漏えいしたID・パスワードの組み合わせを使い回してログインを試す攻撃。',
+    attackType: 'burst', intervalMs: 1500, burstCount: 1, spreadRad: 0.05, predictive: true, bulletSan: 6, bulletLifespan: 1
+  },
+  {
+    id: 'man-in-the-middle', name: '中間者攻撃', icon: '🕵️', hpBase: 34, radius: 28,
+    info: '通信の間に割り込み、盗聴・改ざん・なりすましを行う攻撃。',
+    attackType: 'disguise', intervalMs: 3400
+  },
+  {
+    id: 'sniffing', name: '盗聴・スニッフィング', icon: '👂', hpBase: 30, radius: 27,
+    info: 'ネットワーク上の通信内容を傍受する攻撃。暗号化されていない通信が狙われやすい。',
+    attackType: 'pulse', intervalMs: 4000, range: 220,
+    effect: { id: 'visionObscure', magnitude: 3000 }
+  },
+  {
+    id: 'dns-spoofing', name: 'DNSスプーフィング', icon: '🧭', hpBase: 30, radius: 27,
+    info: '正規サイトにアクセスしたつもりの利用者を偽サイトへ誘導する攻撃。',
+    attackType: 'decoy', intervalMs: 7000, decoyIcon: '🧭',
+    effect: { id: 'sanDamage', magnitude: 6 }
+  },
+  {
+    id: 'zero-day', name: 'ゼロデイ攻撃', icon: '⚡', hpBase: 48, radius: 30,
+    info: 'まだ修正パッチが出ていない脆弱性を悪用する攻撃。防御が難しい。',
+    attackType: 'burst', intervalMs: 3000, burstCount: 2, spreadRad: 0.2, bulletSan: 10, bulletLifespan: 3,
+    instantFirstAttack: true
+  },
+  {
+    id: 'privilege-escalation', name: '権限昇格', icon: '👑', hpBase: 55, radius: 32,
+    info: '低い権限で侵入したあと、管理者権限などより強い権限を不正に取得する攻撃。',
+    attackType: 'burst', intervalMs: 3000, burstCount: 2, spreadRad: 0.3, bulletSan: 5, bulletLifespan: 1,
+    escalate: true
+  },
+  {
+    id: 'backdoor', name: 'バックドア設置', icon: '🚪', hpBase: 22, radius: 25,
+    info: '侵入後、再び入り込めるように秘密の侵入口を作る行為。',
+    attackType: 'burst', intervalMs: 5000, burstCount: 1, spreadRad: 0.1, bulletSan: 5, bulletLifespan: 1,
+    persistAfterDefeat: true
+  },
+  {
+    id: 'supply-chain', name: 'サプライチェーン攻撃', icon: '📦', hpBase: 34, radius: 28,
+    info: '取引先、委託先、ソフトウェア更新経路などを悪用して本命の組織を攻撃する手法。',
+    attackType: 'decoy', intervalMs: 6500, decoyIcon: '📦',
+    effect: { id: 'infect', magnitude: 3000 }
+  },
+  {
+    id: 'targeted-attack', name: '標的型攻撃', icon: '🎯', hpBase: 36, radius: 28,
+    info: '特定の企業・組織・個人を狙い、メールや脆弱性を使って継続的に侵入を試みる攻撃。',
+    attackType: 'burst', intervalMs: 2000, burstCount: 2, spreadRad: 0.1, bulletSan: 6, bulletLifespan: 2,
+    effect: { id: 'fireRateDebuff', magnitude: 1000 }
+  },
+  {
+    id: 'social-engineering', name: 'ソーシャルエンジニアリング', icon: '🗣️', hpBase: 28, radius: 27,
+    info: '人の心理や油断を利用して、パスワードや機密情報を聞き出す手口。',
+    attackType: 'decoy', intervalMs: 5500, decoyIcon: '🗣️',
+    effect: { id: 'relationshipDamage', magnitude: 6 }
+  },
+  {
+    id: 'impersonation', name: 'なりすまし', icon: '🥷', hpBase: 34, radius: 28,
+    info: '他人や正規サービスを装って、信頼を悪用する攻撃。メール送信者やログイン情報の偽装など。',
+    attackType: 'disguise', intervalMs: 3200
+  },
+  {
+    id: 'email-spoofing', name: 'メールスプーフィング', icon: '📧', hpBase: 28, radius: 26,
+    info: '送信元を偽装したメールを送り、フィッシングやマルウェア感染に誘導する攻撃。',
+    attackType: 'decoy', intervalMs: 5000, decoyIcon: '📧',
+    effect: { id: 'sanDamage', magnitude: 5 }
+  },
+  {
+    id: 'clickjacking', name: 'クリックジャッキング', icon: '🖱️', hpBase: 28, radius: 26,
+    info: '利用者が見えているボタンとは別の操作をクリックさせる攻撃。',
+    attackType: 'decoy', intervalMs: 4500, decoyIcon: '🖱️',
+    effect: { id: 'fireLock', magnitude: 1500 }
+  },
+  {
+    id: 'directory-traversal', name: 'ディレクトリトラバーサル', icon: '📁', hpBase: 30, radius: 27,
+    info: 'Webサーバー上の本来アクセスできないファイルを不正に参照しようとする攻撃。',
+    attackType: 'burst', intervalMs: 1800, burstCount: 1, spreadRad: 0.1, bulletSan: 6, bulletLifespan: 1,
+    spawnFromEdge: true
+  },
+  {
+    id: 'remote-code-execution', name: 'リモートコード実行', icon: '💻', hpBase: 36, radius: 28,
+    info: '脆弱性を悪用して、遠隔からサーバーや端末上で不正なプログラムを実行する攻撃。',
+    attackType: 'burst', intervalMs: 2400, burstCount: 1, spreadRad: 0.1, bulletSan: 6, bulletLifespan: 2,
+    effect: { id: 'hijackMove', magnitude: 1800 }
+  },
+  {
+    id: 'session-hijacking', name: 'セッションハイジャック', icon: '🪪', hpBase: 32, radius: 27,
+    info: 'ログイン状態を示すセッション情報を盗み、本人になりすまして操作する攻撃。',
+    attackType: 'burst', intervalMs: 2600, burstCount: 1, spreadRad: 0.1, bulletSan: 5, bulletLifespan: 1,
+    effect: { id: 'partnerHijack', magnitude: 2500 }
+  },
+  {
+    id: 'keylogger', name: 'キーロガー', icon: '⌨️', hpBase: 24, radius: 25,
+    info: 'キーボード入力を記録し、パスワードや機密情報を盗むマルウェアや仕組み。',
+    attackType: 'burst', intervalMs: 1600, burstCount: 1, spreadRad: 0.15, bulletSan: 4, bulletLifespan: 1,
+    dodgeChance: 0.35
+  },
+  {
+    id: 'botnet', name: 'ボットネット', icon: '🤖', hpBase: 50, radius: 32,
+    info: 'マルウェアに感染した多数の端末を遠隔操作し、DDoSや迷惑メール送信などに悪用する仕組み。',
+    attackType: 'minion', intervalMs: 4200, minionMax: 5
+  },
+  {
+    id: 'watering-hole', name: '水飲み場攻撃', icon: '🚰', hpBase: 30, radius: 27,
+    info: '標的がよく訪れるWebサイトを改ざんし、アクセスした標的を感染させる攻撃。',
+    attackType: 'decoy', intervalMs: 6000, decoyIcon: '🚰',
+    effect: { id: 'infect', magnitude: 2500 }
+  },
+  {
+    id: 'insider-threat', name: '内部不正', icon: '🐍', hpBase: 34, radius: 28,
+    info: '社員・委託先など内部関係者が、情報の持ち出し・改ざん・破壊などを行う行為。',
+    attackType: 'pulse', intervalMs: 4500,
+    effect: { id: 'partnerHijack', magnitude: 3000 }
+  }
+];
+
+let fixedEnemy = null; // 現在アクティブな固定敵。1体のみ同時出現する
+const pendingFixedEnemyBackdoors = []; // バックドア設置：撃破後もしばらく残る、不意打ち予約リスト
+
+// 被弾時の効果に使う、状態異常タイマー（0より大きい間だけ効果が続く）
+let fixedEnemyControlsReversedTimerMs = 0; // 移動キーが反転する（XSS）
+let fixedEnemyMoveHijackTimerMs = 0; // 移動が乗っ取られ、ランダムな方向へ動かされる（リモートコード実行）
+let fixedEnemyMoveHijackAngle = 0;
+let fixedEnemyMoveSpeedDebuffTimerMs = 0; // 移動速度が低下する（DDoS）
+let fixedEnemyFireRateDebuffTimerMs = 0; // 発射間隔が延びる（DoS・標的型攻撃）
+let fixedEnemyFireLockTimerMs = 0; // 一時的に攻撃できなくなる（CSRF・クリックジャッキング）
+let fixedEnemyRecoveryDisabledTimerMs = 0; // 待機時の脳疲労回復が無効になる（マルウェア感染・サプライチェーン攻撃・水飲み場攻撃）
+let fixedEnemyInfectedTickTimerMs = 0; // 感染中、継続的にSANが少しずつ削れていく
+let fixedEnemyVisionObscuredTimerMs = 0; // HUDの一部（アイテム等）が見えづらくなる（盗聴・スニッフィング）
+
+function getFixedEnemyMoveSpeedMultiplier() {
+  return fixedEnemyMoveSpeedDebuffTimerMs > 0 ? 0.6 : 1;
+}
+function getFixedEnemyFireRateMultiplier() {
+  return fixedEnemyFireRateDebuffTimerMs > 0 ? 1.7 : 1;
+}
+
+// 固定敵1体ぶんの被弾効果を、対象に応じて適用する共通処理
+function applyFixedEnemyEffect(effect, target = 'player') {
+  if (!effect) return;
+  switch (effect.id) {
+    case 'sanDamage':
+      damageSan(effect.magnitude);
+      break;
+    case 'fatigueDamage':
+      fatigue = Math.min(maxFatigue, fatigue + effect.magnitude);
+      break;
+    case 'scoreDrain':
+      score = Math.max(0, score - effect.magnitude);
+      break;
+    case 'relationshipDamage':
+      adjustPartnerRelationship(-effect.magnitude);
+      break;
+    case 'fireRateDebuff':
+      fixedEnemyFireRateDebuffTimerMs = Math.max(fixedEnemyFireRateDebuffTimerMs, effect.magnitude);
+      break;
+    case 'moveSpeedDebuff':
+      fixedEnemyMoveSpeedDebuffTimerMs = Math.max(fixedEnemyMoveSpeedDebuffTimerMs, effect.magnitude);
+      break;
+    case 'controlsReverse':
+      fixedEnemyControlsReversedTimerMs = Math.max(fixedEnemyControlsReversedTimerMs, effect.magnitude);
+      break;
+    case 'hijackMove':
+      fixedEnemyMoveHijackTimerMs = Math.max(fixedEnemyMoveHijackTimerMs, effect.magnitude);
+      fixedEnemyMoveHijackAngle = Math.random() * Math.PI * 2;
+      break;
+    case 'fireLock':
+      fixedEnemyFireLockTimerMs = Math.max(fixedEnemyFireLockTimerMs, effect.magnitude);
+      break;
+    case 'recoveryDisable':
+      fixedEnemyRecoveryDisabledTimerMs = Math.max(fixedEnemyRecoveryDisabledTimerMs, effect.magnitude);
+      break;
+    case 'infect':
+      fixedEnemyRecoveryDisabledTimerMs = Math.max(fixedEnemyRecoveryDisabledTimerMs, effect.magnitude);
+      fixedEnemyInfectedTickTimerMs = Math.max(fixedEnemyInfectedTickTimerMs, effect.magnitude);
+      break;
+    case 'visionObscure':
+      fixedEnemyVisionObscuredTimerMs = Math.max(fixedEnemyVisionObscuredTimerMs, effect.magnitude);
+      break;
+    case 'partnerHijack':
+      if (partner.active) partner.hijackedTimerMs = Math.max(partner.hijackedTimerMs || 0, effect.magnitude);
+      break;
+  }
+}
+
+function spawnFixedEnemy() {
+  if (fixedEnemy || scheduledReport || bossEvent || midBossEvent) return;
+  const def = fixedEnemyDefs[Math.floor(Math.random() * fixedEnemyDefs.length)];
+  const radius = def.radius;
+  let position;
+  if (def.spawnFromEdge) {
+    // ディレクトリトラバーサル：通常の出現範囲外、画面の隅寄りから出現する
+    const margin = radius + 20;
+    const corners = [
+      { x: margin, y: eventSpawnMinY + margin },
+      { x: canvas.width - margin, y: eventSpawnMinY + margin },
+      { x: margin, y: canvas.height - margin },
+      { x: canvas.width - margin, y: canvas.height - margin }
+    ];
+    position = corners[Math.floor(Math.random() * corners.length)];
+  } else {
+    position = getRandomEventPosition(radius);
+  }
+  const collisionSafeMargin = radius + player.radius * 2 + 2;
+  position.x = Math.max(collisionSafeMargin, Math.min(canvas.width - collisionSafeMargin, position.x));
+  position.y = Math.max(collisionSafeMargin, Math.min(canvas.height - collisionSafeMargin, position.y));
+  const maxHp = Math.ceil(def.hpBase * getEnemyDifficultyMultiplier());
+  fixedEnemy = {
+    def, x: position.x, y: position.y, radius,
+    hp: maxHp, maxHp,
+    timerMs: def.instantFirstAttack ? 250 : def.intervalMs,
+    ageMs: 0,
+    minionsSpawned: 0,
+    decoy: null,
+    decoyTimerMs: def.attackType === 'decoy' ? def.intervalMs : 0,
+    patternIndex: 0
+  };
+  showMessage(`${def.icon} ${def.name} が発生！`, 3000, '#ff8a80', '22px sans-serif');
+}
+
+function clearFixedEnemyAtDayEnd() {
+  if (!fixedEnemy) return;
+  showMessage(`${fixedEnemy.def.name} を見逃してしまった…`, 2200, '#ff8a80');
+  fixedEnemy = null;
+}
+
+// 固定敵は接触ダメージを持たないが、自分も同僚も通り抜けられない
+function pushEntityOutsideFixedEnemy(entity) {
+  if (!fixedEnemy || !entity) return;
+  let dx = entity.x - fixedEnemy.x;
+  let dy = entity.y - fixedEnemy.y;
+  let distance = Math.hypot(dx, dy);
+  const minimumDistance = entity.radius + fixedEnemy.radius + 1;
+  if (distance >= minimumDistance) return;
+  if (distance === 0) {
+    dx = 1;
+    dy = 0;
+    distance = 1;
+  }
+  entity.x = fixedEnemy.x + (dx / distance) * minimumDistance;
+  entity.y = fixedEnemy.y + (dy / distance) * minimumDistance;
+  clampToPlayableFloor(entity);
+}
+
+function defeatFixedEnemy() {
+  if (!fixedEnemy) return;
+  const def = fixedEnemy.def;
+  const reward = Math.ceil(28 * specialSkillEffects.scoreGainMultiplier * getEnemyDifficultyMultiplier());
+  score += reward;
+  weeklyScoreGained += reward;
+  checkEarlyQuotaAchievement();
+  showMessage(`${def.name} を撃退！ Score +${reward}`, 2500, '#69f0ae', '23px sans-serif');
+  if (def.persistAfterDefeat) {
+    // バックドア設置：撃破後もしばらくすると同じ場所から不意打ちの一発が飛んでくる
+    const shots = 1 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < shots; i++) {
+      pendingFixedEnemyBackdoors.push({
+        remainingMs: 4000 + Math.random() * 8000 + i * 5000,
+        x: fixedEnemy.x, y: fixedEnemy.y
+      });
+    }
+  }
+  fixedEnemy = null;
+}
+
+function spawnFixedEnemyBullet(fromX, fromY, angle, def) {
+  bullets.push({
+    x: fromX, y: fromY,
+    vx: Math.cos(angle) * fixedEnemyBulletSpeed,
+    vy: Math.sin(angle) * fixedEnemyBulletSpeed,
+    radius: fixedEnemyBulletRadius, damage: 1, bounces: 0,
+    owner: 'fixedEnemy', fixedEnemyDefId: def.id
+  });
+}
+
+function performFixedEnemyAttack(fx) {
+  const def = fx.def;
+  if (def.attackType === 'burst') {
+    let count = def.burstCount;
+    let intervalMs = def.intervalMs;
+    if (def.escalate) {
+      const ageSec = fx.ageMs / 1000;
+      count += Math.floor(ageSec / 6);
+      intervalMs = Math.max(1000, intervalMs - ageSec * 30);
+    }
+    const baseAngle = Math.atan2(player.y - fx.y, player.x - fx.x);
+    for (let i = 0; i < count; i++) {
+      let angle;
+      if (def.predictive) {
+        const leadX = player.x + (player.lastMoveDx || 0) * 14;
+        const leadY = player.y + (player.lastMoveDy || 0) * 14;
+        angle = Math.atan2(leadY - fx.y, leadX - fx.x);
+      } else if (def.pattern) {
+        angle = baseAngle + def.pattern[fx.patternIndex % def.pattern.length];
+        fx.patternIndex++;
+      } else {
+        angle = baseAngle + (Math.random() - 0.5) * (def.spreadRad || 0.2);
+      }
+      spawnFixedEnemyBullet(fx.x, fx.y, angle, def);
+    }
+    fx.timerMs = intervalMs;
+    if (def.spawnsMinionOnAttack && fx.minionsSpawned < (def.minionMax || 3)) {
+      spawnEnemy(0);
+      fx.minionsSpawned++;
+    }
+  } else if (def.attackType === 'minion') {
+    if (fx.minionsSpawned < (def.minionMax || 5)) {
+      spawnEnemy(0);
+      fx.minionsSpawned++;
+    }
+    fx.timerMs = def.intervalMs;
+  } else if (def.attackType === 'pulse') {
+    if (!def.range || Math.hypot(player.x - fx.x, player.y - fx.y) <= def.range) {
+      applyFixedEnemyEffect(def.effect, 'player');
+    }
+    fx.timerMs = def.intervalMs;
+  } else if (def.attackType === 'disguise') {
+    if (partner.active) {
+      const angle = Math.atan2(partner.y - fx.y, partner.x - fx.x);
+      bullets.push({
+        x: fx.x, y: fx.y,
+        vx: Math.cos(angle) * fixedEnemyBulletSpeed,
+        vy: Math.sin(angle) * fixedEnemyBulletSpeed,
+        radius: fixedEnemyBulletRadius, damage: 1, bounces: 0,
+        owner: 'fixedEnemyDisguise', fixedEnemyDefId: def.id
+      });
+    }
+    fx.timerMs = def.intervalMs;
+  }
+}
+
+function updateFixedEnemyDecoy(fx, dt) {
+  const def = fx.def;
+  if (def.attackType !== 'decoy') return;
+  if (!fx.decoy) {
+    fx.decoyTimerMs -= dt * 1000;
+    if (fx.decoyTimerMs <= 0) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = fx.radius + 60 + Math.random() * 40;
+      const dp = {
+        x: Math.max(30, Math.min(canvas.width - 30, fx.x + Math.cos(angle) * dist)),
+        y: Math.max(eventSpawnMinY, Math.min(canvas.height - 30, fx.y + Math.sin(angle) * dist))
+      };
+      fx.decoy = { x: dp.x, y: dp.y, radius: decoyRadius };
+    }
+  } else if (Math.hypot(player.x - fx.decoy.x, player.y - fx.decoy.y) <= player.radius + fx.decoy.radius) {
+    damageSan(decoyBaseSanDamage);
+    fatigue = Math.min(maxFatigue, fatigue + decoyBaseFatigueDamage);
+    applyFixedEnemyEffect(def.effect, 'player');
+    showMessage(`${def.name} の罠だった…`, 1800, '#ff8a80');
+    fx.decoy = null;
+    fx.decoyTimerMs = def.intervalMs;
+  }
+}
+
+function updateFixedEnemy(dt) {
+  const dtMs = dt * 1000;
+  // 状態異常タイマーは、固定敵が存在しない間も減っていく（プレイヤーへの影響を継続させるため）
+  fixedEnemyControlsReversedTimerMs = Math.max(0, fixedEnemyControlsReversedTimerMs - dtMs);
+  fixedEnemyMoveHijackTimerMs = Math.max(0, fixedEnemyMoveHijackTimerMs - dtMs);
+  fixedEnemyMoveSpeedDebuffTimerMs = Math.max(0, fixedEnemyMoveSpeedDebuffTimerMs - dtMs);
+  fixedEnemyFireRateDebuffTimerMs = Math.max(0, fixedEnemyFireRateDebuffTimerMs - dtMs);
+  fixedEnemyFireLockTimerMs = Math.max(0, fixedEnemyFireLockTimerMs - dtMs);
+  fixedEnemyVisionObscuredTimerMs = Math.max(0, fixedEnemyVisionObscuredTimerMs - dtMs);
+  if (fixedEnemyRecoveryDisabledTimerMs > 0) {
+    fixedEnemyRecoveryDisabledTimerMs = Math.max(0, fixedEnemyRecoveryDisabledTimerMs - dtMs);
+  }
+  if (fixedEnemyInfectedTickTimerMs > 0) {
+    fixedEnemyInfectedTickTimerMs = Math.max(0, fixedEnemyInfectedTickTimerMs - dtMs);
+    damageSan(0.6 * dt);
+  }
+  if (partner.active && partner.hijackedTimerMs > 0) {
+    partner.hijackedTimerMs = Math.max(0, partner.hijackedTimerMs - dtMs);
+  }
+
+  // バックドア設置：撃破後に予約された不意打ちを処理する
+  for (let i = pendingFixedEnemyBackdoors.length - 1; i >= 0; i--) {
+    const b = pendingFixedEnemyBackdoors[i];
+    b.remainingMs -= dtMs;
+    if (b.remainingMs <= 0) {
+      const angle = Math.atan2(player.y - b.y, player.x - b.x);
+      spawnFixedEnemyBullet(b.x, b.y, angle, { id: 'backdoor' });
+      pendingFixedEnemyBackdoors.splice(i, 1);
+    }
+  }
+
+  if (!fixedEnemy) return;
+  fixedEnemy.ageMs += dtMs;
+  fixedEnemy.timerMs -= dtMs;
+  if (fixedEnemy.timerMs <= 0) {
+    performFixedEnemyAttack(fixedEnemy);
+  }
+  updateFixedEnemyDecoy(fixedEnemy, dt);
+}
+
 // --- 昼食：12時に順番付きで出現する食べ物 ---
 const lunchWarningHour = 11;
 const lunchHour = 12;
@@ -1172,6 +1643,11 @@ function processTimedHourEvents(previousHour, newHour) {
         Math.random() < quizChancePerOpportunity) {
       startQuizEvent();
     }
+    // 固定敵（IT用語モチーフ）：平日13時に、週3回程度の確率で1体出現する
+    if (isWeekday && hour === fixedEnemyCheckHour && !fixedEnemy &&
+        Math.random() < fixedEnemySpawnChance) {
+      spawnFixedEnemy();
+    }
   }
 }
 
@@ -1179,6 +1655,7 @@ function resolveTimedSystemsAtDayEnd() {
   failScheduledReport();
   finishLunchAtDayEnd();
   quizState = null;
+  clearFixedEnemyAtDayEnd();
 }
 
 // 一日の終了処理（終業時刻・残業の限界時刻・定時報告を残業中に片付けた場合のいずれからも呼ばれる）
@@ -1791,6 +2268,7 @@ const partner = {
   fatigueResting: false, // 脳疲労が100に達し、50まで下がるまで攻撃を控えている状態
   friendlyFireInvincibleTimer: 0,
   barrierCharges: 0, // 「ファイヤーウォール」の効果。残っている間は自機の誤射を防ぐ
+  hijackedTimerMs: 0, // セッションハイジャック・内部不正：残っている間は攻撃をやめる
   chocolateDailyCount: 0, // 本日すでに食べたチョコレートの個数。日付が変わるとリセットする
   relationship: partnerRelationshipInitial, // 非表示。0～100で、低いほど自分へ反撃しやすい
   // 賢さ（0〜1、初期はランダム）：高いほど的が正確で、疲労時に無駄撃ちを避けやすい
@@ -1988,6 +2466,7 @@ function updatePartner(dt) {
   }
   clampToPlayableFloor(partner);
   pushEntityOutsideScheduledReport(partner);
+  pushEntityOutsideFixedEnemy(partner);
 
   // 回復アイテムを取りに行っていた場合、たどり着いたら摂取して疲労・SAN・寿命に反映する
   if (partnerWantsRecoveryItem && partnerRecoveryTarget &&
@@ -2038,8 +2517,9 @@ function updatePartner(dt) {
   partner.fireTimer -= dt * 1000;
   // 自分の脳疲労が100に達してしまうような攻撃はしない（休息中も同様に攻撃しない）
   const wouldMaxOutPartnerFatigue = partner.fatigue + partnerFiringFatiguePerShot >= maxFatigue;
+  // セッションハイジャック・内部不正：一定時間、同僚が乗っ取られて攻撃をやめる
   if (partner.fireTimer <= 0 && (enemies.length > 0 || scheduledReport) &&
-      !partner.fatigueResting && !wouldMaxOutPartnerFatigue) {
+      !partner.fatigueResting && !wouldMaxOutPartnerFatigue && (partner.hijackedTimerMs || 0) <= 0) {
     const intelligence = getPartnerEffectiveIntelligence();
     const recklessness = getPartnerEffectiveRecklessness();
     const fatigueRatio = partner.fatigue / maxFatigue;
@@ -3382,6 +3862,9 @@ function performBulletParry(bullet, fromX, fromY, actorAngle) {
       ? getMidBossHoleAbsolutePosition(bullet.sourceHole)
       : getBossHoleAbsolutePosition(bullet.sourceHole);
     angle = Math.atan2(holePos.y - bullet.y, holePos.x - bullet.x);
+  } else if ((bullet.owner === 'fixedEnemy' || bullet.owner === 'fixedEnemyDisguise') && fixedEnemy) {
+    // 固定敵の弾は、その固定敵本体へ打ち返す
+    angle = Math.atan2(fixedEnemy.y - bullet.y, fixedEnemy.x - bullet.x);
   } else {
     const nearest = findNearestEnemyTo(fromX, fromY);
     angle = nearest
@@ -3675,6 +4158,30 @@ function damagePartnerByBossBullet() {
   partner.friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
 }
 
+// 固定敵の弾を被弾した時の処理：基礎ダメージに加え、攻撃名ごとの特殊効果（fixedEnemyEffectDefs参照）も発生する
+function damagePlayerByFixedEnemyBullet(bullet) {
+  if (friendlyFireInvincibleTimer > 0) return;
+  const def = fixedEnemyDefs.find(d => d.id === bullet.fixedEnemyDefId);
+  if (playerBarrierCharges > 0) {
+    playerBarrierCharges--;
+    friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
+    return;
+  }
+  const sanDmg = def ? def.bulletSan : 8; // バックドア設置の不意打ちなど、定義が見当たらない場合の既定値
+  const lifespanDmg = def ? (def.bulletLifespan || 1) : 2;
+  san = Math.max(0, san - sanDmg * specialSkillEffects.sanDamageMultiplier);
+  lifespan = Math.max(0, lifespan - lifespanDmg);
+  friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
+  friendlyFireHitFlashTimer = friendlyFireHitEffectDuration;
+  explosionShakeTimer = Math.max(explosionShakeTimer, friendlyFireHitEffectDuration);
+  checkVitalsGameOver();
+  if (gameOver || deathSequence) return;
+  if (def) {
+    if (def.effect) applyFixedEnemyEffect(def.effect, 'player');
+    showMessage(`${def.name}の攻撃を受けた…`, 1500, '#ff8a80');
+  }
+}
+
 // ===== ラスボス撃破後の演出（真エンドへ至る一連のカットシーン） =====
 // 'retreat'：本体が振動・フェードアウトしながら退場する（同時に画面が不規則にフラッシュ）
 // 'bgRestore'：暗く沈んでいたトーンが晴れ、いつもの背景に戻る
@@ -3945,7 +4452,8 @@ function attemptDeflectPartnerBullet() {
   spawnSlashEffect(player.x, player.y, player.angle, player.radius); // 命中の有無に関わらず、振った動作自体を見せる
   // 範囲内の条件を満たす弾は、まとめて同時にパリィする（1発だけに限らない）
   const targets = bullets.filter(b => {
-    if (b.owner !== 'partner' && b.owner !== 'boss' && b.owner !== 'midBoss') return false;
+    if (b.owner !== 'partner' && b.owner !== 'boss' && b.owner !== 'midBoss' &&
+        b.owner !== 'fixedEnemy' && b.owner !== 'fixedEnemyDisguise') return false;
     const d = Math.hypot(b.x - player.x, b.y - player.y);
     return d <= deflectRange + b.radius;
   });
@@ -3959,6 +4467,7 @@ function attemptDeflectPartnerBullet() {
 // スマホ用自動照準のターゲットを返す。定時報告が出ている間は、同僚の自律攻撃と同様にそちらを優先する
 function findAutoAimTarget() {
   if (scheduledReport) return { en: scheduledReport };
+  if (fixedEnemy) return { en: fixedEnemy };
   return findNearestEnemyToPlayer();
 }
 
@@ -3976,7 +4485,7 @@ function computeFullAutoDodgeVector(dt) {
   let vx = 0, vy = 0;
   let hasThreat = false;
   for (const b of bullets) {
-    if (b.owner !== 'partner' && b.owner !== 'boss' && b.owner !== 'midBoss') continue;
+    if (b.owner !== 'partner' && b.owner !== 'boss' && b.owner !== 'midBoss' && b.owner !== 'fixedEnemy') continue;
     const speed = Math.hypot(b.vx, b.vy) || 1;
     const dirX = b.vx / speed;
     const dirY = b.vy / speed;
@@ -4366,6 +4875,10 @@ function update() {
     if (gameOver || deathSequence) return;
   }
 
+  // 固定敵（IT用語モチーフ）の進行を処理する。通常の敵・時間経過は止めず並行して進む
+  updateFixedEnemy(dt);
+  if (gameOver || deathSequence) return;
+
   // ゲーム内時刻を進める
   if (now - lastHourTime >= hourMs) {
     const passed = Math.floor((now - lastHourTime) / hourMs);
@@ -4674,9 +5187,15 @@ function update() {
   } else {
     // WASDキーによるプレイヤー移動
     let moving = false;
+    const beforeMoveX = player.x, beforeMoveY = player.y;
     const currentMoveSpeed = player.speed * specialSkillEffects.moveSpeedMultiplier *
-      getEnergyDrinkMoveSpeedMultiplier() * getCoffeeMoveSpeedMultiplier();
-    if (fullAutoModeEnabled) {
+      getEnergyDrinkMoveSpeedMultiplier() * getCoffeeMoveSpeedMultiplier() * getFixedEnemyMoveSpeedMultiplier();
+    if (fixedEnemyMoveHijackTimerMs > 0) {
+      // リモートコード実行：一定時間、移動が乗っ取られランダムな方向へ動かされる
+      player.x += Math.cos(fixedEnemyMoveHijackAngle) * currentMoveSpeed;
+      player.y += Math.sin(fixedEnemyMoveHijackAngle) * currentMoveSpeed;
+      moving = true;
+    } else if (fullAutoModeEnabled) {
       // 完全オートモード中は、手動操作の代わりにAIが移動方向を決める
       const autoVec = computeFullAutoMoveVector(dt);
       if (autoVec.x !== 0 || autoVec.y !== 0) {
@@ -4685,20 +5204,28 @@ function update() {
         moving = true;
       }
     } else {
-      if (keys["w"]) { player.y -= currentMoveSpeed; moving = true; }
-      if (keys["s"]) { player.y += currentMoveSpeed; moving = true; }
-      if (keys["a"]) { player.x -= currentMoveSpeed; moving = true; }
-      if (keys["d"]) { player.x += currentMoveSpeed; moving = true; }
+      // XSS：一定時間、移動キーの上下左右が反転する
+      const reverseSign = fixedEnemyControlsReversedTimerMs > 0 ? -1 : 1;
+      if (keys["w"]) { player.y -= currentMoveSpeed * reverseSign; moving = true; }
+      if (keys["s"]) { player.y += currentMoveSpeed * reverseSign; moving = true; }
+      if (keys["a"]) { player.x -= currentMoveSpeed * reverseSign; moving = true; }
+      if (keys["d"]) { player.x += currentMoveSpeed * reverseSign; moving = true; }
       // タッチの仮想移動スティックによるプレイヤー移動
       if (touchMoveVector.x !== 0 || touchMoveVector.y !== 0) {
-        player.x += touchMoveVector.x * currentMoveSpeed;
-        player.y += touchMoveVector.y * currentMoveSpeed;
+        player.x += touchMoveVector.x * currentMoveSpeed * reverseSign;
+        player.y += touchMoveVector.y * currentMoveSpeed * reverseSign;
         moving = true;
       }
+    }
+    // パスワードリスト攻撃：予測射撃に使う、直近の移動方向を記録する
+    if (moving) {
+      player.lastMoveDx = player.x - beforeMoveX;
+      player.lastMoveDy = player.y - beforeMoveY;
     }
     // プレイヤーが画面外・窓の範囲へ出ないよう座標を制限する
     clampToPlayableFloor(player);
     pushEntityOutsideScheduledReport(player);
+    pushEntityOutsideFixedEnemy(player);
 
     // 無敵時間を減らし、0になったら解除する
     if (invincible) {
@@ -4712,10 +5239,13 @@ function update() {
     // ただし時間帯に応じた下限（getFatigueRecoveryFloor）より下へは回復しない
     updateSkillEffects();
     const fatigueFloor = getFatigueRecoveryFloor();
-    if (moving) {
-      fatigue = Math.max(fatigueFloor, fatigue - (idleRecoveryPerSec * 0.35) * dt);
-    } else {
-      fatigue = Math.max(fatigueFloor, fatigue - idleRecoveryPerSec * specialSkillEffects.idleRecoveryMultiplier * dt);
+    // マルウェア感染・サプライチェーン攻撃・水飲み場攻撃：感染中は疲労回復が無効化される
+    if (fixedEnemyRecoveryDisabledTimerMs <= 0) {
+      if (moving) {
+        fatigue = Math.max(fatigueFloor, fatigue - (idleRecoveryPerSec * 0.35) * dt);
+      } else {
+        fatigue = Math.max(fatigueFloor, fatigue - idleRecoveryPerSec * specialSkillEffects.idleRecoveryMultiplier * dt);
+      }
     }
 
     // 攻撃モードに関係なく、自分は常にマウスカーソルの方向を向く。
@@ -4735,7 +5265,7 @@ function update() {
     const conditionRatio = 1 - fatigueRatio;
     const currentFireRate = baseFireRate * (1 + fatigueRatio * fireRateMultiplier) *
       specialSkillEffects.fireRateMultiplier * getEnergyDrinkFireRateMultiplier() *
-      getCoffeeFireRateMultiplier() * getRankSkillFireRateMultiplier();
+      getCoffeeFireRateMultiplier() * getRankSkillFireRateMultiplier() * getFixedEnemyFireRateMultiplier();
     // 自動攻撃モード・完全オートモードは、stunになる手前で自動的に連射を控え、疲労が半分程度まで下がったら再開する
     const autoFiringActive = autoFireEnabled || fullAutoModeEnabled;
     if (fatigue >= maxFatigue - autoFireStunSafetyMargin) {
@@ -4748,7 +5278,8 @@ function update() {
     const autoFireBlockedByPartner = autoFiringActive &&
       wouldPlayerShotHitPartner(player.angle, 4, fullAutoModeEnabled ? fullAutoPartnerLineOfFireMargin : 0);
     const wantsToFire = (autoFiringActive && !autoFireResting && !autoFireBlockedByPartner) || mouseFireHeld;
-    if (wantsToFire && !stunned) {
+    // CSRF・クリックジャッキング：一定時間、意図しない操作をさせられて攻撃できなくなる
+    if (wantsToFire && !stunned && fixedEnemyFireLockTimerMs <= 0) {
       if (now - lastFire >= currentFireRate) {
         updateSkillEffects();
         // 通常は脳疲労が上限に達すると撃てなくなるが、コーヒーのstun回避中は通常通り行動できる
@@ -5013,6 +5544,50 @@ function update() {
       damagePlayerByMidBossBullet();
       bullets.splice(i, 1);
       if (gameOver || deathSequence) return;
+      continue;
+    } else if (b.owner === 'fixedEnemyDisguise' && partner.active &&
+        Math.hypot(b.x - partner.x, b.y - partner.y) <= b.radius + partner.radius) {
+      // なりすまし・中間者攻撃：自機の弾に見せかけて同僚を狙う。同僚のオートパリィも同確率で発動する
+      if (Math.random() < partnerParryChance) {
+        performBulletParry(b, partner.x, partner.y, partner.angle);
+        spawnSlashEffect(partner.x, partner.y, partner.angle, partner.radius);
+        showMessage('同僚がパリィ！', 1400, '#80deea');
+        showRandomPartnerSpeechBubbleIfFriendly(partnerParryLines, '#80deea');
+        continue;
+      }
+      // 同僚は自機からの誤射だと勘違いする（SAN・関係性が低下する既存の誤射処理を流用）
+      damagePartnerByFriendlyFire();
+      bullets.splice(i, 1);
+      continue;
+    } else if (b.owner === 'fixedEnemy' &&
+        Math.hypot(b.x - player.x, b.y - player.y) <= b.radius + player.radius) {
+      // 特殊スキル「オートパリィ」：固定敵の弾に対しても同様に自動でパリィする
+      if (Math.random() < specialSkillEffects.autoParryChance) {
+        performBulletParry(b, player.x, player.y, player.angle);
+        spawnSlashEffect(player.x, player.y, player.angle, player.radius);
+        showMessage('オートパリィ発動！', 1400, '#fff176');
+        continue;
+      }
+      damagePlayerByFixedEnemyBullet(b);
+      bullets.splice(i, 1);
+      if (gameOver || deathSequence) return;
+      continue;
+    }
+    // 固定敵への命中判定。自機・同僚の通常弾、パリィで打ち返した弾（'deflected'）が有効打になる
+    if (fixedEnemy && (b.owner === 'player' || b.owner === 'deflected' || b.owner === 'partner') &&
+        Math.hypot(b.x - fixedEnemy.x, b.y - fixedEnemy.y) <= b.radius + fixedEnemy.radius) {
+      if (fixedEnemy.def.dodgeChance && Math.random() < fixedEnemy.def.dodgeChance) {
+        // キーロガー：一定確率で攻撃を回避する
+        showMessage('回避された！', 900, '#b0bec5');
+        bullets.splice(i, 1);
+        continue;
+      }
+      const damageBonus = 1 + skillLevel * 0.08;
+      const actualDmg = Math.max(1, Math.round((b.damage || 1) * damageBonus));
+      fixedEnemy.hp -= actualDmg;
+      spawnHitSpark(b.x, b.y, fixedEnemy.hp <= 0);
+      bullets.splice(i, 1);
+      if (fixedEnemy.hp <= 0) defeatFixedEnemy();
       continue;
     }
     // ラスボスへの命中判定。自機の通常弾・パリィで打ち返した弾（'deflected'）が発射口に当たると有効打になる。
@@ -6823,6 +7398,48 @@ function draw() {
     ctx.restore();
   }
 
+  // 固定敵（IT用語モチーフ）
+  if (fixedEnemy) {
+    const fxHpRatio = Math.max(0, fixedEnemy.hp / fixedEnemy.maxHp);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(fixedEnemy.x, fixedEnemy.y, fixedEnemy.radius, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 82, 82, 0.22)';
+    ctx.fill();
+    ctx.strokeStyle = '#ff5252';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.font = '32px "Segoe UI Emoji", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(fixedEnemy.def.icon, fixedEnemy.x, fixedEnemy.y - 5);
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillStyle = '#ffcdd2';
+    ctx.fillText(fixedEnemy.def.name, fixedEnemy.x, fixedEnemy.y + fixedEnemy.radius + 14);
+    const fxBarWidth = 74;
+    ctx.fillStyle = '#424242';
+    ctx.fillRect(fixedEnemy.x - fxBarWidth / 2, fixedEnemy.y + fixedEnemy.radius + 22, fxBarWidth, 7);
+    ctx.fillStyle = fxHpRatio < 0.3 ? '#ef5350' : '#ff8a65';
+    ctx.fillRect(fixedEnemy.x - fxBarWidth / 2, fixedEnemy.y + fixedEnemy.radius + 22, fxBarWidth * fxHpRatio, 7);
+    ctx.restore();
+
+    if (fixedEnemy.decoy) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(fixedEnemy.decoy.x, fixedEnemy.decoy.y, fixedEnemy.decoy.radius, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255, 214, 0, 0.25)';
+      ctx.fill();
+      ctx.strokeStyle = '#ffd600';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.font = '22px "Segoe UI Emoji", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(fixedEnemy.def.decoyIcon || '❓', fixedEnemy.decoy.x, fixedEnemy.decoy.y);
+      ctx.restore();
+    }
+  }
+
   // 昼食として出現中の食べ物
   const showLunchItems = lunchState && (lunchState.expirationStartedAtMs === null ||
     Math.floor((gameClockMs - lunchState.expirationStartedAtMs) / 140) % 2 === 0);
@@ -7356,6 +7973,20 @@ function draw() {
   // 寿命が50を切ってから0に近づくにつれて、画面端が暗くひび割れていく
   if (!gameOver && !gameClear) {
     drawLifespanCrackEffect();
+  }
+  // 盗聴・スニッフィング：一定時間、画面周辺が暗くぼやけて見えづらくなる
+  if (!gameOver && !gameClear && fixedEnemyVisionObscuredTimerMs > 0) {
+    ctx.save();
+    const vignetteAlpha = Math.min(0.55, 0.2 + 0.35 * Math.min(1, fixedEnemyVisionObscuredTimerMs / 1500));
+    const gradient = ctx.createRadialGradient(
+      canvas.width / 2, canvas.height / 2, canvas.height * 0.2,
+      canvas.width / 2, canvas.height / 2, canvas.height * 0.75
+    );
+    gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    gradient.addColorStop(1, `rgba(0, 0, 0, ${vignetteAlpha})`);
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
   }
 
   // セットアップ画面の切り替え演出：選択直後、画面全体を暗転させて次のページへ切り替える
