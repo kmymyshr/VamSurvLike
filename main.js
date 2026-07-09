@@ -6678,12 +6678,10 @@ const backgroundGradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
 backgroundGradient.addColorStop(0, '#12161f');
 backgroundGradient.addColorStop(1, '#05060a');
 
-// タイトルの落書きエフェクト用に、実時間ベースで不規則に点滅させるかどうかを判定する
-// （intervalMsごとに区切り、その区切りごとに擬似ランダムな値を作ってvisibleRatioと比較する）
-function getTitleGlitchFlicker(seed, intervalMs, visibleRatio) {
-  const bucket = Math.floor(Date.now() / intervalMs) + seed * 97;
-  const pseudo = Math.sin(bucket * 12.9898) * 43758.5453;
-  return (pseudo - Math.floor(pseudo)) < visibleRatio;
+// タイトルの取り消し線用の、常に同じ形になる擬似乱数（0〜1）。毎フレーム同じ値を返すので線の形が動かない
+function titleGlitchPseudoRandom(seed) {
+  const x = Math.sin(seed * 12.9898) * 43758.5453;
+  return x - Math.floor(x);
 }
 
 // スタート画面～プレイ開始直前（モード選択・性別選択・同僚選択）で使う共通背景
@@ -8015,8 +8013,8 @@ function draw() {
     ctx.fillText('ここで寝たらただのサラリーマン', canvas.width / 2, canvas.height / 2 - 154);
     ctx.restore();
 
-    // 二週目以降（過去にいずれかのエンディングに到達済み）：「サラリーマン」の部分をペンで打ち消し、
-    // 上に「失業者」の文字を重ねる。どちらも不規則に点滅し、表示されたりされなかったりする
+    // 二週目以降（過去にいずれかのエンディングに到達済み）：「サラリーマン」の部分を太い赤線のペンで打ち消し（固定表示）、
+    // 上に「自宅警備員」の文字を重ねる（同じフォント・サイズ、白地に黒縁。ゆっくりフェードイン・フェードアウトする）
     const hasPlayedBefore = Object.values(dreamMemorySave.endingsCleared).some(v => v);
     if (hasPlayedBefore) {
       ctx.save();
@@ -8032,36 +8030,39 @@ function draw() {
       const targetLeftX = titleLeftX + prefixWidth;
       const targetCenterX = targetLeftX + targetWidth / 2;
 
-      if (getTitleGlitchFlicker(1, 260, 0.6)) {
-        // ペンで乱雑に打ち消したような線を、数本重ねて引く
-        ctx.strokeStyle = 'rgba(20, 20, 20, 0.85)';
-        ctx.lineWidth = 3;
-        ctx.lineCap = 'round';
-        const scribbleLineCount = 4;
-        for (let i = 0; i < scribbleLineCount; i++) {
-          const baseY = titleY - 10 + i * 7;
-          ctx.beginPath();
-          ctx.moveTo(targetLeftX - 4, baseY + (Math.random() - 0.5) * 6);
-          const segs = 5;
-          for (let s = 1; s <= segs; s++) {
-            const sx = targetLeftX - 4 + (targetWidth + 8) * (s / segs);
-            const sy = baseY + (Math.random() - 0.5) * 8;
-            ctx.lineTo(sx, sy);
-          }
-          ctx.stroke();
+      // ペンで打ち消したような、細めで色を弱めた赤の取り消し線（毎フレーム同じ形になる固定の乱数を使う）
+      ctx.strokeStyle = 'rgba(213, 0, 0, 0.55)';
+      ctx.lineWidth = 4;
+      ctx.lineCap = 'round';
+      const scribbleLineCount = 4;
+      for (let i = 0; i < scribbleLineCount; i++) {
+        const baseY = titleY - 20 + i * 7;
+        ctx.beginPath();
+        ctx.moveTo(targetLeftX - 4, baseY + (titleGlitchPseudoRandom(i * 31) - 0.5) * 6);
+        const segs = 5;
+        for (let s = 1; s <= segs; s++) {
+          const sx = targetLeftX - 4 + (targetWidth + 8) * (s / segs);
+          const sy = baseY + (titleGlitchPseudoRandom(i * 31 + s) - 0.5) * 8;
+          ctx.lineTo(sx, sy);
         }
+        ctx.stroke();
       }
 
-      if (getTitleGlitchFlicker(2, 340, 0.55)) {
-        ctx.save();
-        ctx.translate(targetCenterX, titleY - 30);
-        ctx.rotate(-0.05);
-        ctx.textAlign = 'center';
-        ctx.font = 'bold 26px "Comic Sans MS", "Chalkboard SE", "Marker Felt", cursive, sans-serif';
-        ctx.fillStyle = 'rgba(20, 20, 20, 0.9)';
-        ctx.fillText('失業者', 0, 0);
-        ctx.restore();
-      }
+      // 「自宅警備員」：サラリーマンと同じフォント・サイズ、白地に黒縁。ゆっくりフェードイン・フェードアウトを繰り返す
+      const fadeCycleMs = 2200;
+      const fadeAlpha = (Math.sin(Date.now() / fadeCycleMs) + 1) / 2;
+      ctx.save();
+      ctx.globalAlpha = fadeAlpha;
+      ctx.translate(targetCenterX, titleY - 30);
+      ctx.rotate(-0.05);
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 38px "Comic Sans MS", "Chalkboard SE", "Marker Felt", cursive, sans-serif';
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = '#000000';
+      ctx.strokeText('自宅警備員', 0, 0);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText('自宅警備員', 0, 0);
+      ctx.restore();
       ctx.restore();
     }
 
