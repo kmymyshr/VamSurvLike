@@ -2355,8 +2355,7 @@ function damagePartnerByFriendlyFire() {
   partner.lifespan = Math.max(0, partner.lifespan - partnerFriendlyFireLifespanDamage * specialSkillEffects.friendlyFireDamageMultiplier);
   partner.friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
   showRandomPartnerSpeechBubble(partnerHitByPlayerLines, '#ff8a65', partnerHitByPlayerStressedLines);
-  partner.relationship = Math.max(0,
-    partner.relationship - partnerRelationshipDamagePerHit);
+  adjustPartnerRelationship(-partnerRelationshipDamagePerHit);
   return true;
 }
 
@@ -2368,23 +2367,13 @@ function adjustPartnerTraits(intelligenceDelta, recklessnessDelta) {
 
 // 自分が持つ特殊スキルに応じて、同僚の実効的な賢さを求める（基礎値はintelligenceのまま変えない）
 function getPartnerEffectiveIntelligence() {
-  let bonus = 0;
-  bonus += (specialSkillLevels.get('learning-power') || 0) * 0.05;
-  bonus += (specialSkillLevels.get('listening') || 0) * 0.04;
-  bonus += (specialSkillLevels.get('logical-thinking') || 0) * 0.04;
-  bonus -= (specialSkillLevels.get('self-centered') || 0) * 0.05;
-  bonus -= (specialSkillLevels.get('inattentive') || 0) * 0.06;
+  const bonus = (specialSkillLevels.get('learning-power') || 0) * 0.05;
   return Math.max(0, Math.min(1, partner.intelligence + bonus));
 }
 
 // 自分が持つ特殊スキルに応じて、同僚の実効的な性格（向こう見ずさ）を求める
 function getPartnerEffectiveRecklessness() {
-  let bonus = 0;
-  bonus += (specialSkillLevels.get('proactiveness') || 0) * 0.05;
-  bonus += (specialSkillLevels.get('rising-ambition') || 0) * 0.05;
-  bonus -= (specialSkillLevels.get('stress-tolerance') || 0) * 0.05;
-  bonus -= (specialSkillLevels.get('passivity') || 0) * 0.05;
-  return Math.max(0, Math.min(1, partner.recklessness + bonus));
+  return Math.max(0, Math.min(1, partner.recklessness));
 }
 
 // 発射時点の自分位置が、同僚弾の進行方向上にあるかを調べる。
@@ -2804,52 +2793,27 @@ function getDefaultSpecialSkillEffects() {
     partnerSanDamageMultiplier: 1,
     partnerLifespanDrainMultiplier: 1,
     friendlyFireDamageMultiplier: 1,
+    relationshipDamageMultiplier: 1,
+    teamworkParryChance: 0,
     mealOrderVisible: false
   };
 }
 const specialSkillEffects = getDefaultSpecialSkillEffects();
 
 const specialSkills = [
-  { id: 'dual-shot', name: 'マルチタスクA', description: 'レベルごとに同時発射する弾が1発増える' },
-  { id: 'speed-up', name: '高速移動', description: '移動速度が1.5倍になる' },
-  { id: 'fatigue-save', name: '省エネ射撃', description: '射撃による脳疲労を35%軽減する' },
-  { id: 'rapid-fire', name: '高速連射', description: '発射間隔を25%短縮する' },
-  { id: 'power-shot', name: '高威力弾', description: '弾のダメージが50%増える' },
-  { id: 'triple-shot', name: 'マルチタスクB', description: '正面と左右20度へ3発同時に撃つ' },
-  { id: 'chocolate-lover', name: 'チョコ好き', description: 'チョコレートの回復量が50%増える' },
-  { id: 'deadline-master', name: '納期管理', description: '敵の納期が50%長くなる' },
-  { id: 'mental-guard', name: 'メンタルガード', description: '受けるSANダメージを25%軽減する' },
-  { id: 'high-speed-bullet', name: '処理速度', description: '弾の速度が40%上がる' },
-  { id: 'short-sleeper', name: 'ショートスリーパー', description: 'stun時間を半分にする' },
-  { id: 'through-power', name: 'スルー力', description: '受けるSANダメージ-15%。ただし気にしない分EXP獲得-10%' },
-  { id: 'listening', name: '傾聴力', description: '人の話をよく聞き学びが早い。EXP獲得+15%。同僚の寿命減少-10%' },
-  { id: 'proactiveness', name: '主体性', description: '自分から動くので発射間隔-7%・移動速度+8%' },
-  { id: 'problem-solving', name: '問題解決力', description: '攻撃力+20%' },
-  { id: 'logical-thinking', name: '論理的思考力', description: '筋道立てて評価されやすい。攻撃力+10%・獲得スコア+10%' },
-  { id: 'priority-judgement', name: '優先順位判断力', description: '重要な仕事から片付け、獲得スコア+20%' },
-  { id: 'learning-power', name: '学習力', description: 'EXP獲得+30%' },
-  { id: 'stress-tolerance', name: 'ストレス耐性', description: '受けるSANダメージ-20%' },
-  { id: 'business-manner', name: 'ビジネスマナー', description: '印象が良く、敵接触時のスコア減点-30%。同僚の寿命減少-10%' },
-  { id: 'negotiation', name: '交渉力', description: '敵の納期+15%' },
-  { id: 'self-centered', name: '自己中心性', description: '攻撃力+15%だが、敵の反感を買いSANダメージ+15%。同僚を気にかけず、同僚の被SANダメージ+20%' },
-  { id: 'negative-thinking', name: '否定的思考', description: '素直に喜べず、チョコレートの回復量-30%' },
-  { id: 'passivity', name: '消極性', description: '動きが鈍くなり発射間隔+15%・移動速度-10%' },
-  { id: 'default-mode-network', name: 'デフォルトモードネットワーク', description: 'ぼーっとしている間に回復、待機時の脳疲労回復+40%' },
-  { id: 'five-w-one-h', name: '５W１H', description: '説明が明確で仕事がスムーズ。敵の納期+10%・EXP獲得+10%' },
-  { id: 'rising-ambition', name: '上昇志向', description: 'EXP獲得+25%だが、頑張りすぎて射撃疲労+15%' },
-  { id: 'optimistic', name: '楽観的', description: '受けるSANダメージ-15%' },
-  { id: 'pessimistic', name: '悲観的', description: '受けるSANダメージ+20%だが、慎重な見積りで敵の納期+10%' },
-  { id: 'chocolate-addiction', name: 'チョコレート依存症', description: 'チョコレートの回復量+80%だが、待機時の回復-20%' },
-  { id: 'communication', name: 'コミュニケーション力', description: 'レベルごとに15%の確率で援護射撃が発生する。同僚との意思疎通が良くなり、同僚の被SANダメージ-10%' },
-  { id: 'report-shortage', name: '報連相不足', description: '情報共有不足で敵の納期-15%' },
-  { id: 'inattentive', name: '注意力散漫', description: 'レベルごとに20%の確率で弾がランダムにそれる' },
-  { id: 'silo-tendency', name: '属人化傾向', description: '自分にしかできない仕事が集中し、敵の接近速度+15%' },
-  { id: 'perfectionism', name: '完璧主義', description: '質は高いが時間がかかる。攻撃力+25%だが発射間隔+15%' },
+  { id: 'dual-shot', name: 'マルチタスク', description: 'レベルごとに同時発射する弾が1発増える。追加の弾は正面から±20度以内のランダムな方向へ飛ぶ' },
+  { id: 'speed-up', name: 'フットワーク', description: '移動速度が上がる（Lv1:1.1倍 → Lv5:2.0倍）', maxLevel: 5 },
+  { id: 'fatigue-save', name: '脳疲労耐性', description: '射撃による脳疲労を軽減する（Lv1:-35% → Lv5:-50%）', maxLevel: 5 },
+  { id: 'rapid-fire', name: '処理速度A', description: '発射間隔を短縮する（Lv1:当初の75% → Lv5:当初の30%）', maxLevel: 5 },
+  { id: 'high-speed-bullet', name: '処理速度B', description: '弾の速度を上げる（Lv1:当初の140% → Lv5:当初の300%）', maxLevel: 5 },
+  { id: 'short-sleeper', name: 'パワーナップ', description: '行動不能（stun）時間を半分にする', maxLevel: 1 },
+  { id: 'learning-power', name: '理解力', description: 'EXP獲得量を上げる（Lv1:当初の130% → Lv5:当初の200%）', maxLevel: 5 },
+  { id: 'business-manner', name: 'ビジネスマナー', description: '印象が良く、敵接触時のスコア減点を軽減（Lv1:-30% → Lv5:-50%）。同僚の寿命減少-10%', maxLevel: 5 },
+  { id: 'communication', name: 'コミュニケーション力', description: 'レベルごとに15%の確率で援護射撃が発生する。同僚との関係性が悪化する時の低下値を軽減（Lv1:当初の90% → Lv5:当初の50%）', maxLevel: 5 },
   { id: 'network-specialist', name: 'ネットワークスペシャリスト', description: '弾が画面端でレベルごとに1回多く跳ね返る' },
-  { id: 'trust-relationship', name: '信頼関係', description: '同僚との信頼関係が深まり、同僚の攻撃力+20%・被SANダメージ-15%' },
-  { id: 'teamwork', name: 'チームワーク', description: '自分と同僚の弾が互いに当たった時の被ダメージが50%軽減される' },
-  { id: 'meal-foresight', name: '先読み力', description: '昼食に登場する料理に、出現する順番の番号が表示されるようになる（習得は1回のみ）', maxLevel: 1 },
-  { id: 'auto-parry', name: 'オートパリィ', description: '被弾しそうな弾・敵の接触を、レベルごとに10%の確率で自動的にパリィする', maxLevel: 5 }
+  { id: 'teamwork', name: 'チームワーク', description: '自分と同僚、お互いの弾が着弾しそうな時（敵からの弾を除く）、お互いパリィが発動しやすくなる（Lv5で発動率80%）', maxLevel: 5 },
+  { id: 'meal-foresight', name: '食通', description: '昼食に登場する料理に、出現する順番の番号が表示されるようになる（習得は1回のみ）', maxLevel: 1 },
+  { id: 'auto-parry', name: 'オートパリィ', description: '敵（ラスボス・中ボス・固定敵）からの弾を被弾しそうな時、レベルごとに10%の確率で自動的にパリィする（Lv5で50%）', maxLevel: 5 }
 ];
 
 // スキルIDと取得レベルを対応させて保存する（これが唯一の正となる状態）
@@ -2860,102 +2824,86 @@ let specialSkillSelectionTitle = '';
 let pendingSpecialSkillSelections = 0;
 
 // 1レベルぶんの効果を specialSkillEffects / specialDeadlineMultiplier に加える（副作用なしの純粋な差分適用）
-function applySkillEffectDelta(skillId) {
+// 現在の合計レベル（1〜5、または1固定）から、スキル1つぶんの効果を丸ごと計算して適用する。
+// 「レベルごとに一定量を積み増す」のではなく、レベルに応じた表・線形補間で効果の大きさが決まる
+function applySkillEffectForLevel(skillId, level) {
   switch (skillId) {
-    case 'dual-shot': specialSkillEffects.multiTaskLevel++; break;
-    case 'speed-up': specialSkillEffects.moveSpeedMultiplier *= 1.5; break;
-    case 'fatigue-save': specialSkillEffects.firingFatigueMultiplier *= 0.65; break;
-    case 'rapid-fire': specialSkillEffects.fireRateMultiplier *= 0.75; break;
-    case 'power-shot': specialSkillEffects.damageMultiplier *= 1.5; break;
-    case 'triple-shot': specialSkillEffects.tripleShotLevel++; break;
-    case 'chocolate-lover': specialSkillEffects.chocolateRecoveryMultiplier *= 1.5; break;
-    case 'deadline-master': specialDeadlineMultiplier *= 1.5; break;
-    case 'mental-guard': specialSkillEffects.sanDamageMultiplier *= 0.75; break;
-    case 'high-speed-bullet': specialSkillEffects.bulletSpeedMultiplier *= 1.4; break;
-    case 'short-sleeper': specialSkillEffects.stunDurationMultiplier *= 0.5; break;
-
-    case 'through-power':
-      specialSkillEffects.sanDamageMultiplier *= 0.85;
-      specialSkillEffects.expGainMultiplier *= 0.9;
+    case 'dual-shot':
+      // マルチタスク：追加弾のランダムな方向は発射処理側で決めるため、ここでは段数だけを反映する
+      specialSkillEffects.multiTaskLevel = level;
       break;
-    case 'listening':
-      specialSkillEffects.expGainMultiplier *= 1.15;
+    case 'speed-up': {
+      // フットワーク：Lv1=1.1倍 → Lv5=2.0倍
+      const table = [1.1, 1.2, 1.4, 1.5, 2.0];
+      specialSkillEffects.moveSpeedMultiplier *= table[Math.min(level, table.length) - 1];
+      break;
+    }
+    case 'fatigue-save': {
+      // 脳疲労耐性：Lv1=-35% → Lv5=-50%（線形補間）
+      const reduction = 0.35 + (0.50 - 0.35) * (Math.min(level, 5) - 1) / 4;
+      specialSkillEffects.firingFatigueMultiplier *= (1 - reduction);
+      break;
+    }
+    case 'rapid-fire': {
+      // 処理速度A：発射間隔がLv1=当初の75% → Lv5=当初の30%（線形補間）
+      const ratio = 0.75 + (0.30 - 0.75) * (Math.min(level, 5) - 1) / 4;
+      specialSkillEffects.fireRateMultiplier *= ratio;
+      break;
+    }
+    case 'high-speed-bullet': {
+      // 処理速度B：弾速がLv1=当初の140% → Lv5=当初の300%（線形補間）
+      const ratio = 1.4 + (3.0 - 1.4) * (Math.min(level, 5) - 1) / 4;
+      specialSkillEffects.bulletSpeedMultiplier *= ratio;
+      break;
+    }
+    case 'short-sleeper':
+      // パワーナップ：maxLevel1、stun時間を半分にする
+      specialSkillEffects.stunDurationMultiplier *= 0.5;
+      break;
+    case 'learning-power': {
+      // 理解力：EXP獲得がLv1=当初の130% → Lv5=当初の200%（線形補間）
+      const ratio = 1.3 + (2.0 - 1.3) * (Math.min(level, 5) - 1) / 4;
+      specialSkillEffects.expGainMultiplier *= ratio;
+      break;
+    }
+    case 'business-manner': {
+      // ビジネスマナー：接触時のスコア減点がLv1=-30% → Lv5=-50%（線形補間）。同僚の寿命減少-10%は据え置き
+      const reduction = 0.30 + (0.50 - 0.30) * (Math.min(level, 5) - 1) / 4;
+      specialSkillEffects.contactScorePenaltyMultiplier *= (1 - reduction);
       specialSkillEffects.partnerLifespanDrainMultiplier *= 0.9;
       break;
-    case 'proactiveness':
-      specialSkillEffects.fireRateMultiplier *= 0.93;
-      specialSkillEffects.moveSpeedMultiplier *= 1.08;
+    }
+    case 'communication': {
+      // コミュニケーション力：援護射撃はレベルに比例して増加。関係性の低下値はLv1=当初の90% → Lv5=当初の50%（線形補間）
+      specialSkillEffects.supportFireChance += 0.15 * level;
+      const ratio = 0.9 + (0.5 - 0.9) * (Math.min(level, 5) - 1) / 4;
+      specialSkillEffects.relationshipDamageMultiplier *= ratio;
       break;
-    case 'problem-solving': specialSkillEffects.damageMultiplier *= 1.2; break;
-    case 'logical-thinking':
-      specialSkillEffects.damageMultiplier *= 1.1;
-      specialSkillEffects.scoreGainMultiplier *= 1.1;
+    }
+    case 'network-specialist':
+      specialSkillEffects.bulletBounceCount = level;
       break;
-    case 'priority-judgement': specialSkillEffects.scoreGainMultiplier *= 1.2; break;
-    case 'learning-power': specialSkillEffects.expGainMultiplier *= 1.3; break;
-    case 'stress-tolerance': specialSkillEffects.sanDamageMultiplier *= 0.8; break;
-    case 'business-manner':
-      specialSkillEffects.contactScorePenaltyMultiplier *= 0.7;
-      specialSkillEffects.partnerLifespanDrainMultiplier *= 0.9;
+    case 'teamwork':
+      // チームワーク：自分と同僚同士の弾（誤射）が着弾しそうな時のパリィ発動率。Lv5で80%
+      specialSkillEffects.teamworkParryChance = 0.16 * Math.min(level, 5);
       break;
-    case 'negotiation': specialDeadlineMultiplier *= 1.15; break;
-    case 'self-centered':
-      specialSkillEffects.damageMultiplier *= 1.15;
-      specialSkillEffects.sanDamageMultiplier *= 1.15;
-      specialSkillEffects.partnerSanDamageMultiplier *= 1.2;
+    case 'meal-foresight':
+      specialSkillEffects.mealOrderVisible = true;
       break;
-    case 'negative-thinking': specialSkillEffects.chocolateRecoveryMultiplier *= 0.7; break;
-    case 'passivity':
-      specialSkillEffects.fireRateMultiplier *= 1.15;
-      specialSkillEffects.moveSpeedMultiplier *= 0.9;
+    case 'auto-parry':
+      // オートパリィ：敵（ラスボス・中ボス・固定敵）の弾に対する自動パリィ確率。Lv5で50%
+      specialSkillEffects.autoParryChance = 0.10 * Math.min(level, 5);
       break;
-    case 'default-mode-network': specialSkillEffects.idleRecoveryMultiplier *= 1.4; break;
-    case 'five-w-one-h':
-      specialDeadlineMultiplier *= 1.1;
-      specialSkillEffects.expGainMultiplier *= 1.1;
-      break;
-    case 'rising-ambition':
-      specialSkillEffects.expGainMultiplier *= 1.25;
-      specialSkillEffects.firingFatigueMultiplier *= 1.15;
-      break;
-    case 'optimistic': specialSkillEffects.sanDamageMultiplier *= 0.85; break;
-    case 'pessimistic':
-      specialSkillEffects.sanDamageMultiplier *= 1.2;
-      specialDeadlineMultiplier *= 1.1;
-      break;
-    case 'chocolate-addiction':
-      specialSkillEffects.chocolateRecoveryMultiplier *= 1.8;
-      specialSkillEffects.idleRecoveryMultiplier *= 0.8;
-      break;
-    case 'communication':
-      specialSkillEffects.supportFireChance += 0.15;
-      specialSkillEffects.partnerSanDamageMultiplier *= 0.9;
-      break;
-    case 'report-shortage': specialDeadlineMultiplier *= 0.85; break;
-    case 'inattentive': specialSkillEffects.bulletScatterChance += 0.2; break;
-    case 'silo-tendency': specialSkillEffects.enemyApproachSpeedMultiplier *= 1.15; break;
-    case 'perfectionism':
-      specialSkillEffects.damageMultiplier *= 1.25;
-      specialSkillEffects.fireRateMultiplier *= 1.15;
-      break;
-    case 'network-specialist': specialSkillEffects.bulletBounceCount += 1; break;
-    case 'trust-relationship':
-      specialSkillEffects.partnerDamageMultiplier *= 1.2;
-      specialSkillEffects.partnerSanDamageMultiplier *= 0.85;
-      break;
-    case 'teamwork': specialSkillEffects.friendlyFireDamageMultiplier *= 0.5; break;
-    case 'meal-foresight': specialSkillEffects.mealOrderVisible = true; break;
-    case 'auto-parry': specialSkillEffects.autoParryChance += 0.10; break;
   }
 }
 
 // specialSkillLevels（レベルマップ）を唯一の正として、効果をゼロから再計算する
-// スキル忘却イベントなどで習得レベルが変わった際に呼び出す
+// スキル忘却イベントや、スキル選択のたびに呼び出す
 function recomputeSpecialSkillEffects() {
   Object.assign(specialSkillEffects, getDefaultSpecialSkillEffects());
   specialDeadlineMultiplier = 1;
   for (const [skillId, level] of specialSkillLevels.entries()) {
-    for (let i = 0; i < level; i++) applySkillEffectDelta(skillId);
+    applySkillEffectForLevel(skillId, level);
   }
 }
 
@@ -2989,11 +2937,7 @@ function chooseSpecialSkill(choiceIndex) {
     ? Math.min(skill.maxLevel, (specialSkillLevels.get(skill.id) || 0) + 1)
     : (specialSkillLevels.get(skill.id) || 0) + 1;
   specialSkillLevels.set(skill.id, newSkillLevel);
-  applySkillEffectDelta(skill.id);
-  if (skill.id === 'deadline-master') {
-    // 取得した瞬間、今抱えている仕事の納期にも即座に反映する
-    enemies.forEach(enemy => { enemy.deadlineMs *= 1.5; });
-  }
+  recomputeSpecialSkillEffects();
   showMessage(
     `特殊スキル「${skill.name}」Lv.${newSkillLevel}！`,
     2500,
@@ -3261,7 +3205,9 @@ function grantSpecialSkillById(id) {
 }
 
 function adjustPartnerRelationship(amount) {
-  partner.relationship = Math.max(0, Math.min(partnerRelationshipMax, partner.relationship + amount));
+  // 特殊スキル「コミュニケーション力」：関係性が悪化する原因（誤射など）による低下値を軽減する
+  const scaledAmount = amount < 0 ? amount * specialSkillEffects.relationshipDamageMultiplier : amount;
+  partner.relationship = Math.max(0, Math.min(partnerRelationshipMax, partner.relationship + scaledAmount));
 }
 
 // シナリオデータ：シーンごとに開始ノードと、ノード間を選択肢でつなぐ分岐木を持つ
@@ -3275,7 +3221,7 @@ const partnerAdventureScenes = {
           { label: '最近の仕事の悩みを相談する', next: 'consult',
             effects: () => adjustPartnerRelationship(15) },
           { label: '同僚の好きなことを聞いてみる', next: 'hobby',
-            effects: () => { adjustPartnerRelationship(10); grantSpecialSkillById('listening'); } },
+            effects: () => { adjustPartnerRelationship(10); grantSpecialSkillById('communication'); } },
           { label: '特に話さず、黙って店内を眺める', next: 'silence',
             effects: () => {} }
         ]
@@ -5295,30 +5241,16 @@ function update() {
             baseBulletDamage * conditionRatio * damageBonus * specialSkillEffects.damageMultiplier * invincibleDamageMultiplier
           ));
 
-          // マルチタスクと三方向射撃のレベルに応じて弾数と角度を増やす
-          let shotOffsets = [0];
+          // 「マルチタスク」：レベルごとに追加の弾が1発増える。追加弾は正面から±20度以内のランダムな方向へ飛ぶ
           const multiTaskLevel = specialSkillEffects.multiTaskLevel;
-          const tripleShotLevel = specialSkillEffects.tripleShotLevel;
-          const shotCount = 1 + multiTaskLevel + tripleShotLevel * 2;
-          if (shotCount > 1) {
-            // 初回のマルチタスクは2発が30度違う方向へ飛ぶ
-            const totalSpreadDegrees = Math.max(
-              multiTaskLevel * 30,
-              tripleShotLevel * 40
-            );
-            const angleStep = totalSpreadDegrees / (shotCount - 1);
-            shotOffsets = Array.from(
-              { length: shotCount },
-              (_, index) => -totalSpreadDegrees / 2 + angleStep * index
-            );
+          const multitaskRandomSpreadDegrees = 20;
+          const shotOffsets = [0];
+          for (let extraShot = 0; extraShot < multiTaskLevel; extraShot++) {
+            shotOffsets.push((Math.random() * 2 - 1) * multitaskRandomSpreadDegrees);
           }
 
           for (const offsetDegrees of shotOffsets) {
-            // 注意力散漫スキルの確率に応じて、弾がランダムな角度にそれる
-            const scatterDegrees = Math.random() < specialSkillEffects.bulletScatterChance
-              ? (Math.random() - 0.5) * 50
-              : 0;
-            const bulletAngle = shotAngle + (offsetDegrees + scatterDegrees) * Math.PI / 180;
+            const bulletAngle = shotAngle + offsetDegrees * Math.PI / 180;
             bullets.push({
               x: player.x + Math.cos(bulletAngle) * player.radius,
               y: player.y + Math.sin(bulletAngle) * player.radius,
@@ -5449,7 +5381,8 @@ function update() {
     if (b.owner === 'player' && partner.active &&
         Math.hypot(b.x - partner.x, b.y - partner.y) <= b.radius + partner.radius) {
       // 同僚も、被弾しそうな瞬間に一定確率でパリィし、自機と同じエフェクトで最寄りの敵へ打ち返す
-      if (Math.random() < partnerParryChance) {
+      // 特殊スキル「チームワーク」：自分と同僚の誤射に限り、パリィ発動率がさらに高くなる
+      if (Math.random() < Math.max(partnerParryChance, specialSkillEffects.teamworkParryChance)) {
         performBulletParry(b, partner.x, partner.y, partner.angle);
         spawnSlashEffect(partner.x, partner.y, partner.angle, partner.radius);
         showMessage('同僚がパリィ！', 1400, '#80deea');
@@ -5482,11 +5415,12 @@ function update() {
       continue;
     } else if (b.owner === 'partner' &&
         Math.hypot(b.x - player.x, b.y - player.y) <= b.radius + player.radius) {
-      // 特殊スキル「オートパリィ」：被弾しそうな瞬間、一定確率で自動的にパリィする
-      if (Math.random() < specialSkillEffects.autoParryChance) {
+      // 特殊スキル「チームワーク」：自分と同僚の誤射に限り、パリィ発動率が高くなる
+      // （「オートパリィ」は敵からの弾に対してのみ発動するため、ここでは対象外）
+      if (Math.random() < specialSkillEffects.teamworkParryChance) {
         performBulletParry(b, player.x, player.y, player.angle);
         spawnSlashEffect(player.x, player.y, player.angle, player.radius);
-        showMessage('オートパリィ発動！', 1400, '#fff176');
+        showMessage('パリィ成功！', 1400, '#fff176');
         continue;
       }
       damagePlayerByFriendlyFire();
@@ -5710,14 +5644,9 @@ function update() {
     const sanMultiplier = Math.max(0.5, 1 - skillLevel * 0.04);
     let defeated = false;
     if (!en.touching) {
-      // 特殊スキル「オートパリィ」：接触の瞬間、一定確率で自動的にパリィし、SANダメージを無効化する
-      const autoParried = Math.random() < specialSkillEffects.autoParryChance;
       // 「ファイヤーウォール」が残っていれば、この接触の間ずっとSANダメージを無効化する
-      if (autoParried) {
-        en.barrierBlockedContact = true;
-        spawnSlashEffect(player.x, player.y, player.angle, player.radius);
-        showMessage('オートパリィ発動！', 1400, '#fff176');
-      } else if (playerBarrierCharges > 0) {
+      // （「オートパリィ」は敵からの弾に対してのみ発動し、敵本体との接触は対象外）
+      if (playerBarrierCharges > 0) {
         playerBarrierCharges--;
         en.barrierBlockedContact = true;
       } else {
@@ -5732,11 +5661,10 @@ function update() {
       en.touching = true;
       invincible = true;
       invincibleTimer = invincibleDuration;
-      // 最初の接触時、敵にも弾1発相当のダメージを与える（パリィが決まった場合は2倍のダメージを返す）
+      // 最初の接触時、敵にも弾1発相当のダメージを与える
       const contactConditionRatio = 1 - Math.max(0, Math.min(1, fatigue / maxFatigue));
       const contactDamage = Math.max(1, Math.round(
         baseBulletDamage * contactConditionRatio * (1 + skillLevel * 0.08) *
-        (autoParried ? deflectDamageMultiplier : 1) *
         (dreamMemorySave.upgrades.invincibleTest >= 1 ? 10 : 1)
       ));
       en.hp = (en.hp || 1) - contactDamage;
@@ -7459,7 +7387,7 @@ function draw() {
       ctx.fillText(item.icon, item.x, item.y);
       ctx.restore();
 
-      // 特殊スキル「先読み力」習得済みなら、出現順の番号を見える化する
+      // 特殊スキル「食通」習得済みなら、出現順の番号を見える化する
       if (specialSkillEffects.mealOrderVisible) {
         ctx.save();
         ctx.font = 'bold 14px sans-serif';
