@@ -1905,46 +1905,56 @@ const partnerGenderById = {
 // 前世（前回の周回）での好感度に応じて、あいさつの後に見せる一言と地の文を変える。
 // 好感度「良好」＝tier 1・2、「普通」＝tier 3、「悪い」＝tier 4・5 として文面を共有する
 // （tier自体はアイコン演出の輝き／暗転の強さの区分としては引き続き5段階のまま使う）
+// 配置換え当日、あいさつの前に共通で挟む地の文（主人公だけが前回の記憶を持っている、という導入）
+const reunionSceneIntroLines = [
+  '主人公は配置換えで、新しい部署に来た。',
+  '紹介された隣席の同僚は、初対面のはずだった。',
+  'けれど主人公だけは覚えている。',
+  'この同僚と同じオフィスで働き、最後に窓の外から迫る黒い影に襲われたことを。',
+  '同僚が倒れ、自分も抵抗むなしく床に崩れたことを。',
+  '同僚は何も覚えていない。',
+  'だから主人公は、ただ静かに名刺を差し出す。'
+];
 const reunionSceneTiers = {
   1: { // とても良い関係（関係性80〜100）＝前世での好感度：良好
     line: '「はじめまして」',
-    paragraph: [
+    paragraph: reunionSceneIntroLines.concat([
       '口にした瞬間、胸が痛んだ。',
       '君をまた失う未来だけは、もう繰り返したくない。'
-    ]
+    ])
   },
   2: { // 良い関係（関係性60〜79）＝前世での好感度：良好
     line: '「はじめまして」',
-    paragraph: [
+    paragraph: reunionSceneIntroLines.concat([
       '口にした瞬間、胸が痛んだ。',
       '君をまた失う未来だけは、もう繰り返したくない。'
-    ]
+    ])
   },
   3: { // 普通の関係（関係性40〜59）＝前世での好感度：普通
     line: '「はじめまして」',
-    paragraph: [
+    paragraph: reunionSceneIntroLines.concat([
       'と笑った。けれど{player}は知っている。',
       '君と{player}は、あの黒い夜を一度だけ共有している。'
-    ]
+    ])
   },
   4: { // 悪い関係（関係性0〜39）＝前世での好感度：悪い
     line: '「はじめまして」',
-    paragraph: [
+    paragraph: reunionSceneIntroLines.concat([
       'と言う声が少し濁った。',
       '最後までわかり合えなかった君と、また隣になるなんて。'
-    ]
+    ])
   },
   5: { // とても悪い関係（関係性20以下、かつ前回同僚の攻撃でENDになった場合）＝前世での好感度：悪い
     line: '「はじめまして」',
-    paragraph: [
+    paragraph: reunionSceneIntroLines.concat([
       'と言う声が少し濁った。',
       '最後までわかり合えなかった君と、また隣になるなんて。'
-    ]
+    ])
   }
 };
 
 function getPlayerPronoun(gender) {
-  return gender === 'female' ? '私' : '俺';
+  return gender === 'female' ? '私' : '僕';
 }
 function getPartnerPronoun(partnerIcon) {
   return partnerGenderById[partnerIcon] === 'female' ? '彼女' : '彼';
