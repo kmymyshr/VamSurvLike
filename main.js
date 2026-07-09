@@ -583,6 +583,7 @@ let lastUpdate = Date.now();
 let gameClockMs = 0;
 let gameTimeScale = 1;
 let isPaused = false;
+let wakeUpConfirmActive = false; // 「目を覚ます」の誤タップ防止確認ダイアログ
 
 // 手動攻撃と自動攻撃の状態
 let autoFireEnabled = false;
@@ -2861,7 +2862,10 @@ const specialSkills = [
   { id: 'learning-power', name: '理解力', description: 'EXP獲得量を上げる（Lv1:当初の130% → Lv5:当初の200%）', maxLevel: 5 },
   { id: 'business-manner', name: 'ビジネスマナー', description: '印象が良く、敵接触時のスコア減点を軽減（Lv1:-30% → Lv5:-50%）。同僚の寿命減少-10%', maxLevel: 5 },
   { id: 'communication', name: 'コミュニケーション力', description: 'レベルごとに15%の確率で援護射撃が発生する。同僚との関係性が悪化する時の低下値を軽減（Lv1:当初の90% → Lv5:当初の50%）', maxLevel: 5 },
-  { id: 'network-specialist', name: 'ネットワークスペシャリスト', description: '弾が画面端でレベルごとに1回多く跳ね返る' },
+  {
+    id: 'network-specialist', name: 'ネットワークスペシャリスト',
+    description: '弾が画面端でレベルごとに1回多く跳ね返る。画面端で1回目に反射した自弾は、自機がパリィで狩り直せ、同僚が自動でパリィする確率も2倍になる'
+  },
   { id: 'teamwork', name: 'チームワーク', description: '自分と同僚、お互いの弾が着弾しそうな時（敵からの弾を除く）、お互いパリィが発動しやすくなる（Lv5で発動率80%）', maxLevel: 5 },
   { id: 'meal-foresight', name: '食通', description: '昼食に登場する料理に、出現する順番の番号が表示されるようになる（習得は1回のみ）', maxLevel: 1 },
   { id: 'auto-parry', name: 'オートパリィ', description: '敵（ラスボス・中ボス・固定敵）からの弾を被弾しそうな時、レベルごとに10%の確率で自動的にパリィする（Lv5で50%）', maxLevel: 5 }
@@ -3725,6 +3729,7 @@ document.addEventListener("keydown", (event) => {
   }
 
   if (event.key === 'p') {
+    if (wakeUpConfirmActive) return; // 確認ダイアログ表示中はPキーでの再開を無視する
     isPaused = !isPaused;
       lastUpdate = Date.now();
     return;
@@ -3894,9 +3899,21 @@ function performBulletParry(bullet, fromX, fromY, actorAngle) {
     angle = Math.atan2(nearestFixedEnemy.y - bullet.y, nearestFixedEnemy.x - bullet.x);
   } else {
     const nearest = findNearestEnemyTo(fromX, fromY);
-    angle = nearest
-      ? Math.atan2(nearest.en.y - bullet.y, nearest.en.x - bullet.x)
-      : actorAngle;
+    if (nearest) {
+      angle = Math.atan2(nearest.en.y - bullet.y, nearest.en.x - bullet.x);
+    } else if (bullet.owner === 'player' && bullet.bouncesUsed === 1 && (bossEvent || midBossEvent)) {
+      // ネットワークスペシャリスト：通常の敵がいない場合、ラスボス・中ボスのランダムな発射口へ向かう
+      const holes = (bossEvent ? bossEvent.holes : midBossEvent.holes).filter(h => !h.destroyed);
+      if (holes.length > 0) {
+        const hole = holes[Math.floor(Math.random() * holes.length)];
+        const pos = bossEvent ? getBossHoleAbsolutePosition(hole) : getMidBossHoleAbsolutePosition(hole);
+        angle = Math.atan2(pos.y - bullet.y, pos.x - bullet.x);
+      } else {
+        angle = actorAngle;
+      }
+    } else {
+      angle = actorAngle;
+    }
   }
   bullet.vx = Math.cos(angle) * speed;
   bullet.vy = Math.sin(angle) * speed;
@@ -3972,7 +3989,9 @@ function generateBossHoles(stage) {
     for (let i = 0; i < count; i++) {
       holes.push({
         relX: (i + 1) / (count + 1), relY: 0.65,
-        hitsTaken: 0, destroyed: false, flashTimerMs: 0
+        hitsTaken: 0, destroyed: false, flashTimerMs: 0,
+        // 発射口ごとにランダムな初期位相を持たせ、全ての穴が同時に発射しないようにする
+        fireTimerMs: Math.random() * bossFireIntervalMs
       });
     }
     return holes;
@@ -3985,7 +4004,10 @@ function generateBossHoles(stage) {
       relY = 0.25 + Math.random() * 0.65;
       attempts++;
     } while (attempts < 20 && holes.some(h => Math.hypot(h.relX - relX, h.relY - relY) < bossHoleMinSpacing));
-    const hole = { relX, relY, hitsTaken: 0, destroyed: false, flashTimerMs: 0 };
+    const hole = {
+      relX, relY, hitsTaken: 0, destroyed: false, flashTimerMs: 0,
+      fireTimerMs: Math.random() * bossFireIntervalMs
+    };
     if (stage === 3) {
       // 第3段階の穴は、ラスボス上をランダムに動き回る
       hole.wanderTargetRelX = relX;
@@ -4010,7 +4032,6 @@ function startBossEvent() {
     holes: generateBossHoles(1),
     totalHitsLanded: 0,
     descendProgress: 0,
-    fireTimerMs: bossFireIntervalMs,
     savedEnemies: enemies.slice(),
     offsetX: 0,
     offsetY: 0,
@@ -4050,22 +4071,24 @@ function updateBossEvent(dt) {
   // 発射口の点滅（被弾エフェクト）を減衰させ、第3段階なら穴自体もランダムに動かす
   for (const hole of bossEvent.holes) {
     if (hole.flashTimerMs > 0) hole.flashTimerMs = Math.max(0, hole.flashTimerMs - dt * 1000);
-    if (hole.destroyed || bossEvent.stage !== 3) continue;
-    hole.wanderTimerMs -= dt * 1000;
-    if (hole.wanderTimerMs <= 0) {
-      hole.wanderTargetRelX = 0.08 + Math.random() * 0.84;
-      hole.wanderTargetRelY = 0.25 + Math.random() * 0.65;
-      hole.wanderTimerMs = bossHoleWanderIntervalMinMs + Math.random() * (bossHoleWanderIntervalMaxMs - bossHoleWanderIntervalMinMs);
+    if (hole.destroyed) continue;
+    if (bossEvent.stage === 3) {
+      hole.wanderTimerMs -= dt * 1000;
+      if (hole.wanderTimerMs <= 0) {
+        hole.wanderTargetRelX = 0.08 + Math.random() * 0.84;
+        hole.wanderTargetRelY = 0.25 + Math.random() * 0.65;
+        hole.wanderTimerMs = bossHoleWanderIntervalMinMs + Math.random() * (bossHoleWanderIntervalMaxMs - bossHoleWanderIntervalMinMs);
+      }
+      const wanderEase = Math.min(1, dt * bossHoleWanderEaseFactor);
+      hole.relX += (hole.wanderTargetRelX - hole.relX) * wanderEase;
+      hole.relY += (hole.wanderTargetRelY - hole.relY) * wanderEase;
     }
-    const wanderEase = Math.min(1, dt * bossHoleWanderEaseFactor);
-    hole.relX += (hole.wanderTargetRelX - hole.relX) * wanderEase;
-    hole.relY += (hole.wanderTargetRelY - hole.relY) * wanderEase;
-  }
-
-  bossEvent.fireTimerMs -= dt * 1000;
-  if (bossEvent.fireTimerMs <= 0) {
-    bossEvent.fireTimerMs = bossFireIntervalMs;
-    fireBossBullets();
+    // 発射口ごとに独立したタイミングでランダムに発射する（全ての穴が同時に撃たないようにする）
+    hole.fireTimerMs -= dt * 1000;
+    if (hole.fireTimerMs <= 0) {
+      fireSingleBossHoleBullet(hole);
+      hole.fireTimerMs = bossFireIntervalMs * (0.6 + Math.random() * 0.8);
+    }
   }
 }
 
@@ -4133,27 +4156,24 @@ function checkBossContactDamage() {
   }
 }
 
-// ラスボスの「穴」の位置（画面座標）を配列で返す
-function fireBossBullets() {
-  for (const hole of bossEvent.holes) {
-    if (hole.destroyed) continue;
-    const pos = getBossHoleAbsolutePosition(hole);
-    // 穴ごとに、自機・同僚のどちらを狙うかをランダムに決める（同僚も直接狙われる）
-    const target = (partner.active && Math.random() < 0.5) ? partner : player;
-    const angle = Math.atan2(target.y - pos.y, target.x - pos.x) + (Math.random() - 0.5) * 0.35;
-    bullets.push({
-      x: pos.x,
-      y: pos.y,
-      vx: Math.cos(angle) * bossBulletSpeed,
-      vy: Math.sin(angle) * bossBulletSpeed,
-      radius: 7,
-      damage: 1,
-      bounces: 0,
-      owner: 'boss',
-      sourceHole: hole, // パリィで打ち返した時、この発射口へ向けて反射させるために覚えておく
-      sourceHoleKind: 'boss'
-    });
-  }
+// 発射口1つぶんの弾を発射する（発射口ごとに独立したタイミングで呼ばれる）
+function fireSingleBossHoleBullet(hole) {
+  const pos = getBossHoleAbsolutePosition(hole);
+  // 穴ごとに、自機・同僚のどちらを狙うかをランダムに決める（同僚も直接狙われる）
+  const target = (partner.active && Math.random() < 0.5) ? partner : player;
+  const angle = Math.atan2(target.y - pos.y, target.x - pos.x) + (Math.random() - 0.5) * 0.35;
+  bullets.push({
+    x: pos.x,
+    y: pos.y,
+    vx: Math.cos(angle) * bossBulletSpeed,
+    vy: Math.sin(angle) * bossBulletSpeed,
+    radius: 7,
+    damage: 1,
+    bounces: 0,
+    owner: 'boss',
+    sourceHole: hole, // パリィで打ち返した時、この発射口へ向けて反射させるために覚えておく
+    sourceHoleKind: 'boss'
+  });
 }
 
 // 同僚と同じ誤射ダメージ量で、ラスボス弾による被弾を処理する（パリィ成功時はここに来ない）
@@ -4349,7 +4369,9 @@ function generateMidBossHoles() {
       phaseIndex: i, relX, relY,
       wanderTargetRelX: relX, wanderTargetRelY: relY,
       wanderTimerMs: midBossHoleWanderIntervalMinMs + Math.random() * (midBossHoleWanderIntervalMaxMs - midBossHoleWanderIntervalMinMs),
-      hitsTaken: 0, destroyed: false, flashTimerMs: 0
+      hitsTaken: 0, destroyed: false, flashTimerMs: 0,
+      // 発射口ごとにランダムな初期位相を持たせ、全ての穴が同時に発射しないようにする
+      fireTimerMs: Math.random() * midBossFireIntervalMs
     });
   }
   return holes;
@@ -4369,7 +4391,6 @@ function startMidBossEvent() {
     holes: generateMidBossHoles(),
     currentPhaseIndex: 0,
     hitsPerHole: Math.round(midBossHitsPerHoleBase * getMidBossDurabilityMultiplier(dayNumber)),
-    fireTimerMs: midBossFireIntervalMs,
     roamX: startX, roamY: 0, roamTargetX: startX, roamTargetY: 0, moveTimerMs: 0,
     retreatTimerMs: 0,
     phaseTextAlpha: 0,
@@ -4411,19 +4432,40 @@ function updateMidBossEvent(dt) {
   midBossEvent.roamX += (midBossEvent.roamTargetX - midBossEvent.roamX) * moveEase;
   midBossEvent.roamY += (midBossEvent.roamTargetY - midBossEvent.roamY) * moveEase;
 
-  // フェーズ（発射口）ごとの点滅減衰と、ゆっくりランダムな徘徊
+  // フェーズ（発射口）ごとの点滅減衰、ゆっくりランダムな徘徊、独立したタイミングでの発射
   const wanderEase = Math.min(1, dt * midBossHoleWanderEaseFactor);
   for (const hole of midBossEvent.holes) {
     if (hole.flashTimerMs > 0) hole.flashTimerMs = Math.max(0, hole.flashTimerMs - dt * 1000);
     if (hole.destroyed) continue;
     hole.wanderTimerMs -= dt * 1000;
     if (hole.wanderTimerMs <= 0) {
-      hole.wanderTargetRelX = 0.1 + Math.random() * 0.8;
-      hole.wanderTargetRelY = 0.25 + Math.random() * 0.5;
+      if (hole.phaseIndex === midBossEvent.currentPhaseIndex) {
+        // 今対応すべき発射口は、他の発射口が密集している場所から離れる方向を優先して次の目標を選ぶ（狙いやすくするため）
+        const others = midBossEvent.holes.filter(h => h !== hole && !h.destroyed);
+        if (others.length > 0) {
+          const avgRelX = others.reduce((sum, h) => sum + h.relX, 0) / others.length;
+          const avgRelY = others.reduce((sum, h) => sum + h.relY, 0) / others.length;
+          hole.wanderTargetRelX = Math.max(0.1, Math.min(0.9, (1 - avgRelX) + (Math.random() - 0.5) * 0.25));
+          hole.wanderTargetRelY = Math.max(0.25, Math.min(0.75, (1 - avgRelY) + (Math.random() - 0.5) * 0.25));
+        } else {
+          hole.wanderTargetRelX = 0.1 + Math.random() * 0.8;
+          hole.wanderTargetRelY = 0.25 + Math.random() * 0.5;
+        }
+      } else {
+        hole.wanderTargetRelX = 0.1 + Math.random() * 0.8;
+        hole.wanderTargetRelY = 0.25 + Math.random() * 0.5;
+      }
       hole.wanderTimerMs = midBossHoleWanderIntervalMinMs + Math.random() * (midBossHoleWanderIntervalMaxMs - midBossHoleWanderIntervalMinMs);
     }
     hole.relX += (hole.wanderTargetRelX - hole.relX) * wanderEase;
     hole.relY += (hole.wanderTargetRelY - hole.relY) * wanderEase;
+
+    // 発射口ごとに独立したタイミングでランダムに発射する（全ての穴が同時に撃たないようにする）
+    hole.fireTimerMs -= dt * 1000;
+    if (hole.fireTimerMs <= 0) {
+      fireSingleMidBossHoleBullet(hole);
+      hole.fireTimerMs = midBossFireIntervalMs * (0.6 + Math.random() * 0.8);
+    }
   }
 
   // 現在対応中のフェーズの内容文を、フェードイン／フェードアウトさせながら表示する
@@ -4434,29 +4476,21 @@ function updateMidBossEvent(dt) {
   } else {
     midBossEvent.phaseTextAlpha = Math.min(1, midBossEvent.phaseTextAlpha + phaseFadeStep);
   }
-
-  midBossEvent.fireTimerMs -= dt * 1000;
-  if (midBossEvent.fireTimerMs <= 0) {
-    midBossEvent.fireTimerMs = midBossFireIntervalMs;
-    fireMidBossBullets();
-  }
 }
 
-function fireMidBossBullets() {
-  for (const hole of midBossEvent.holes) {
-    if (hole.destroyed) continue;
-    const pos = getMidBossHoleAbsolutePosition(hole);
-    const target = (partner.active && Math.random() < 0.5) ? partner : player;
-    const angle = Math.atan2(target.y - pos.y, target.x - pos.x) + (Math.random() - 0.5) * 0.3;
-    bullets.push({
-      x: pos.x, y: pos.y,
-      vx: Math.cos(angle) * midBossBulletSpeed,
-      vy: Math.sin(angle) * midBossBulletSpeed,
-      radius: 6, damage: 1, bounces: 0, owner: 'midBoss',
-      sourceHole: hole,
-      sourceHoleKind: 'midBoss'
-    });
-  }
+// 発射口1つぶんの弾を発射する（発射口ごとに独立したタイミングで呼ばれる）
+function fireSingleMidBossHoleBullet(hole) {
+  const pos = getMidBossHoleAbsolutePosition(hole);
+  const target = (partner.active && Math.random() < 0.5) ? partner : player;
+  const angle = Math.atan2(target.y - pos.y, target.x - pos.x) + (Math.random() - 0.5) * 0.3;
+  bullets.push({
+    x: pos.x, y: pos.y,
+    vx: Math.cos(angle) * midBossBulletSpeed,
+    vy: Math.sin(angle) * midBossBulletSpeed,
+    radius: 6, damage: 1, bounces: 0, owner: 'midBoss',
+    sourceHole: hole,
+    sourceHoleKind: 'midBoss'
+  });
 }
 
 // 番号順にしか破壊できないため、現在対応中のフェーズ以外は命中判定を持たない。
@@ -4545,8 +4579,10 @@ function attemptDeflectPartnerBullet() {
   spawnSlashEffect(player.x, player.y, player.angle, player.radius); // 命中の有無に関わらず、振った動作自体を見せる
   // 範囲内の条件を満たす弾は、まとめて同時にパリィする（1発だけに限らない）
   const targets = bullets.filter(b => {
+    // ネットワークスペシャリスト：画面端で1回目に反射した自弾も、パリィで狩り直せる
+    const isOnceBouncedOwnBullet = b.owner === 'player' && b.bouncesUsed === 1;
     if (b.owner !== 'partner' && b.owner !== 'boss' && b.owner !== 'midBoss' &&
-        b.owner !== 'fixedEnemy' && b.owner !== 'fixedEnemyDisguise') return false;
+        b.owner !== 'fixedEnemy' && b.owner !== 'fixedEnemyDisguise' && !isOnceBouncedOwnBullet) return false;
     const d = Math.hypot(b.x - player.x, b.y - player.y);
     return d <= deflectRange + b.radius;
   });
@@ -4769,6 +4805,7 @@ document.getElementById('btnAutoFire').addEventListener('click', () => {
   autoFireEnabled = !autoFireEnabled;
 });
 document.getElementById('btnPause').addEventListener('click', () => {
+  if (wakeUpConfirmActive) return; // 確認ダイアログ表示中はボタンでの再開を無視する
   isPaused = !isPaused;
   lastUpdate = Date.now();
 });
@@ -4793,7 +4830,7 @@ function update() {
   const now = gameClockMs + ((Date.now() - lastUpdate) * gameTimeScale);
   const dt = (now - gameClockMs) / 1000;
     lastUpdate = Date.now();
-  if (isPaused) {
+  if (isPaused || wakeUpConfirmActive) {
     return;
   }
   gameClockMs = now;
@@ -5516,6 +5553,7 @@ function update() {
     if (b.x < 0 || b.x > canvas.width) {
       if (b.bounces > 0) {
         b.bounces--;
+        b.bouncesUsed = (b.bouncesUsed || 0) + 1;
         b.vx *= -1;
         b.x = Math.max(0, Math.min(canvas.width, b.x));
       } else {
@@ -5526,6 +5564,7 @@ function update() {
     if (!removed && (b.y < 0 || b.y > canvas.height)) {
       if (b.bounces > 0) {
         b.bounces--;
+        b.bouncesUsed = (b.bouncesUsed || 0) + 1;
         b.vy *= -1;
         b.y = Math.max(0, Math.min(canvas.height, b.y));
       } else {
@@ -5539,7 +5578,12 @@ function update() {
         Math.hypot(b.x - partner.x, b.y - partner.y) <= b.radius + partner.radius) {
       // 同僚も、被弾しそうな瞬間に一定確率でパリィし、自機と同じエフェクトで最寄りの敵へ打ち返す
       // 特殊スキル「チームワーク」：自分と同僚の誤射に限り、パリィ発動率がさらに高くなる
-      if (Math.random() < Math.max(partnerParryChance, specialSkillEffects.teamworkParryChance)) {
+      // ネットワークスペシャリスト：画面端で1回目に反射した自弾に限り、同僚のパリィ発動率が2倍になる
+      const partnerBulletParryChance = Math.max(partnerParryChance, specialSkillEffects.teamworkParryChance);
+      const effectivePartnerParryChance = b.bouncesUsed === 1
+        ? Math.min(1, partnerBulletParryChance * 2)
+        : partnerBulletParryChance;
+      if (Math.random() < effectivePartnerParryChance) {
         performBulletParry(b, partner.x, partner.y, partner.angle);
         spawnSlashEffect(partner.x, partner.y, partner.angle, partner.radius);
         showMessage('同僚がパリィ！', 1400, '#80deea');
@@ -7983,10 +8027,37 @@ function draw() {
 
     ctx.textAlign = 'left';
 
-    const wakeBtnW = 220, wakeBtnH = 40;
-    drawUiButton(canvas.width / 2 - wakeBtnW / 2, canvas.height - 48, wakeBtnW, wakeBtnH,
-      '目を覚ます', () => location.reload(),
+    const wakeBtnW = 220, wakeBtnH = 40, btnGap = 16;
+    const resumeBtnX = canvas.width / 2 - wakeBtnW - btnGap / 2;
+    const wakeBtnX = canvas.width / 2 + btnGap / 2;
+    drawUiButton(resumeBtnX, canvas.height - 48, wakeBtnW, wakeBtnH,
+      'ポーズ解除', () => { isPaused = false; },
+      { fillStyle: 'rgba(30, 60, 84, 0.6)', strokeStyle: '#80deea' });
+    drawUiButton(wakeBtnX, canvas.height - 48, wakeBtnW, wakeBtnH,
+      '目を覚ます', () => { wakeUpConfirmActive = true; },
       { fillStyle: 'rgba(84, 30, 30, 0.6)', strokeStyle: '#ef9a9a' });
+  }
+
+  // 「目を覚ます」の確認ダイアログ（誤タップでのリロードを防ぐ）
+  if (wakeUpConfirmActive && !gameOver && !gameClear) {
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 24px sans-serif';
+    ctx.fillText('目を覚ましてよいですか？', canvas.width / 2, canvas.height / 2 - 40);
+    ctx.font = '14px sans-serif';
+    ctx.fillStyle = '#cfd8dc';
+    ctx.fillText('（ゲームを終了し、タイトルからやり直します）', canvas.width / 2, canvas.height / 2 - 12);
+    ctx.textAlign = 'left';
+
+    const confirmBtnW = 160, confirmBtnH = 44, confirmGap = 20;
+    drawUiButton(canvas.width / 2 - confirmBtnW - confirmGap / 2, canvas.height / 2 + 10, confirmBtnW, confirmBtnH,
+      'はい', () => location.reload(),
+      { fillStyle: 'rgba(84, 30, 30, 0.7)', strokeStyle: '#ef9a9a' });
+    drawUiButton(canvas.width / 2 + confirmGap / 2, canvas.height / 2 + 10, confirmBtnW, confirmBtnH,
+      'いいえ', () => { wakeUpConfirmActive = false; },
+      { fillStyle: 'rgba(60, 60, 60, 0.7)', strokeStyle: '#90a4ae' });
   }
 
   if (gameClear || gameOver) {
