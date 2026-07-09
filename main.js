@@ -2573,7 +2573,7 @@ function updatePartner(dt) {
   // 自分の脳疲労が100に達してしまうような攻撃はしない（休息中も同様に攻撃しない）
   const wouldMaxOutPartnerFatigue = partner.fatigue + partnerFiringFatiguePerShot >= maxFatigue;
   // セッションハイジャック・内部不正：一定時間、同僚が乗っ取られて攻撃をやめる
-  if (partner.fireTimer <= 0 && (enemies.length > 0 || scheduledReport || fixedEnemies.length > 0) &&
+  if (partner.fireTimer <= 0 && (enemies.length > 0 || scheduledReport || fixedEnemies.length > 0 || bossEvent) &&
       !partner.fatigueResting && !wouldMaxOutPartnerFatigue && (partner.hijackedTimerMs || 0) <= 0) {
     const intelligence = getPartnerEffectiveIntelligence();
     const recklessness = getPartnerEffectiveRecklessness();
@@ -2601,8 +2601,15 @@ function updatePartner(dt) {
           ? 0.2 + relationshipHostility * 0.3
           : 0;
       const retaliating = Math.random() < retaliationChance;
-      // 固定敵が出ている間は最優先で狙い、次に定時報告、それ以外は通常の仕事を狙う
-      const target = retaliating ? player : (nearestFixedEnemyForPartner || scheduledReport || nearestEnemy);
+      // ラスボスの出現中は、生きている発射口も通常の敵と同様に狙う対象にする
+      const nearestBossHoleForPartner = findNearestLivingBossHole(partner.x, partner.y);
+      // 固定敵が出ている間は最優先で狙い、次に定時報告・ラスボスの発射口、それ以外は通常の仕事を狙う
+      const target = retaliating ? player :
+        (nearestFixedEnemyForPartner || scheduledReport || nearestBossHoleForPartner || nearestEnemy);
+      // 万一、条件を満たした瞬間に狙う対象が1つも無ければ（発射口を全滅させた直後など）今回は撃たない
+      if (!target) {
+        partner.fireTimer = 200;
+      } else {
       // 賢さが高く、疲労が少なく、慎重な性格ほど命中精度（狙いの正確さ）が上がる
       const accuracy = Math.max(0.15, Math.min(1,
         0.35 + intelligence * 0.5 - fatigueRatio * 0.25 - recklessness * 0.1
@@ -2636,6 +2643,7 @@ function updatePartner(dt) {
         partner.fatigue = Math.min(maxFatigue, partner.fatigue + partnerFiringFatiguePerShot);
         // 夜間は疲労そのものではなく発砲間隔を伸ばし、攻撃頻度を落とすことでパフォーマンス低下を表現する
         partner.fireTimer = partnerBaseFireRate * getTimeOfDayFatigueMultiplier();
+      }
       }
     }
   }
@@ -3979,6 +3987,28 @@ const bossContactSanDamage = 20;
 const bossContactLifespanDamage = 6;
 let bossEventOnCooldown = false; // 一度発生したら、両者のSANが閾値を上回るまで再発生しない
 let bossEvent = null; // null、または { phase, stage, holes, totalHitsLanded, descendProgress, fireTimerMs, savedEnemies, offsetX, offsetY, moveTargetX, moveTargetY, moveTimerMs }
+const bossEncounterAvoidSanRecovery = 20; // 「現実から目をそらす」を選んだ時、自分・同僚それぞれが回復するSAN
+let bossEncounterChoiceActive = false; // 「名状しがたきものの気配がする…」の最初の選択肢を表示中
+let bossEncounterConfirmActive = false; // 「本当に現実を直視しますか？」の再確認を表示中
+
+// 「現実から目をそらす」：自分・同僚ともSANを回復し、ラスボスの発生を見送る
+function chooseBossEncounterAvoid() {
+  san = Math.min(maxSan, san + bossEncounterAvoidSanRecovery);
+  partner.san = Math.min(maxSan, partner.san + bossEncounterAvoidSanRecovery);
+  bossEncounterChoiceActive = false;
+  bossEncounterConfirmActive = false;
+  showMessage(`現実から目をそらした…… SAN +${bossEncounterAvoidSanRecovery}（自分・同僚とも）`, 3200, '#90caf9', '22px sans-serif');
+}
+// 「現実を直視する」：最終確認の選択肢を表示する
+function chooseBossEncounterFace() {
+  bossEncounterChoiceActive = false;
+  bossEncounterConfirmActive = true;
+}
+// 最終確認で「はい」：ラスボスを実際に発生させる
+function chooseBossEncounterConfirmYes() {
+  bossEncounterConfirmActive = false;
+  startBossEvent();
+}
 
 function getBossGeometry() {
   const width = canvas.width * bossWidthRatio;
@@ -3992,10 +4022,11 @@ function getBossGeometry() {
 
 // 両者のSANが同時に閾値を切ったら、ラスボス出現を開始する（発生中・クールダウン中は何もしない）
 function checkBossEventTrigger() {
-  if (bossEvent || midBossEvent || !partner.active) return;
+  if (bossEvent || midBossEvent || !partner.active || bossEncounterChoiceActive || bossEncounterConfirmActive) return;
   const bothLow = san < bossSanTriggerThreshold && partner.san < bossSanTriggerThreshold;
   if (bothLow && !bossEventOnCooldown) {
-    startBossEvent();
+    // ラスボスをいきなり出現させず、まず「気配」への向き合い方を選ばせる
+    bossEncounterChoiceActive = true;
     bossEventOnCooldown = true;
   } else if (!bothLow) {
     bossEventOnCooldown = false;
@@ -4045,6 +4076,24 @@ function generateBossHoles(stage) {
 function getBossHoleAbsolutePosition(hole) {
   const geo = getBossGeometry();
   return { x: geo.x + geo.width * hole.relX, y: geo.y + geo.height * hole.relY };
+}
+
+// ラスボスが出現中、指定した位置から見て最も近い「生きている（破壊されていない）」発射口の座標を返す。
+// 同僚の狙い先・自機のオート照準の両方から、通常の敵と同様のターゲットとして扱えるようにする
+function findNearestLivingBossHole(fromX, fromY) {
+  if (!bossEvent) return null;
+  let nearest = null;
+  let nearestD = Infinity;
+  for (const hole of bossEvent.holes) {
+    if (hole.destroyed) continue;
+    const pos = getBossHoleAbsolutePosition(hole);
+    const d = Math.hypot(pos.x - fromX, pos.y - fromY);
+    if (d < nearestD) {
+      nearestD = d;
+      nearest = pos;
+    }
+  }
+  return nearest;
 }
 
 function startBossEvent() {
@@ -4262,11 +4311,11 @@ const bossFinalRetreatDurationMs = 9000; // 振動・フェードアウト・後
 const bossFinalBgRestoreDurationMs = 1800;
 const bossFinalWhiteFadeDurationMs = 1800;
 const bossFinalWhiteWaitDurationMs = 3000;
-// 真エンドの文章・ENDの表示タイミング（trueEndフェーズ開始からの経過ミリ秒とフェード時間）
+// 真エンドの文章の表示タイミング（trueEndフェーズ開始からの経過ミリ秒とフェード時間）。
+// ENDはここでは表示せず、最後のクリアメッセージ画面の下に改めてフェードイン表示する
 const bossTrueEndCues = [
   { start: 0, fadeMs: 1500 }, // 1行目
-  { start: 2700, fadeMs: 1500 }, // 2行目
-  { start: 5700, fadeMs: 800 } // END
+  { start: 5000, fadeMs: 1500 } // 2行目（少し時間を置いてから表示する）
 ];
 const bossTrueEndReturnAtMs = 9500; // このタイミングで「real-world time」画面へ進む（同僚が生存していない場合はここでタイトルへ戻る）
 const bossTrueEndLines = [
@@ -4279,6 +4328,8 @@ const bossClearMessageLines = [
   'クリアおめでとうございます。',
   '最後までプレイありがとうございました。'
 ];
+const bossEndTextDelayMs = 600; // クリアメッセージが表示されてから、画面下のENDが現れ始めるまでの間
+const bossEndTextFadeMs = 800;
 // 同僚が生存していない場合の代替エンド（画面は黒くなり、1行だけ表示してENDへ）
 const bossAltEndCues = [
   { start: 0, fadeMs: 1500 }, // 1行目
@@ -4645,6 +4696,9 @@ function findAutoAimTarget() {
     }, null);
     return { en: nearest.en };
   }
+  // ラスボスの出現中は、生きている発射口も通常の敵と同様にオート照準の対象にする
+  const bossHolePos = findNearestLivingBossHole(player.x, player.y);
+  if (bossHolePos) return { en: bossHolePos };
   return findNearestEnemyToPlayer();
 }
 
@@ -5042,6 +5096,8 @@ function update() {
 
   // 週末の休日出勤選択・休日の過ごし方選択・休日出勤中の帰宅確認中は、ゲームの進行を止める
   if (weekendWorkChoice || restActivityChoice || weekendWorkQuotaChoice) return;
+  // 「名状しがたきものの気配」の選択肢・再確認の表示中は、ゲームの進行を止める
+  if (bossEncounterChoiceActive || bossEncounterConfirmActive) return;
 
   // 休日出勤中（土曜・日曜に働いている間）は、SAN・寿命が緩やかに削れていく
   if (currentDate.getDay() === 0 || currentDate.getDay() === 6) {
@@ -6361,14 +6417,6 @@ function drawBossFinalTransition() {
       ctx.globalAlpha = alpha;
       ctx.fillText(line, canvas.width / 2, canvas.height / 2 - 30 + i * 70);
     });
-    const endCue = bossTrueEndCues[2];
-    const endAlpha = Math.max(0, Math.min(1, (seq.phaseTimerMs - endCue.start) / endCue.fadeMs));
-    if (endAlpha > 0) {
-      ctx.globalAlpha = endAlpha;
-      ctx.font = 'bold 42px sans-serif';
-      ctx.fillStyle = '#222222';
-      ctx.fillText('END', canvas.width / 2, canvas.height / 2 + 140);
-    }
   } else {
     // 同僚が生存していない場合の代替エンド：黒い画面に、同僚を案じる一言だけを表示する
     const pronoun = getPartnerPronoun(selectedPartnerIcon);
@@ -6434,6 +6482,23 @@ function drawClearMessageScreen(seq) {
     ctx.fillText(line, canvas.width / 2, canvas.height / 2 - 20 + i * 44);
   });
   ctx.restore();
+
+  // クリアメッセージが表示しきってから、画面いちばん下にENDをフェードインさせる
+  if (seq.phase === 'clearMessageShown' || seq.phase === 'clearMessageFadeOut') {
+    const endAlpha = seq.phase === 'clearMessageFadeOut'
+      ? alpha // 画面全体と一緒にフェードアウトする
+      : Math.max(0, Math.min(1, (seq.phaseTimerMs - bossEndTextDelayMs) / bossEndTextFadeMs));
+    if (endAlpha > 0) {
+      ctx.save();
+      ctx.globalAlpha = endAlpha;
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 36px sans-serif';
+      ctx.fillStyle = '#222222';
+      ctx.fillText('END', canvas.width / 2, canvas.height - 60);
+      ctx.restore();
+    }
+  }
+
   if (seq.phase === 'clearMessageShown') {
     ctx.save();
     ctx.textAlign = 'center';
@@ -8249,6 +8314,47 @@ function draw() {
         applyRestActivity(choiceIndex);
       });
     });
+  }
+
+  // ラスボス出現条件を満たした瞬間の選択肢：「名状しがたきものの気配がする……」
+  if (bossEncounterChoiceActive && !gameOver && !gameClear) {
+    ctx.fillStyle = 'rgba(0,0,0,0.8)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#ff8a80';
+    ctx.font = '26px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('……名状しがたきものの気配がする……', canvas.width / 2, canvas.height / 2 - 90);
+    ctx.textAlign = 'left';
+
+    const encBtnW = 460, encBtnH = 50;
+    const encBtnX = canvas.width / 2 - encBtnW / 2;
+    drawUiButton(encBtnX, canvas.height / 2 - 20, encBtnW, encBtnH,
+      `① 現実から目をそらす（自分・同僚とも SAN +${bossEncounterAvoidSanRecovery}）`,
+      chooseBossEncounterAvoid,
+      { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
+    drawUiButton(encBtnX, canvas.height / 2 + 40, encBtnW, encBtnH,
+      '② 現実を直視する', chooseBossEncounterFace,
+      { fillStyle: 'rgba(84, 20, 20, 0.6)', strokeStyle: '#ff8a80' });
+  }
+
+  // ②を選んだ後の最終確認
+  if (bossEncounterConfirmActive && !gameOver && !gameClear) {
+    ctx.fillStyle = 'rgba(0,0,0,0.85)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#ff8a80';
+    ctx.font = '26px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('本当に現実を直視しますか？', canvas.width / 2, canvas.height / 2 - 60);
+    ctx.textAlign = 'left';
+
+    const confBtnW = 300, confBtnH = 50;
+    const confBtnX = canvas.width / 2 - confBtnW / 2;
+    drawUiButton(confBtnX, canvas.height / 2, confBtnW, confBtnH,
+      'はい', chooseBossEncounterConfirmYes,
+      { fillStyle: 'rgba(84, 20, 20, 0.7)', strokeStyle: '#ff8a80' });
+    drawUiButton(confBtnX, canvas.height / 2 + 60, confBtnW, confBtnH,
+      '現実逃避する', chooseBossEncounterAvoid,
+      { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
   }
 
   // 「同僚と遊ぶ」アドベンチャーパート（簡易サウンドノベル）の画面
