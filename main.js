@@ -110,7 +110,7 @@ function dreamMemoryUpgradeCost(currentLevel) {
 
 // ===== エンディングリスト（タイトル画面から確認できる、到達済みエンディングの一覧） =====
 const endingListDefs = [
-  { id: 'true', icon: '🌟', label: 'TRUE END', hint: 'ランク10に到達し、特殊な選択を全て正しく行い、同僚を失わずに完走する' },
+  { id: 'true', icon: '🌟', label: 'TRUE END', hint: 'ランク7に到達し、特殊な選択を全て正しく行い、同僚を失わずに完走する' },
   { id: 'normal', icon: '🏁', label: 'NORMAL END', hint: '月末を迎えて一区切りをつける' },
   { id: 'bad-san', icon: '🌀', label: 'BAD END（心）', hint: 'SANが0になる' },
   { id: 'bad-lifespan', icon: '⚰️', label: 'BAD END（寿命）', hint: '寿命が0になる' },
@@ -362,7 +362,7 @@ function spawnHitSpark(x, y, big = false) {
   });
 }
 
-// ===== 役職スキル「連携力」で弾が反射した瞬間の専用エフェクト =====
+// ===== 役職スキル「AIエージェント」で弾が反射した瞬間の専用エフェクト =====
 const synergyBeams = [];
 const synergyBeamDurationMs = 350;
 function spawnSynergyBeam(x1, y1, x2, y2) {
@@ -462,9 +462,9 @@ let allSpecialEventChoicesCorrect = true;
 function recordSpecialEventChoiceResult(isCorrect) {
   if (!isCorrect) allSpecialEventChoicesCorrect = false;
 }
-// トゥルーエンドの条件：最終ランク（Rank10）に到達し、かつ週末の特殊イベントの選択をすべて正しく行っていること
+// トゥルーエンドの条件：最終ランク（Rank7）に到達し、かつ週末の特殊イベントの選択をすべて正しく行っていること
 function isTrueEndEligible() {
-  return rank >= 10 && allSpecialEventChoicesCorrect && !partnerEverLost;
+  return rank >= rankNames.length && allSpecialEventChoicesCorrect && !partnerEverLost;
 }
 
 // ===== 納期切れの爆発エフェクト =====
@@ -1690,11 +1690,7 @@ function endWorkday() {
   if (gameOver || deathSequence) return;
   // 一日の終わりに、同僚との関係性が少し回復する
   if (partner.active) adjustPartnerRelationship(partnerRelationshipDailyRecovery);
-  // 昇進判定は翌週の開始時に行うため、ここでは月末（クリア判定の直前）のみ判定する
-  if (isLastDayOfMonth(currentDate)) {
-    rankUpAtWeekEnd();
-    if (acknowledgementNotice) return;
-  }
+  // ランクはScoreに応じて毎フレーム自動更新されるため、ここでの判定は不要
   if (isLastDayOfMonth(currentDate)) {
     gameClear = true;
     endingType = isTrueEndEligible() ? 'true' : 'normal';
@@ -2759,22 +2755,19 @@ function sendScore(finalScore) {
   });
 }
 // ===== ランク・スキル・経験値システム =====
+// 「昇進」という選択イベントは廃止し、Scoreに応じて役職名・役職スキルが自動的・段階的に身につく
 const rankNames = [
   '未経験 / 新人',
-  'テスター / 開発補助',
   'PG',
   'SE',
-  '上級SE',
-  'サブリーダー',
+  '上級SE / サブリーダー',
   'PL / プロジェクトリーダー',
   'PM / プロジェクトマネージャー',
-  'PMO / ITコンサル / アーキテクト',
   '部長 / 事業責任者 / CTO'
 ];
 // rank変数は、敵生成時に使うためファイル前半で宣言済み
 // ミスなくほぼ完璧に立ち回った場合のみ最終ランクへ届く想定で、最終ランクだけ必要スコアを大きく跳ね上げてある
-// 昇進判定は週ごとに行い、条件を満たしていれば複数ランクの飛び級もあり得る（checkRankUp参照）
-const rankThresholds = [0, 40, 120, 280, 550, 950, 1500, 2300, 3500, 6000]; // 各ランクへの昇格に必要なスコア
+const rankThresholds = [0, 60, 200, 500, 1000, 1800, 3200]; // 各ランクへの昇格に必要なスコア
 
 // スキルレベルと経験値
 // レベルが上がるほど必要経験値が増えていく（後半ほどレベルが上がりにくくなるようにするため）
@@ -2931,6 +2924,9 @@ function recomputeSpecialSkillEffects() {
   for (const [skillId, level] of specialSkillLevels.entries()) {
     applySkillEffectForLevel(skillId, level);
   }
+  for (const id of rankSkillLevels) {
+    applyRankSkillEffect(id);
+  }
 }
 
 const specialSkillSelectionLockDurationMs = 1000; // 表示直後の連続タップ／クリックによる誤選択を防ぐ猶予時間
@@ -3010,84 +3006,91 @@ function updateSkillEffects() {
   }
 }
 
-// ===== 役職スキル（昇進時に選ぶ恒久効果） =====
+// ===== 役職スキル（Scoreに応じて自動的・段階的に身につく、開発手法の恒久効果） =====
+// 「昇進」という選択イベントは廃止し、ランクが上がった瞬間、そのランクに紐づくスキルを自動ですべて習得する。
 // 特殊スキルの「忘却」イベントの対象外にするため、specialSkillEffectsとは独立に管理する
-const rankSkills = [
-  { id: 'processing-power', name: '処理能力', description: '連射速度が2倍になる' },
-  { id: 'comprehension', name: '理解力', description: '得られる経験値が150%になる' },
+const rankSkillDefs = [
+  { rank: 1, id: 'structured-programming', name: '構造化プログラミング', description: '弾のダメージ+10%' },
+  { rank: 2, id: 'oop', name: 'オブジェクト指向', description: 'EXP獲得+20%' },
+  { rank: 3, id: 'ide', name: 'IDE', description: '発射間隔-15%' },
+  { rank: 3, id: 'debugger', name: 'デバッガ', description: '被SANダメージ-15%' },
+  { rank: 3, id: 'version-control', name: 'バージョン管理', description: '誤射（自分・同僚とも）のダメージ-20%' },
+  { rank: 4, id: 'framework', name: 'フレームワーク', description: '移動速度+10%' },
+  { rank: 4, id: 'library', name: 'ライブラリ', description: '弾のダメージ+15%' },
+  { rank: 4, id: 'orm', name: 'O/Rマッパー', description: '獲得Score+15%' },
+  { rank: 5, id: 'auto-test', name: '自動テスト', description: '被SANダメージ-20%' },
+  { rank: 5, id: 'cicd', name: 'CI/CD', description: '発射間隔-20%' },
+  { rank: 5, id: 'build-automation', name: 'ビルド自動化', description: '射撃による脳疲労-20%' },
   {
-    id: 'synergy', name: '連携力',
-    description: '1日10回まで、同僚に攻撃を当てると弾が最寄りの敵に反射し、その敵を必ず一撃で倒す'
+    rank: 6, id: 'agile', name: 'アジャイル開発',
+    description: '敵の納期+20%。また「巨大案件」は、7つのどこに当てても今対応すべき番号への命中として扱われる'
+  },
+  { rank: 6, id: 'devops', name: 'DevOps', description: '同僚の攻撃力+15%' },
+  { rank: 6, id: 'cloud', name: 'クラウド', description: '最大SAN・最大寿命+10' },
+  { rank: 6, id: 'container', name: 'コンテナ', description: '移動速度+15%' },
+  { rank: 7, id: 'ai-code-completion', name: 'AIコード補完', description: '発射間隔-30%' },
+  { rank: 7, id: 'generative-ai', name: '生成AI', description: '弾のダメージ+30%' },
+  {
+    rank: 7, id: 'ai-agent', name: 'AIエージェント',
+    description: '1日10回まで、同僚への誤射が最寄りの敵への即死攻撃に変換される'
   }
 ];
 const rankSkillLevels = new Set(); // 習得済みの役職スキルid
-// 何階級分の役職スキル選択が未消化か（複数階級を一気に昇格した場合に使う）
-let pendingRankSkillSelections = 0;
-let rankSkillChoices = [];
-let rankSkillSelectionActive = false;
-let rankSkillSelectionUnlockAt = 0;
 const synergyDailyLimit = 10;
-let synergyUsesToday = 0; // 「連携力」の本日の使用回数。日付が変わるとリセットする
+let synergyUsesToday = 0; // 「AIエージェント」の本日の使用回数。日付が変わるとリセットする
 
-function getRankSkillFireRateMultiplier() {
-  return rankSkillLevels.has('processing-power') ? 0.5 : 1;
-}
-function getRankSkillExpMultiplier() {
-  return rankSkillLevels.has('comprehension') ? 1.5 : 1;
-}
-
-// 役職スキルの選択画面を開く（未取得のものだけを候補にする）
-function openNextRankSkillSelection() {
-  pendingRankSkillSelections = Math.max(0, pendingRankSkillSelections - 1);
-  rankSkillChoices = rankSkills.filter(s => !rankSkillLevels.has(s.id));
-  if (rankSkillChoices.length === 0) return;
-  rankSkillSelectionActive = true;
-  rankSkillSelectionUnlockAt = Date.now() + specialSkillSelectionLockDurationMs;
-}
-
-function chooseRankSkill(index) {
-  if (Date.now() < rankSkillSelectionUnlockAt) return;
-  const skill = rankSkillChoices[index];
-  if (!skill) return;
-  rankSkillLevels.add(skill.id);
-  showMessage(`役職スキル「${skill.name}」を習得！`, 2600, '#ffd54f', '24px sans-serif');
-  rankSkillSelectionActive = false;
-  lastUpdate = Date.now();
-  if (pendingRankSkillSelections > 0) {
-    openNextRankSkillSelection();
+// 現在のrankSkillLevelsをもとに、1つぶんの役職スキル効果をspecialSkillEffectsへ適用する
+// （「クラウド」のmaxSan/maxLifespan+10だけは、再計算のたびに重複加算しないよう習得時に直接加算する）
+function applyRankSkillEffect(id) {
+  switch (id) {
+    case 'structured-programming': specialSkillEffects.damageMultiplier *= 1.10; break;
+    case 'oop': specialSkillEffects.expGainMultiplier *= 1.20; break;
+    case 'ide': specialSkillEffects.fireRateMultiplier *= 0.85; break;
+    case 'debugger': specialSkillEffects.sanDamageMultiplier *= 0.85; break;
+    case 'version-control': specialSkillEffects.friendlyFireDamageMultiplier *= 0.80; break;
+    case 'framework': specialSkillEffects.moveSpeedMultiplier *= 1.10; break;
+    case 'library': specialSkillEffects.damageMultiplier *= 1.15; break;
+    case 'orm': specialSkillEffects.scoreGainMultiplier *= 1.15; break;
+    case 'auto-test': specialSkillEffects.sanDamageMultiplier *= 0.80; break;
+    case 'cicd': specialSkillEffects.fireRateMultiplier *= 0.80; break;
+    case 'build-automation': specialSkillEffects.firingFatigueMultiplier *= 0.80; break;
+    case 'agile': specialDeadlineMultiplier *= 1.20; break;
+    case 'devops': specialSkillEffects.partnerDamageMultiplier *= 1.15; break;
+    case 'container': specialSkillEffects.moveSpeedMultiplier *= 1.15; break;
+    case 'ai-code-completion': specialSkillEffects.fireRateMultiplier *= 0.70; break;
+    case 'generative-ai': specialSkillEffects.damageMultiplier *= 1.30; break;
+    // 'cloud'・'ai-agent' はここでは何もしない（習得時の直接加算・既存の専用ロジックで対応）
   }
 }
 
-// Scoreが複数ランク分の条件を満たしていれば、飛び級で一気に昇格させる。
-// ランク2・3への到達ごとに、役職スキル選択を1回分キューに積む
-function checkRankUp() {
-  let promotions = 0;
-  while (rank < 10 && score >= rankThresholds[rank]) {
-    rank++;
-    promotions++;
-    if (rank === 2 || rank === 3) {
-      pendingRankSkillSelections++;
+// ランクが上がった瞬間、そのランクに紐づく役職スキルをすべて自動的に習得させる
+function grantRankSkillsForRank(newRank) {
+  const skillsForRank = rankSkillDefs.filter(s => s.rank === newRank);
+  if (skillsForRank.length === 0) return;
+  skillsForRank.forEach(skill => {
+    rankSkillLevels.add(skill.id);
+    if (skill.id === 'cloud') {
+      // クラウド：器そのものが大きくなるイメージで、上限に直接+10する（一度だけ）
+      maxSan += 10;
+      maxLifespan += 10;
     }
-  }
-  return promotions;
+  });
+  recomputeSpecialSkillEffects();
+  const skillNames = skillsForRank.map(s => s.name).join('・');
+  showMessage(`昇進：${rank} ${rankNames[newRank - 1]}（${skillNames} を習得）`, 3400, '#ffd54f', '24px sans-serif');
 }
 
-// 昇進判定（週の最終稼働日の月末クリア判定時、および翌週の開始時に呼び出す）
-function rankUpAtWeekEnd() {
-  const promotions = checkRankUp();
-  if (promotions > 0) {
-    const jumpNote = promotions > 1 ? `（${promotions}階級飛び級！）` : '';
-    showAcknowledgementNotice('昇進しました！ ' + rank + ' ' + rankNames[rank-1] + jumpNote,
-      '#ffeb3b', '新しい役職での一週間が始まります。',
-      () => { if (pendingRankSkillSelections > 0) openNextRankSkillSelection(); });
-  } else if (pendingRankSkillSelections > 0) {
-    openNextRankSkillSelection();
+// Scoreに応じて、ランクと役職スキルを継続的に（毎フレーム）自動更新する。
+// 複数ランク分の条件を満たしていれば、飛び級で一気に昇格する
+function checkAndApplyRankUp() {
+  while (rank < rankNames.length && score >= rankThresholds[rank]) {
+    rank++;
+    grantRankSkillsForRank(rank);
   }
 }
 
-// 翌週の開始時（月曜日を迎えた瞬間）に、昇進判定と週次ノルマのリセットをまとめて行う
+// 翌週の開始時（月曜日を迎えた瞬間）に、週次ノルマをリセットする
 function startNewWeek() {
-  rankUpAtWeekEnd();
   resetWeeklyQuotaForNewWeek();
 }
 
@@ -3437,8 +3440,9 @@ function resumeFromAcknowledgement() {
 }
 
 function getAllowedMaxTypeIndexByRank() {
-  // ランク1～10を敵番号0～9へ対応させる（低ランクでは弱い敵だけ出す）
-  const maxIdx = Math.floor((rank / 10) * (enemyTypeNames.length - 1));
+  // ランク1～7を敵番号0～9へ対応させる（低ランクでは弱い敵だけ出す）
+  // ※ rankNames はこの関数より後で定義されるが、ゲーム開始時の最初のスポーンでも呼ばれるため定数7を直接使う
+  const maxIdx = Math.floor((rank / 7) * (enemyTypeNames.length - 1));
   let capped = Math.max(0, Math.min(enemyTypeNames.length - 1, maxIdx));
   // 週のノルマを早期達成した週は、残りの期間は易しい仕事のみにする
   if (weeklyQuotaAchievedEarly) capped = Math.min(capped, 1);
@@ -3467,13 +3471,13 @@ function explodeEnemy(enemyIndex) {
   }
 }
 
-// 弾を介さず、敵を即座に1体撃破する（「連携力」など特殊な倒し方から使う共通処理）
+// 弾を介さず、敵を即座に1体撃破する（「AIエージェント」など特殊な倒し方から使う共通処理）
 function defeatEnemyInstantly(enemyIndex) {
   const en = enemies[enemyIndex];
   if (!en) return;
   const pts = Math.ceil(en.type * 3 * specialSkillEffects.scoreGainMultiplier);
   score += pts;
-  exp += en.type * 5 * specialSkillEffects.expGainMultiplier * getRankSkillExpMultiplier();
+  exp += en.type * 5 * specialSkillEffects.expGainMultiplier;
   updateSkillEffects();
   spawnHitSpark(en.x, en.y, true);
   enemies.splice(enemyIndex, 1);
@@ -3580,14 +3584,6 @@ document.addEventListener("keydown", (event) => {
     const choiceIndex = Number(event.key) - 1;
     if (choiceIndex >= 0 && choiceIndex < specialSkillChoices.length) {
       chooseSpecialSkill(choiceIndex);
-    }
-    return;
-  }
-  // 役職スキル選択中は数字キーだけを受け付ける
-  if (rankSkillSelectionActive) {
-    const choiceIndex = Number(event.key) - 1;
-    if (choiceIndex >= 0 && choiceIndex < rankSkillChoices.length) {
-      chooseRankSkill(choiceIndex);
     }
     return;
   }
@@ -4404,13 +4400,23 @@ function fireMidBossBullets() {
   }
 }
 
-// 番号順にしか破壊できないため、現在対応中のフェーズ以外は命中判定を持たない
+// 番号順にしか破壊できないため、現在対応中のフェーズ以外は命中判定を持たない。
+// ただし役職スキル「アジャイル開発」を習得していると、7つのどこに当てても
+// 今対応すべき番号への命中として扱われる（柔軟に軌道修正できるイメージ）
 function findHitMidBossHole(x, y) {
   if (!midBossEvent || midBossEvent.phase !== 'active') return null;
-  const hole = midBossEvent.holes[midBossEvent.currentPhaseIndex];
-  if (!hole || hole.destroyed) return null;
-  const pos = getMidBossHoleAbsolutePosition(hole);
-  if (Math.hypot(x - pos.x, y - pos.y) <= midBossHoleRadius + 6) return hole;
+  const currentHole = midBossEvent.holes[midBossEvent.currentPhaseIndex];
+  if (!currentHole || currentHole.destroyed) return null;
+  if (rankSkillLevels.has('agile')) {
+    for (const hole of midBossEvent.holes) {
+      if (hole.destroyed) continue;
+      const pos = getMidBossHoleAbsolutePosition(hole);
+      if (Math.hypot(x - pos.x, y - pos.y) <= midBossHoleRadius + 6) return currentHole;
+    }
+    return null;
+  }
+  const pos = getMidBossHoleAbsolutePosition(currentHole);
+  if (Math.hypot(x - pos.x, y - pos.y) <= midBossHoleRadius + 6) return currentHole;
   return null;
 }
 
@@ -4677,8 +4683,8 @@ canvas.addEventListener('click', (event) => {
     return;
   }
   // 一日の終わりの演出で入力待ち中なら、どこをクリック／タップしても次の日へ進める
-  // （ただし昇進・特殊スキルの選択画面が同時に開いている場合は、そちらの選択を優先する）
-  if (dayTransitionPhase === 'waiting' && !rankSkillSelectionActive && !specialSkillSelectionActive) {
+  // （ただし特殊スキルの選択画面が同時に開いている場合は、そちらの選択を優先する）
+  if (dayTransitionPhase === 'waiting' && !specialSkillSelectionActive) {
     dayTransitionPhase = 'in';
     dayTransitionTimer = dayTransitionDurationMs;
     lastUpdate = Date.now();
@@ -4810,7 +4816,7 @@ function update() {
     if (hitSparks[hi].timer <= 0) hitSparks.splice(hi, 1);
   }
 
-  // 「連携力」の反射エフェクトの表示時間を減らす
+  // 「AIエージェント」の反射エフェクトの表示時間を減らす
   for (let si = synergyBeams.length - 1; si >= 0; si--) {
     synergyBeams[si].timer -= dt * 1000;
     if (synergyBeams[si].timer <= 0) synergyBeams.splice(si, 1);
@@ -4841,7 +4847,7 @@ function update() {
   }
 
   // スタート前とゲーム終了後は、敵や納期の更新を止める
-  if (gameOver || gameClear || setupStep || startScreen || specialSkillSelectionActive || rankSkillSelectionActive) return;
+  if (gameOver || gameClear || setupStep || startScreen || specialSkillSelectionActive) return;
   // 「同僚と遊ぶ」アドベンチャーパート中は、ゲームの進行を止める
   if (adventureState) return;
 
@@ -4906,6 +4912,9 @@ function update() {
   // 固定敵（IT用語モチーフ）の進行を処理する。通常の敵・時間経過は止めず並行して進む
   updateFixedEnemy(dt);
   if (gameOver || deathSequence) return;
+
+  // Scoreに応じて、ランク・役職スキルを継続的に自動更新する（週末の昇進判定は廃止）
+  checkAndApplyRankUp();
 
   // ゲーム内時刻を進める
   if (now - lastHourTime >= hourMs) {
@@ -5293,7 +5302,7 @@ function update() {
     const conditionRatio = 1 - fatigueRatio;
     const currentFireRate = baseFireRate * (1 + fatigueRatio * fireRateMultiplier) *
       specialSkillEffects.fireRateMultiplier * getEnergyDrinkFireRateMultiplier() *
-      getCoffeeFireRateMultiplier() * getRankSkillFireRateMultiplier() * getFixedEnemyFireRateMultiplier();
+      getCoffeeFireRateMultiplier() * getFixedEnemyFireRateMultiplier();
     // 自動攻撃モード・完全オートモードは、stunになる手前で自動的に連射を控え、疲労が半分程度まで下がったら再開する
     const autoFiringActive = autoFireEnabled || fullAutoModeEnabled;
     if (fatigue >= maxFatigue - autoFireStunSafetyMargin) {
@@ -5471,9 +5480,9 @@ function update() {
         showRandomPartnerSpeechBubbleIfFriendly(partnerParryLines, '#80deea');
         continue;
       }
-      // 役職スキル「連携力」：1日10回まで、同僚への誤射を最寄りの敵への即死攻撃に変換する
+      // 役職スキル「AIエージェント」：1日10回まで、同僚への誤射を最寄りの敵への即死攻撃に変換する
       let synergyTriggered = false;
-      if (rankSkillLevels.has('synergy') && synergyUsesToday < synergyDailyLimit && enemies.length > 0) {
+      if (rankSkillLevels.has('ai-agent') && synergyUsesToday < synergyDailyLimit && enemies.length > 0) {
         let nearestIndex = -1;
         let nearestDist = Infinity;
         enemies.forEach((candidate, idx) => {
@@ -5488,7 +5497,7 @@ function update() {
           synergyTriggered = true;
           const targetEnemy = enemies[nearestIndex];
           spawnSynergyBeam(partner.x, partner.y, targetEnemy.x, targetEnemy.y);
-          showMessage('連携力発動！ 弾が最寄りの敵へ反射した', 1800, '#ffd54f');
+          showMessage('AIエージェント発動！ 弾が最寄りの敵へ反射した', 1800, '#ffd54f');
           defeatEnemyInstantly(nearestIndex);
         }
       }
@@ -5655,7 +5664,7 @@ function update() {
             const pts = Math.ceil(en.type * 3 * specialSkillEffects.scoreGainMultiplier);
             score += pts;
             // 敵の種類に応じて経験値を獲得する
-            exp += en.type * 5 * specialSkillEffects.expGainMultiplier * getRankSkillExpMultiplier();
+            exp += en.type * 5 * specialSkillEffects.expGainMultiplier;
             updateSkillEffects();
           // 同僚が当てていた敵に自機がとどめを刺すと、お礼を言ってくれる
           if (b.owner === 'player' && en.hitByPartner && partner.active) {
@@ -5767,7 +5776,7 @@ function update() {
       // 接触で倒した場合も、弾で倒した場合と同じ報酬を与える
       const pts = Math.ceil(en.type * 3 * specialSkillEffects.scoreGainMultiplier);
       score += pts;
-      exp += en.type * 5 * specialSkillEffects.expGainMultiplier * getRankSkillExpMultiplier();
+      exp += en.type * 5 * specialSkillEffects.expGainMultiplier;
       updateSkillEffects();
       enemies.splice(j, 1);
       weeklyKills++;
@@ -6582,6 +6591,64 @@ function drawHudProfilePanel(x, y, width, height, title, icon, accentColor, stat
   ctx.restore();
 }
 
+// ===== ポーズ画面：自分・同僚の状態、バフ・デバフ、習得済みスキルをまとめて表示する =====
+function getPlayerActiveEffectsList() {
+  const list = [];
+  if (invincible) list.push(`無敵時間 ${(invincibleTimer / 1000).toFixed(1)}s`);
+  if (stunned) list.push(`行動不能（stun） ${(stunTimer / 1000).toFixed(1)}s`);
+  if (friendlyFireInvincibleTimer > 0) list.push(`誤射無敵 ${(friendlyFireInvincibleTimer / 1000).toFixed(1)}s`);
+  if (playerBarrierCharges > 0) list.push(`ファイヤーウォール 残${playerBarrierCharges}回`);
+  if (energyDrinkBuffTimerMs > 0) list.push(`栄養ドリンク効果 ${(energyDrinkBuffTimerMs / 1000).toFixed(1)}s`);
+  if (coffeeBuffTimerMs > 0) list.push(`コーヒー効果 ${(coffeeBuffTimerMs / 1000).toFixed(1)}s`);
+  if (coffeeStunImmunityTimerMs > 0) list.push(`stun回避中（コーヒー） ${(coffeeStunImmunityTimerMs / 1000).toFixed(1)}s`);
+  if (prayerGuardTimerMs > 0) list.push(`「祈る」無敵猶予 ${(prayerGuardTimerMs / 1000).toFixed(1)}s`);
+  if (gutsGuardTimerMs > 0) list.push(`「根性」無敵猶予 ${(gutsGuardTimerMs / 1000).toFixed(1)}s`);
+  if (fixedEnemyControlsReversedTimerMs > 0) list.push(`操作反転（XSS） ${(fixedEnemyControlsReversedTimerMs / 1000).toFixed(1)}s`);
+  if (fixedEnemyMoveHijackTimerMs > 0) list.push(`移動乗っ取り ${(fixedEnemyMoveHijackTimerMs / 1000).toFixed(1)}s`);
+  if (fixedEnemyMoveSpeedDebuffTimerMs > 0) list.push(`移動速度低下 ${(fixedEnemyMoveSpeedDebuffTimerMs / 1000).toFixed(1)}s`);
+  if (fixedEnemyFireRateDebuffTimerMs > 0) list.push(`発射間隔増加 ${(fixedEnemyFireRateDebuffTimerMs / 1000).toFixed(1)}s`);
+  if (fixedEnemyFireLockTimerMs > 0) list.push(`攻撃不能 ${(fixedEnemyFireLockTimerMs / 1000).toFixed(1)}s`);
+  if (fixedEnemyRecoveryDisabledTimerMs > 0) list.push(`疲労回復停止 ${(fixedEnemyRecoveryDisabledTimerMs / 1000).toFixed(1)}s`);
+  if (fixedEnemyVisionObscuredTimerMs > 0) list.push(`視界不良 ${(fixedEnemyVisionObscuredTimerMs / 1000).toFixed(1)}s`);
+  if (dreamMemorySave.upgrades.invincibleTest >= 1) list.push('無敵（テスト用）常時有効');
+  if (fullAutoModeEnabled) list.push('フルオートモード ON');
+  else if (autoFireEnabled) list.push('自動攻撃モード ON');
+  if (list.length === 0) list.push('（なし）');
+  return list;
+}
+
+function getPartnerActiveEffectsList() {
+  if (!partner.active) return ['（同僚は不在）'];
+  const list = [];
+  if (partner.friendlyFireInvincibleTimer > 0) list.push(`誤射無敵 ${(partner.friendlyFireInvincibleTimer / 1000).toFixed(1)}s`);
+  if (partner.barrierCharges > 0) list.push(`ファイヤーウォール 残${partner.barrierCharges}回`);
+  if (partner.hijackedTimerMs > 0) list.push(`行動乗っ取り ${(partner.hijackedTimerMs / 1000).toFixed(1)}s`);
+  if (partner.fatigueResting) list.push('疲労のため攻撃を控えている');
+  if (list.length === 0) list.push('（なし）');
+  return list;
+}
+
+function getAcquiredSpecialSkillsList() {
+  return specialSkills
+    .filter(s => (specialSkillLevels.get(s.id) || 0) > 0)
+    .map(s => `${s.name} Lv.${specialSkillLevels.get(s.id)}`);
+}
+
+function getAcquiredRankSkillsList() {
+  return rankSkillDefs.filter(s => rankSkillLevels.has(s.id)).map(s => s.name);
+}
+
+// 行数が多くなっても縦にあふれないよう、指定した高さで折り返して次の列へ流し込む
+function drawFlowList(x, y, colWidth, maxHeight, lines, lineHeight = 15) {
+  const maxRows = Math.max(1, Math.floor(maxHeight / lineHeight));
+  let col = 0, row = 0;
+  lines.forEach(line => {
+    if (row >= maxRows) { row = 0; col++; }
+    ctx.fillText(line, x + col * colWidth, y + row * lineHeight);
+    row++;
+  });
+}
+
 // ===== ゲーム画面の描画 =====
 // 毎フレーム、現在のゲーム状態をCanvasへ描く
 function draw() {
@@ -7278,7 +7345,7 @@ function draw() {
     ctx.restore();
   }
 
-  // 「連携力」で弾が最寄りの敵へ反射した瞬間の稲妻状エフェクト
+  // 「AIエージェント」で弾が最寄りの敵へ反射した瞬間の稲妻状エフェクト
   for (const beam of synergyBeams) {
     const progress = 1 - beam.timer / synergyBeamDurationMs;
     const alpha = Math.max(0, 1 - progress);
@@ -7634,13 +7701,13 @@ function draw() {
     { text: `Skill:${skillLevel}  EXP:${Math.floor(exp)}` }
   ], false, 0, genderImageElements[selectedPlayerIcon], 46);
 
-  // 役職スキル「連携力」やコーヒー・栄養ドリンクの効果が有効な間、プロフィール区画内に
+  // 役職スキル「AIエージェント」やコーヒー・栄養ドリンクの効果が有効な間、プロフィール区画内に
   // 点滅する小さなアイコンで状態を示す（複数同時に有効な場合は縦に並べる）
   const activeBuffIcons = [];
-  if (rankSkillLevels.has('synergy')) {
+  if (rankSkillLevels.has('ai-agent')) {
     const remainingSynergyUses = synergyDailyLimit - synergyUsesToday;
     activeBuffIcons.push({
-      text: `🔗連携力 残${Math.max(0, remainingSynergyUses)}`,
+      text: `🤖AIエージェント 残${Math.max(0, remainingSynergyUses)}`,
       color: remainingSynergyUses > 0 ? '#ffd54f' : '#757575'
     });
   }
@@ -7752,18 +7819,103 @@ function draw() {
   }
 
   if (isPaused && !gameOver && !gameClear) {
-    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillStyle = 'rgba(0,0,0,0.85)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = 'white';
-    ctx.font = '52px sans-serif';
+    ctx.font = 'bold 26px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('PAUSED', canvas.width / 2, canvas.height / 2 - 28);
-    ctx.font = '20px sans-serif';
-    ctx.fillText('Pキーで再開', canvas.width / 2, canvas.height / 2 + 18);
+    ctx.fillText('PAUSED', canvas.width / 2, 26);
+    ctx.font = '12px sans-serif';
+    ctx.fillStyle = '#cfd8dc';
+    ctx.fillText('Pキーで再開', canvas.width / 2, 44);
     ctx.textAlign = 'left';
 
-    const wakeBtnW = 260, wakeBtnH = 48;
-    drawUiButton(canvas.width / 2 - wakeBtnW / 2, canvas.height / 2 + 50, wakeBtnW, wakeBtnH,
+    const colLeftX = 26;
+    const colRightX = canvas.width / 2 + 16;
+    const colWidth = canvas.width / 2 - 42;
+
+    // ----- 基本パラメータ -----
+    let leftY = 70;
+    ctx.fillStyle = '#4dd0e1';
+    ctx.font = 'bold 15px sans-serif';
+    ctx.fillText('自分のパラメータ', colLeftX, leftY);
+    ctx.font = '13px sans-serif';
+    ctx.fillStyle = '#eeeeee';
+    leftY += 20;
+    [
+      `SAN: ${Math.floor(san)} / ${maxSan}`,
+      `寿命: ${Math.ceil(lifespan)} / ${maxLifespan}`,
+      `脳疲労: ${Math.floor(fatigue)} / ${maxFatigue}`,
+      `Score: ${score}`,
+      `Rank: ${rank} ${rankNames[rank - 1]}`,
+      `Skill Lv: ${skillLevel}  EXP: ${Math.floor(exp)}`
+    ].forEach(line => { ctx.fillText(line, colLeftX, leftY); leftY += 16; });
+
+    let rightY = 70;
+    ctx.fillStyle = '#ffab91';
+    ctx.font = 'bold 15px sans-serif';
+    ctx.fillText('同僚のパラメータ', colRightX, rightY);
+    ctx.font = '13px sans-serif';
+    ctx.fillStyle = '#eeeeee';
+    rightY += 20;
+    if (partner.active) {
+      [
+        `SAN: ${Math.floor(partner.san)} / ${maxSan}`,
+        `寿命: ${Math.ceil(partner.lifespan)} / ${maxLifespan}`,
+        `脳疲労: ${Math.floor(partner.fatigue)} / ${maxFatigue}`,
+        `関係性: ${Math.floor(partner.relationship)} / ${partnerRelationshipMax}`
+      ].forEach(line => { ctx.fillText(line, colRightX, rightY); rightY += 16; });
+    } else {
+      ctx.fillText('（同僚なし）', colRightX, rightY);
+      rightY += 16;
+    }
+
+    // ----- バフ・デバフ -----
+    leftY += 10;
+    ctx.fillStyle = '#a5d6a7';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText('自分のバフ・デバフ', colLeftX, leftY);
+    ctx.font = '12px sans-serif';
+    ctx.fillStyle = '#dcedc8';
+    leftY += 17;
+    getPlayerActiveEffectsList().forEach(line => {
+      wrapTextToWidth(line, colWidth).forEach(w => { ctx.fillText(w, colLeftX, leftY); leftY += 14; });
+    });
+
+    rightY += 10;
+    ctx.fillStyle = '#a5d6a7';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText('同僚のバフ・デバフ', colRightX, rightY);
+    ctx.font = '12px sans-serif';
+    ctx.fillStyle = '#dcedc8';
+    rightY += 17;
+    getPartnerActiveEffectsList().forEach(line => {
+      wrapTextToWidth(line, colWidth).forEach(w => { ctx.fillText(w, colRightX, rightY); rightY += 14; });
+    });
+
+    // ----- 習得済みスキル（自分側=特殊スキル、同僚側=役職スキル） -----
+    const skillSectionY = Math.max(leftY, rightY) + 14;
+    const skillSectionMaxHeight = canvas.height - skillSectionY - 60;
+    ctx.fillStyle = '#ce93d8';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText('習得済み特殊スキル', colLeftX, skillSectionY);
+    ctx.fillText('習得済み役職スキル（開発手法）', colRightX, skillSectionY);
+
+    ctx.font = '12px sans-serif';
+    ctx.fillStyle = '#e1bee7';
+    const specialList = getAcquiredSpecialSkillsList();
+    drawFlowList(colLeftX, skillSectionY + 17, 150, skillSectionMaxHeight,
+      specialList.length > 0 ? specialList : ['（なし）']);
+
+    ctx.fillStyle = '#ffe0b2';
+    const rankList = getAcquiredRankSkillsList();
+    drawFlowList(colRightX, skillSectionY + 17, 190, skillSectionMaxHeight,
+      rankList.length > 0 ? rankList : ['（なし）']);
+
+    ctx.textAlign = 'left';
+
+    const wakeBtnW = 220, wakeBtnH = 40;
+    drawUiButton(canvas.width / 2 - wakeBtnW / 2, canvas.height - 48, wakeBtnW, wakeBtnH,
       '目を覚ます', () => location.reload(),
       { fillStyle: 'rgba(84, 30, 30, 0.6)', strokeStyle: '#ef9a9a' });
   }
@@ -8001,65 +8153,6 @@ function draw() {
     ctx.fillText(
       selectionLocked ? '少々お待ちください…' : '数字キー 1～3 / タップで選択',
       canvas.width / 2, 530
-    );
-    ctx.textAlign = 'left';
-  }
-
-  // 役職スキルの選択画面。昇進時（ランク2・3到達時）に表示し、恒久的な効果を1つ選ぶ
-  if (rankSkillSelectionActive) {
-    const selectionLocked = Date.now() < rankSkillSelectionUnlockAt;
-
-    ctx.fillStyle = 'rgba(24, 18, 4, 0.92)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#ffd54f';
-    ctx.font = 'bold 30px sans-serif';
-    ctx.fillText('昇進：役職スキルを選択', canvas.width / 2, 70);
-
-    ctx.save();
-    if (selectionLocked) ctx.globalAlpha = 0.5;
-    const cardX = 90;
-    const cardWidth = canvas.width - 180;
-    const descFont = '16px sans-serif';
-    const descLineHeight = 20;
-    const cardTextTop = 34;
-    const cardPaddingBottom = 20;
-    const cardGap = 14;
-    ctx.font = descFont;
-    let cardY = 115;
-    rankSkillChoices.forEach((skill, index) => {
-      const descLines = wrapTextToWidth(skill.description, cardWidth - 44);
-      const cardHeight = Math.max(95, cardTextTop + descLines.length * descLineHeight + cardPaddingBottom);
-
-      ctx.fillStyle = 'rgba(183, 133, 33, 0.35)';
-      ctx.fillRect(cardX, cardY, cardWidth, cardHeight);
-      ctx.strokeStyle = '#ffd54f';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(cardX, cardY, cardWidth, cardHeight);
-
-      ctx.textAlign = 'left';
-      ctx.fillStyle = 'white';
-      ctx.font = 'bold 22px sans-serif';
-      ctx.fillText(`${index + 1}. ${skill.name}`, cardX + 22, cardY + cardTextTop);
-      ctx.fillStyle = '#e0e0e0';
-      ctx.font = descFont;
-      descLines.forEach((line, lineIndex) => {
-        ctx.fillText(line, cardX + 22, cardY + cardTextTop + 26 + lineIndex * descLineHeight);
-      });
-
-      if (!selectionLocked) {
-        uiButtons.push({ x: cardX, y: cardY, w: cardWidth, h: cardHeight, action: () => chooseRankSkill(index) });
-      }
-      cardY += cardHeight + cardGap;
-    });
-    ctx.restore();
-
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#fff59d';
-    ctx.font = '18px sans-serif';
-    ctx.fillText(
-      selectionLocked ? '少々お待ちください…' : '数字キー / タップで選択',
-      canvas.width / 2, 115 + (rankSkillChoices.length) * 130
     );
     ctx.textAlign = 'left';
   }
