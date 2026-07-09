@@ -414,6 +414,7 @@ const partnerIconGreetingLinesMale = [
 ];
 const iconGreetingHoldMs = 1400; // 全文表示後、フェードアウトを始めるまで待つ時間
 const iconGreetingFadeMs = 500; // フェードアウトにかける時間
+const iconGreetingFadeInMs = 500; // フェードインにかける時間
 // 読み上げのテンポに近づけた、セリフを1文字ずつ表示する間隔（ミリ秒）
 const typewriterCharIntervalMs = 90;
 // 経過時間から、何文字目まで表示すべきかを返す（textの全長を超えない）
@@ -421,22 +422,20 @@ function getTypewriterRevealedCount(elapsedMs, text) {
   return Math.max(0, Math.min(text.length, Math.floor(elapsedMs / typewriterCharIntervalMs)));
 }
 
-let iconGreetingPhase = null; // null / 'typing' / 'hold' / 'fadeout'
-let iconGreetingTimer = 0; // 'typing'中は経過時間、'hold'/'fadeout'中は残り時間として使う
-let iconGreetingRevealedCount = 0; // 'typing'中、現在何文字目まで表示しているか
+let iconGreetingPhase = null; // null / 'fadein' / 'hold' / 'fadeout'
+let iconGreetingTimer = 0; // 'fadein'中は経過時間、'hold'/'fadeout'中は残り時間として使う
 let iconGreetingIcon = '';
 let iconGreetingImage = null; // 画像（同僚アイコンなど）を表示する場合はImage要素を入れる
 let iconGreetingText = '';
 let iconGreetingOnComplete = null;
 
-// アイコンの下にひとことを1文字ずつ表示し、全文表示後少し経ったらフェードアウトしてonCompleteへ進む
+// アイコンの下にひとことをフェードインで表示し、全文表示後少し経ったらフェードアウトしてonCompleteへ進む
 // iconImageを渡した場合は絵文字の代わりに画像を表示する
 function startIconGreeting(icon, text, onComplete, iconImage = null) {
   iconGreetingIcon = icon;
   iconGreetingImage = iconImage;
   iconGreetingText = text;
-  iconGreetingRevealedCount = 0;
-  iconGreetingPhase = text.length > 0 ? 'typing' : 'hold';
+  iconGreetingPhase = text.length > 0 ? 'fadein' : 'hold';
   iconGreetingTimer = text.length > 0 ? 0 : iconGreetingHoldMs;
   iconGreetingOnComplete = onComplete;
 }
@@ -1626,9 +1625,11 @@ const quizChancePerOpportunity = 0.2;
 const maxWeeklyQuizCount = 2;
 const quizAnswerRadius = 23;
 const quizAnswerLockDurationMs = 1500; // 出現直後に誤って踏んで回答してしまわないための猶予時間
+const quizTimeLimitMs = 10000; // 出現から回答しないまま消えるまでの実時間（3倍加速の影響を受けない）
 let weeklyQuizCount = 0;
 let quizState = null;
 let quizAnswerUnlockAt = 0; // この時刻（Date.now()基準）を過ぎるまで選択肢に触れても回答にならない
+let quizExpireAt = 0; // この時刻（Date.now()基準）を過ぎたら、未回答のままクイズを消す
 let internalItKnowledge = 0;
 let internalCommunicationSkill = 0;
 const quizQuestions = [
@@ -1670,6 +1671,7 @@ function startQuizEvent() {
   };
   weeklyQuizCount++;
   quizAnswerUnlockAt = Date.now() + quizAnswerLockDurationMs;
+  quizExpireAt = Date.now() + quizTimeLimitMs;
   showMessage('突発クイズ！ マップ上の番号を取って回答', 2800, '#90caf9', '22px sans-serif');
 }
 
@@ -4152,7 +4154,7 @@ function startBossEvent() {
     moveTimerMs: 0
   };
   enemies.length = 0; // 通常の敵は一時的に退避させ、ラスボス戦の間は出現しない
-  showMessage('……何かが、窓の向こうから降りてくる。', 3400, '#ff1744', '26px sans-serif');
+  showMessage('……何かが、近寄ってくる気配がする。', 3400, '#ff1744', '26px sans-serif');
 }
 
 function updateBossEvent(dt) {
@@ -4162,7 +4164,7 @@ function updateBossEvent(dt) {
     bossEvent.offsetX = Math.sin(gameClockMs / 900) * bossMoveRangeX * 0.5;
     if (bossEvent.descendProgress >= 1) {
       bossEvent.phase = 'active';
-      showMessage('ラスボスが姿を現した！ パリィで弾を打ち返せ！', 3600, '#ff1744', '24px sans-serif');
+      showMessage('？？？が姿を現した！', 3600, '#ff1744', '24px sans-serif');
     }
     return;
   }
@@ -4412,7 +4414,7 @@ const bossTrueEndCues = [
 ];
 const bossTrueEndReturnAtMs = 9500; // このタイミングで「real-world time」画面へ進む（同僚が生存していない場合はここでタイトルへ戻る）
 const bossTrueEndLines = [
-  '「…なんだか長い夢を見ていた気がする。」',
+  '「…なんだか、長い夢を見ていた気がする。」',
   '…訓練期間が終わる前に、就職活動を始めないと。'
 ];
 // 真エンド（同僚生存）限定：ENDの後、現実の日時を表示する画面 →（クリックで）クリアメッセージ画面 → タイトルへ
@@ -5078,12 +5080,11 @@ function update() {
     return;
   }
 
-  // アイコン選択後のひとことメッセージ演出：1文字ずつ表示→フェードアウト→次の画面へ（3倍加速の影響を受けない）
+  // アイコン選択後のひとことメッセージ演出：フェードイン→フェードアウト→次の画面へ（3倍加速の影響を受けない）
   if (iconGreetingPhase) {
-    if (iconGreetingPhase === 'typing') {
+    if (iconGreetingPhase === 'fadein') {
       iconGreetingTimer += rawDt * 1000;
-      iconGreetingRevealedCount = getTypewriterRevealedCount(iconGreetingTimer, iconGreetingText);
-      if (iconGreetingRevealedCount >= iconGreetingText.length) {
+      if (iconGreetingTimer >= iconGreetingFadeInMs) {
         iconGreetingPhase = 'hold';
         iconGreetingTimer = iconGreetingHoldMs;
       }
@@ -5513,6 +5514,12 @@ function update() {
         if (!lunchState) break;
       }
     }
+  }
+
+  // 出現から実時間で一定時間、未回答のまま放置されたクイズは自動的に消える（3倍加速の影響を受けない）
+  if (quizState && Date.now() >= quizExpireAt) {
+    quizState = null;
+    showMessage('クイズは時間切れで消えてしまった…', 2200, '#ef9a9a', '22px sans-serif');
   }
 
   // マップ上の番号アイコンへ触れるとクイズへ回答する（出現直後の誤回答を防ぐため、少しの間は反応しない）
@@ -6467,15 +6474,19 @@ function drawBossEvent() {
           const iconImg = hole.disguiseRole === 'player'
             ? genderImageElements[selectedGender]
             : partnerIconImageElements[selectedPartnerIcon];
+          // 自機・同僚それぞれの実際の表示サイズ（radius * 4.8）に合わせ、色彩は反転させる
+          const iconRadius = hole.disguiseRole === 'player' ? player.radius : partner.radius;
           ctx.save();
           ctx.globalAlpha = 0.55;
           if (iconImg && iconImg.complete && iconImg.naturalWidth > 0) {
-            const iconSize = bossHoleRadius * 2.4;
+            const iconSize = iconRadius * 4.8;
+            ctx.filter = 'invert(1)';
             ctx.drawImage(iconImg, hx - iconSize / 2, hy - iconSize / 2, iconSize, iconSize);
+            ctx.filter = 'none';
           } else {
             ctx.beginPath();
-            ctx.fillStyle = hole.disguiseRole === 'player' ? '#4dd0e1' : '#80cbc4';
-            ctx.arc(hx, hy, bossHoleRadius, 0, Math.PI * 2);
+            ctx.fillStyle = hole.disguiseRole === 'player' ? '#b22f1e' : '#7f343b';
+            ctx.arc(hx, hy, iconRadius, 0, Math.PI * 2);
             ctx.fill();
           }
           ctx.restore();
@@ -7276,7 +7287,7 @@ function draw() {
     ctx.fillStyle = 'white';
     ctx.font = 'bold 32px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('自機の性別を選んでください', canvas.width / 2, 110);
+    ctx.fillText('操作キャラを選んでください', canvas.width / 2, 110);
     ctx.textAlign = 'left';
 
     const cardW = 220, cardH = 260, gap = 40;
