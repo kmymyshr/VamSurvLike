@@ -6503,6 +6503,21 @@ function drawBossEvent() {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.restore();
 
+  // 第3段階「確証バイアス」限定：窓の下のガラス部分あたりに、うっすらと解説文を表示する（背景より前、ラスボスより後ろ）
+  if (bossEvent.stage === 3) {
+    ctx.save();
+    ctx.globalAlpha = 0.18;
+    ctx.fillStyle = '#cccccc';
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.fillText('確証バイアス', canvas.width / 2, windowZoneBottomY - 46);
+    ctx.font = '13px sans-serif';
+    ctx.fillText('自分の考えに合う情報ばかり集め、反証を軽視する傾向。', canvas.width / 2, windowZoneBottomY - 24);
+    ctx.fillText('パリィによる反撃のみ有効。', canvas.width / 2, windowZoneBottomY - 6);
+    ctx.restore();
+    ctx.textAlign = 'left';
+  }
+
   if (bodyAlpha > 0) {
     // ラスボス本体：last_boss.png を、目・口のあたりが見えるように下寄りを切り出して表示する。
     // 撃破後は、細かく振動しながら透明になり、ゆっくり画面上へ動いていく
