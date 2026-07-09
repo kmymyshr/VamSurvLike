@@ -110,13 +110,13 @@ function dreamMemoryUpgradeCost(currentLevel) {
 
 // ===== エンディングリスト（タイトル画面から確認できる、到達済みエンディングの一覧） =====
 const endingListDefs = [
+  { id: 'trueAlive', icon: '👁️', label: '目覚めエンド', hint: 'ラスボスを撃破し、同僚が生存している状態で終える' },
+  { id: 'truePartnerLost', icon: '🖤', label: 'もう一つの目覚めエンド', hint: 'ラスボスを撃破するが、同僚を失っている' },
   { id: 'true', icon: '🌟', label: 'TRUE END', hint: 'ランク7に到達し、特殊な選択を全て正しく行い、同僚を失わずに完走する' },
   { id: 'normal', icon: '🏁', label: 'NORMAL END', hint: '月末を迎えて一区切りをつける' },
   { id: 'bad-san', icon: '🌀', label: 'BAD END（心）', hint: 'SANが0になる' },
   { id: 'bad-lifespan', icon: '⚰️', label: 'BAD END（寿命）', hint: '寿命が0になる' },
-  { id: 'bad-partner-shot', icon: '💔', label: 'BAD END（同僚）', hint: '同僚の誤射でとどめを刺される' },
-  { id: 'trueAlive', icon: '👁️', label: '目覚めエンド', hint: 'ラスボスを撃破し、同僚が生存している状態で終える' },
-  { id: 'truePartnerLost', icon: '🖤', label: 'もう一つの目覚めエンド', hint: 'ラスボスを撃破するが、同僚を失っている' }
+  { id: 'bad-partner-shot', icon: '💔', label: 'BAD END（同僚）', hint: '同僚の誤射でとどめを刺される' }
 ];
 
 function loadDreamMemorySave() {
@@ -4409,14 +4409,87 @@ const bossFinalWhiteWaitDurationMs = 3000;
 // 真エンドの文章の表示タイミング（trueEndフェーズ開始からの経過ミリ秒とフェード時間）。
 // ENDはここでは表示せず、最後のクリアメッセージ画面の下に改めてフェードイン表示する
 const bossTrueEndCues = [
-  { start: 0, fadeMs: 1500 }, // 1行目
-  { start: 5000, fadeMs: 1500 } // 2行目（少し時間を置いてから表示する）
+  { start: 0, fadeMs: 1500 }, // 1行目（撃破時の実時間帯によって変わる、目覚めの一文）
+  { start: 4000, fadeMs: 1500 }, // 2行目
+  { start: 9000, fadeMs: 1500 } // 3行目（少し時間を置いてから表示する）
 ];
-const bossTrueEndReturnAtMs = 9500; // このタイミングで「real-world time」画面へ進む（同僚が生存していない場合はここでタイトルへ戻る）
+const bossTrueEndReturnAtMs = 13500; // このタイミングで「real-world time」画面へ進む（同僚が生存していない場合はここでタイトルへ戻る）
 const bossTrueEndLines = [
   '「…なんだか、長い夢を見ていた気がする。」',
   '…訓練期間が終わる前に、就職活動を始めないと。'
 ];
+// ラスボス撃破時の「現実の時間帯」に応じて、目覚めの一文をランダムに選ぶ（同じ時間帯の中でも候補からランダム）
+const wakeUpLinesByTimeBand = {
+  lateNight: [ // 未明／夜明け前：3時〜5時ごろ
+    'ふと目を覚ますと、窓の外はまだ墨を流したように暗かった。',
+    'ふと目を覚ますと、部屋の隅に夜の気配が沈殿していた。',
+    'ふと目を覚ますと、時計の針だけが、やけに大きな音を立てていた。',
+    'ふと目を覚ますと、カーテンの向こうに夜明けの気配すらなかった。',
+    'ふと目を覚ますと、世界から自分だけが取り残されたような静けさだった。'
+  ],
+  earlyMorning: [ // 早朝：5時〜7時ごろ
+    'ふと目を覚ますと、カーテンの隙間から薄い朝の光が差し込んでいた。',
+    'ふと目を覚ますと、空はまだ青白く、世界は目を覚ます途中だった。',
+    'ふと目を覚ますと、遠くで鳥の声がしていた。',
+    'ふと目を覚ますと、部屋の輪郭が朝の光に少しずつ戻っていた。',
+    'ふと目を覚ますと、夜の残滓が、薄明かりの中で静かに溶けていた。'
+  ],
+  morning: [ // 朝：7時〜10時ごろ
+    'ふと目を覚ますと、窓の外ではもう朝が始まっていた。',
+    'ふと目を覚ますと、まぶしい光が部屋いっぱいに広がっていた。',
+    'ふと目を覚ますと、どこかで車の走る音がして、現実が戻ってきていた。',
+    'ふと目を覚ますと、朝日が何事もなかったように床を照らしていた。',
+    'ふと目を覚ますと、昨夜の悪夢など知らない顔で、世界は動き出していた。'
+  ],
+  midday: [ // 昼前〜昼：10時〜14時ごろ
+    'ふと目を覚ますと、部屋には昼の光が白々と満ちていた。',
+    'ふと目を覚ますと、時計はもう昼近くを指していた。',
+    'ふと目を覚ますと、窓の外の世界はすっかり日常の顔をしていた。',
+    'ふと目を覚ますと、太陽は高く、夢の闇だけが自分の中に残っていた。',
+    'ふと目を覚ますと、午前中はもう半分以上、どこかへ消えていた。'
+  ],
+  afternoon: [ // 午後：14時〜17時ごろ
+    'ふと目を覚ますと、午後の光が鈍く部屋に差し込んでいた。',
+    'ふと目を覚ますと、時計の針は信じがたい時刻を示していた。',
+    'ふと目を覚ますと、昼下がりの静けさが部屋を満たしていた。',
+    'ふと目を覚ますと、外の光はもう少し傾き始めていた。',
+    'ふと目を覚ますと、眠りすぎた身体だけが、鉛のように重かった。'
+  ],
+  evening: [ // 夕方／薄暮：17時〜19時ごろ
+    'ふと目を覚ますと、窓の外は夕暮れの色に染まっていた。',
+    'ふと目を覚ますと、部屋の中は赤く、どこか知らない場所のようだった。',
+    'ふと目を覚ますと、沈みかけた光がカーテンを淡く燃やしていた。',
+    'ふと目を覚ますと、一日が終わろうとしていることだけがわかった。',
+    'ふと目を覚ますと、夕闇が部屋の隅から静かに這い上がっていた。'
+  ],
+  night: [ // 夜：19時〜23時ごろ
+    'ふと目を覚ますと、窓の外にはもう夜が降りていた。',
+    'ふと目を覚ますと、部屋は暗く、街灯の光だけがぼんやり揺れていた。',
+    'ふと目を覚ますと、テレビも音楽もなく、夜だけがそこにあった。',
+    'ふと目を覚ますと、見慣れた部屋が知らない影をまとっていた。',
+    'ふと目を覚ますと、現実に戻ったはずなのに、まだ夢の底にいるようだった。'
+  ],
+  deepNight: [ // 深夜：23時〜3時ごろ
+    'ふと目を覚ますと、時計は深夜を少し回ったところだった。',
+    'ふと目を覚ますと、部屋の闇は眠る前よりも濃くなっていた。',
+    'ふと目を覚ますと、家じゅうが息を潜めているように静まり返っていた。',
+    'ふと目を覚ますと、夢の続きを待つように、夜がまだそこにあった。',
+    'ふと目を覚ますと、眠るには早すぎず、起きるには遅すぎる時刻だった。'
+  ]
+};
+// 実時刻（0〜23）から時間帯を判定し、その中からランダムに1文を選ぶ
+function pickWakeUpLineForHour(hour) {
+  let band;
+  if (hour >= 3 && hour < 5) band = wakeUpLinesByTimeBand.lateNight;
+  else if (hour >= 5 && hour < 7) band = wakeUpLinesByTimeBand.earlyMorning;
+  else if (hour >= 7 && hour < 10) band = wakeUpLinesByTimeBand.morning;
+  else if (hour >= 10 && hour < 14) band = wakeUpLinesByTimeBand.midday;
+  else if (hour >= 14 && hour < 17) band = wakeUpLinesByTimeBand.afternoon;
+  else if (hour >= 17 && hour < 19) band = wakeUpLinesByTimeBand.evening;
+  else if (hour >= 19 && hour < 23) band = wakeUpLinesByTimeBand.night;
+  else band = wakeUpLinesByTimeBand.deepNight;
+  return band[Math.floor(Math.random() * band.length)];
+}
 // 真エンド（同僚生存）限定：ENDの後、現実の日時を表示する画面 →（クリックで）クリアメッセージ画面 → タイトルへ
 const bossClearMessageFadeMs = 1200;
 const bossClearMessageLines = [
@@ -4435,7 +4508,11 @@ let bossFinalSequence = null; // null、または { phase, phaseTimerMs, partner
 
 function startBossFinalSequence() {
   // ラスボスを退けた瞬間の同僚の生死で、この先のエンディングの分岐を決めておく
-  bossFinalSequence = { phase: 'retreat', phaseTimerMs: 0, partnerAlive: partner.active };
+  // 目覚めの一文も、撃破した瞬間の実際の時間帯で1つに固定しておく（表示のたびに変わらないように）
+  bossFinalSequence = {
+    phase: 'retreat', phaseTimerMs: 0, partnerAlive: partner.active,
+    wakeUpLine: pickWakeUpLineForHour(new Date().getHours())
+  };
 }
 
 function updateBossFinalSequence(dt) {
@@ -6628,12 +6705,13 @@ function drawBossFinalTransition() {
   if (seq.partnerAlive) {
     ctx.fillStyle = '#333333';
     ctx.font = '22px sans-serif';
-    bossTrueEndLines.forEach((line, i) => {
+    const allLines = [seq.wakeUpLine, ...bossTrueEndLines];
+    allLines.forEach((line, i) => {
       const cue = bossTrueEndCues[i];
       const alpha = Math.max(0, Math.min(1, (seq.phaseTimerMs - cue.start) / cue.fadeMs));
       if (alpha <= 0) return;
       ctx.globalAlpha = alpha;
-      ctx.fillText(line, canvas.width / 2, canvas.height / 2 - 30 + i * 70);
+      ctx.fillText(line, canvas.width / 2, canvas.height / 2 - 60 + i * 70);
     });
   } else {
     // 同僚が生存していない場合の代替エンド：黒い画面に、同僚を案じる一言だけを表示する
