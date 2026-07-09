@@ -582,6 +582,7 @@ let invincibleTimer = 0;
 let lastUpdate = Date.now();
 let gameClockMs = 0;
 let gameTimeScale = 1;
+let threeXModeEnabled = false; // タイトル画面の「3倍加速モード」トグルのON/OFF状態
 let isPaused = false;
 let wakeUpConfirmActive = false; // 「目を覚ます」の誤タップ防止確認ダイアログ
 
@@ -2027,7 +2028,7 @@ function startGameAfterGreeting() {
 function startWithLastRunSettings() {
   const lastRun = dreamMemorySave.lastRun;
   if (!lastRun || !lastRun.partnerIcon) return;
-  gameTimeScale = 1;
+  gameTimeScale = threeXModeEnabled ? 3 : 1;
   startScreen = false;
   setupStep = null;
   selectedGender = lastRun.playerGender;
@@ -2476,6 +2477,13 @@ function updatePartner(dt) {
     }
     partner.wanderTimer = 1800 + Math.random() * 2600;
   }
+  // 固定敵が出現している間は、追従・徘徊・回復アイテム取得よりも最優先でそこへ向かう
+  const nearestFixedEnemyForPartner = fixedEnemies.length > 0
+    ? fixedEnemies.reduce((closest, fx) => {
+      const d = Math.hypot(fx.x - partner.x, fx.y - partner.y);
+      return (!closest || d < closest.d) ? { fx, d } : closest;
+    }, null).fx
+    : null;
   // 脳疲労が60%を超えていて、着地済みの回復アイテムがあれば、追従・徘徊よりも優先して取りに行く
   // （栄養ドリンクとチョコレートが両方あれば、効果の大きい栄養ドリンクを優先する）
   const landedEnergyDrink = (energyDrink && energyDrink.landed) ? energyDrink : null;
@@ -2483,17 +2491,20 @@ function updatePartner(dt) {
   const partnerRecoveryTarget = landedEnergyDrink || landedChocolate;
   const partnerWantsRecoveryItem = !!partnerRecoveryTarget &&
     partner.fatigue >= maxFatigue * partnerChocolateSeekFatigueRatio;
-  const followTarget = partnerWantsRecoveryItem
-    ? { x: partnerRecoveryTarget.x, y: partnerRecoveryTarget.y }
-    : partner.wandering
-      ? partner.wanderTarget
-      : { x: player.x + partnerFollowOffsetX, y: player.y + partnerFollowOffsetY };
+  const followTarget = nearestFixedEnemyForPartner
+    ? { x: nearestFixedEnemyForPartner.x, y: nearestFixedEnemyForPartner.y }
+    : partnerWantsRecoveryItem
+      ? { x: partnerRecoveryTarget.x, y: partnerRecoveryTarget.y }
+      : partner.wandering
+        ? partner.wanderTarget
+        : { x: player.x + partnerFollowOffsetX, y: player.y + partnerFollowOffsetY };
   // 目標地点へ向かう「望ましい速度」を求め、実際の速度はそこへ少しずつ近づけることで
   // 急な方向転換・停止でも滑るような慣性のある動きになる
   const fdx = followTarget.x - partner.x;
   const fdy = followTarget.y - partner.y;
   const fdist = Math.hypot(fdx, fdy);
-  const movementSpeed = partnerMoveSpeed * (partnerWantsRecoveryItem || partner.wandering ? 1 : partnerFollowSpeedMultiplier);
+  const movementSpeed = partnerMoveSpeed *
+    (nearestFixedEnemyForPartner || partnerWantsRecoveryItem || partner.wandering ? 1 : partnerFollowSpeedMultiplier);
   let desiredVx = 0;
   let desiredVy = 0;
   if (fdist > 2) {
@@ -2562,7 +2573,7 @@ function updatePartner(dt) {
   // 自分の脳疲労が100に達してしまうような攻撃はしない（休息中も同様に攻撃しない）
   const wouldMaxOutPartnerFatigue = partner.fatigue + partnerFiringFatiguePerShot >= maxFatigue;
   // セッションハイジャック・内部不正：一定時間、同僚が乗っ取られて攻撃をやめる
-  if (partner.fireTimer <= 0 && (enemies.length > 0 || scheduledReport) &&
+  if (partner.fireTimer <= 0 && (enemies.length > 0 || scheduledReport || fixedEnemies.length > 0) &&
       !partner.fatigueResting && !wouldMaxOutPartnerFatigue && (partner.hijackedTimerMs || 0) <= 0) {
     const intelligence = getPartnerEffectiveIntelligence();
     const recklessness = getPartnerEffectiveRecklessness();
@@ -2590,8 +2601,8 @@ function updatePartner(dt) {
           ? 0.2 + relationshipHostility * 0.3
           : 0;
       const retaliating = Math.random() < retaliationChance;
-      // 定時報告が出ている間は、通常の仕事より優先して狙う。
-      const target = retaliating ? player : (scheduledReport || nearestEnemy);
+      // 固定敵が出ている間は最優先で狙い、次に定時報告、それ以外は通常の仕事を狙う
+      const target = retaliating ? player : (nearestFixedEnemyForPartner || scheduledReport || nearestEnemy);
       // 賢さが高く、疲労が少なく、慎重な性格ほど命中精度（狙いの正確さ）が上がる
       const accuracy = Math.max(0.15, Math.min(1,
         0.35 + intelligence * 0.5 - fatigueRatio * 0.25 - recklessness * 0.1
@@ -3585,9 +3596,9 @@ function selectPartnerIcon(icon) {
   startIconGreeting(icon, line, () => { setupStep = null; startGameAfterGreeting(); }, partnerIconImageElements[icon]);
 }
 
-// モード選択画面：通常速度(1)か3倍速(2)を選び、自機の性別選択画面へ進む
-function selectMode(timeScale) {
-  gameTimeScale = timeScale;
+// タイトル画面の「3倍加速モード」トグルの状態に応じて時間倍率を決め、自機の性別選択画面へ進む
+function selectMode() {
+  gameTimeScale = threeXModeEnabled ? 3 : 1;
   startScreen = false;
   setupStep = 'gender';
 }
@@ -3721,12 +3732,12 @@ document.addEventListener("keydown", (event) => {
     goHomeFromWeekendWork();
     return;
   }
-  // スタート画面では通常開始か3倍加速開始を選ぶ（夢の記憶ポイントの強化画面を開いている間は無効）
+  // スタート画面では、開始するか3倍加速モードのON/OFFを切り替える（夢の記憶ポイントの強化画面を開いている間は無効）
   if (startScreen && !dreamMemoryShopActive) {
     if (event.key === '1' || event.key === 'Enter') {
-      selectMode(1);
+      selectMode();
     } else if (event.key === '2') {
-      selectMode(3);
+      threeXModeEnabled = !threeXModeEnabled;
     }
     return;
   }
@@ -7249,10 +7260,13 @@ function draw() {
 
     const btnW = 340, btnH = 54;
     const btnX = canvas.width / 2 - btnW / 2;
-    drawUiButton(btnX, canvas.height / 2 - 60, btnW, btnH, '通常開始 (1 / Enter)',
-      () => selectMode(1));
-    drawUiButton(btnX, canvas.height / 2 + 4, btnW, btnH, '3倍加速モード (2)',
-      () => selectMode(3));
+    drawUiButton(btnX, canvas.height / 2 - 60, btnW, btnH, '開始する (1 / Enter)',
+      () => selectMode());
+    drawUiButton(btnX, canvas.height / 2 + 4, btnW, btnH, `3倍加速モード: ${threeXModeEnabled ? 'ON' : 'OFF'} (2)`,
+      () => { threeXModeEnabled = !threeXModeEnabled; },
+      threeXModeEnabled
+        ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7' }
+        : { fillStyle: 'rgba(103, 58, 183, 0.55)', strokeStyle: '#ce93d8' });
     drawUiButton(btnX, canvas.height / 2 + 68, btnW, 40,
       `夢の記憶ポイントで強化 (P: ${dreamMemorySave.points})`, () => { dreamMemoryShopActive = true; },
       { fillStyle: 'rgba(74, 20, 140, 0.55)', strokeStyle: '#ce93d8', font: 'bold 15px sans-serif' });
@@ -7987,6 +8001,12 @@ function draw() {
   drawUiButton(12, 278, 176, 32, `完全オートモード: ${fullAutoModeEnabled ? 'ON' : 'OFF'}`,
     () => { fullAutoModeEnabled = !fullAutoModeEnabled; },
     fullAutoModeEnabled
+      ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 13px sans-serif' }
+      : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 13px sans-serif' });
+  // プレイ中も3倍加速モードのON/OFFを切り替えられるボタン
+  drawUiButton(196, 278, 145, 32, `3倍加速: ${gameTimeScale === 3 ? 'ON' : 'OFF'}`,
+    () => { gameTimeScale = gameTimeScale === 3 ? 1 : 3; },
+    gameTimeScale === 3
       ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 13px sans-serif' }
       : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 13px sans-serif' });
 
