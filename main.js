@@ -4009,6 +4009,32 @@ const bossStageDefs = [
   {
     stage: 6, name: '内的葛藤', nameEn: 'Internal Conflict',
     holeCount: 3, hitsPerHole: 30, layout: 'internal-conflict', selfConflict: true
+  },
+  {
+    stage: 7, name: '就職活動', nameEn: 'Job-Seeking Activities',
+    holeCount: 5, hitsPerHole: 25, layout: 'sequential', sequential: true,
+    phases: [
+      {
+        name: '自己整理',
+        info: 'まずは転職の目的をはっきりさせる。「なぜ転職したいのか」「何を変えたいのか」「何は譲れないのか」を整理する。現職の不満の洗い出し、転職理由の整理、希望条件の優先順位づけ、強み・経験・スキルの棚卸。'
+      },
+      {
+        name: '情報収集',
+        info: '自分の希望と市場の現実を照らし合わせる。求人を見るだけでなく、業界・職種・年収相場・必要スキル・企業文化を調べる。求人サイトや転職エージェントの確認、企業研究、職種研究、経験者へのヒアリング、市場価値の確認。'
+      },
+      {
+        name: '応募準備',
+        info: '自分の経験を、企業に伝わる形に整える段階。ここでは「何をしてきたか」ではなく、「何を任せられる人か」が伝わるようにする。履歴書・職務経歴書の作成、ポートフォリオ準備、自己PR作成、転職理由・志望動機・面接回答の整理。'
+      },
+      {
+        name: '応募・選考',
+        info: '実際に応募し、面接や選考を受ける段階。企業に選ばれるだけでなく、自分も企業を見極める意識が必要。求人応募、面接対策、面接後の振り返り、条件確認、複数社の比較、必要に応じた条件交渉。'
+      },
+      {
+        name: '意思決定・移行',
+        info: '内定を受けるか決め、入社までを進める段階。転職の成功は内定ではなく、新しい環境で無理なく力を出せることまでを含む。内定承諾の判断、退職交渉、引き継ぎ、入社準備、生活リズムや学習計画の調整。'
+      }
+    ]
   }
 ];
 const bossHoleRadius = 16;
@@ -4062,6 +4088,10 @@ const bossStageGlassTexts = {
       '本当は進みたいのに怖れてしまい、変わりたいのに今の自分を手放せない。',
       '自己葛藤に囚われる限り、人は戦うべき相手を見失い、自分自身を削り続けてしまう。'
     ]
+  },
+  7: {
+    title: '就職活動',
+    lines: ['正しく進めなければ、人は仕事を探すのではなく、自分が社会に許される理由を探し続けてしまう。']
   }
 };
 // 第6段階（内的葛藤）：3つの自機アイコンが、互いに狙い合い体力を削り合う
@@ -4192,6 +4222,25 @@ function generateBossHoles(stage) {
     }
     return holes;
   }
+  if (stage === 7) {
+    // 第7段階「就職活動」：中ボスと同じく、5つのフェーズを①→⑤の順番でしか破壊できない。
+    // 各フェーズの弾速・弾数・広がり方は、この段階に入るたびにランダムに設定し直す
+    for (let i = 0; i < def.holeCount; i++) {
+      const burstCount = 1 + Math.floor(Math.random() * 3);
+      holes.push({
+        relX: (i + 1) / (def.holeCount + 1), relY: 0.6,
+        hitsTaken: 0, destroyed: false, flashTimerMs: 0, maxHits: def.hitsPerHole,
+        fireTimerMs: Math.random() * bossFireIntervalMs,
+        sequential: true,
+        phaseIndex: i,
+        bulletSpeed: 2.6 + Math.random() * 3.2,
+        burstCount,
+        spreadAngleDeg: burstCount > 1 ? 15 + Math.random() * 45 : 0,
+        fireIntervalMs: 900 + Math.random() * 1000
+      });
+    }
+    return holes;
+  }
   // それ以外の段階は、ある程度の間隔を保ちつつランダムな位置に配置する
   // （'wander-slow'・'wander-fast'は後で動き回り、'fixed'はこの位置のまま固定される）
   for (let i = 0; i < def.holeCount; i++) {
@@ -4232,6 +4281,11 @@ function getBossHoleAbsolutePosition(hole) {
 // 同僚の狙い先・自機のオート照準の両方から、通常の敵と同様のターゲットとして扱えるようにする
 function findNearestLivingBossHole(fromX, fromY) {
   if (!bossEvent) return null;
+  // 第7段階「就職活動」：まだ順番が来ていないフェーズは狙わせない
+  if (bossEvent.stage === 7) {
+    const currentHole = bossEvent.holes.find(h => !h.destroyed);
+    return currentHole ? getBossHoleAbsolutePosition(currentHole) : null;
+  }
   let nearest = null;
   let nearestD = Infinity;
   for (const hole of bossEvent.holes) {
@@ -4347,6 +4401,9 @@ function updateBossEvent(dt) {
       if (hole.selfConflict) {
         performInternalConflictAttack(hole);
         hole.fireTimerMs = bossInternalConflictFireIntervalMs * (0.7 + Math.random() * 0.6);
+      } else if (hole.sequential) {
+        fireJobSeekingHoleBullet(hole);
+        hole.fireTimerMs = hole.fireIntervalMs * (0.7 + Math.random() * 0.6);
       } else {
         fireSingleBossHoleBullet(hole);
         hole.fireTimerMs = bossFireIntervalMs * (0.6 + Math.random() * 0.8);
@@ -4434,12 +4491,25 @@ function registerBossHoleHit(hole, hitX, hitY) {
   bossEvent.totalHitsLanded++;
   spawnHitSpark(hitX, hitY, false);
   if (hole.hitsTaken < hole.maxHits) return;
+  if (hole.sequential) {
+    // 第7段階「就職活動」：中ボスと同じく、フェーズ完了時に説明文を表示する
+    const phaseDef = bossStageDefs[bossEvent.stage - 1].phases[hole.phaseIndex];
+    showMessage(`${hole.phaseIndex + 1}. ${phaseDef.name}完了！`, 2400, '#69f0ae', '22px sans-serif');
+    fixedEnemyDefeatInfoDisplay = { name: `${hole.phaseIndex + 1}. ${phaseDef.name}`, info: phaseDef.info, elapsedMs: 0 };
+  }
   finalizeBossHoleDestruction(hole);
 }
 
 // 自機の狙いが発射口に重なっているかを調べ、重なっていればその穴を返す
 function findHitBossHole(x, y) {
   if (!bossEvent || bossEvent.phase !== 'active') return null;
+  // 第7段階「就職活動」：中ボスと同じく、①→⑤の順番でしか破壊できない
+  if (bossEvent.stage === 7) {
+    const currentHole = bossEvent.holes.find(h => !h.destroyed);
+    if (!currentHole) return null;
+    const pos = getBossHoleAbsolutePosition(currentHole);
+    return Math.hypot(x - pos.x, y - pos.y) <= bossHoleRadius + 6 ? currentHole : null;
+  }
   for (const hole of bossEvent.holes) {
     if (hole.destroyed) continue;
     const pos = getBossHoleAbsolutePosition(hole);
@@ -4525,6 +4595,19 @@ function fireSingleBossHoleBullet(hole) {
   const target = (partner.active && Math.random() < 0.5) ? partner : player;
   const angle = Math.atan2(target.y - pos.y, target.x - pos.x) + (Math.random() - 0.5) * 0.35;
   pushBossHoleBullet(pos, angle, hole);
+}
+
+// 第7段階「就職活動」：フェーズごとに設定された弾速・弾数・広がり方で発射する
+function fireJobSeekingHoleBullet(hole) {
+  const pos = getBossHoleAbsolutePosition(hole);
+  const target = (partner.active && Math.random() < 0.5) ? partner : player;
+  const baseAngle = Math.atan2(target.y - pos.y, target.x - pos.x);
+  const count = hole.burstCount;
+  const speedMultiplier = hole.bulletSpeed / bossBulletSpeed;
+  for (let i = 0; i < count; i++) {
+    const offsetDeg = count === 1 ? 0 : (i - (count - 1) / 2) * (hole.spreadAngleDeg / (count - 1));
+    pushBossHoleBullet(pos, baseAngle + offsetDeg * Math.PI / 180, hole, speedMultiplier);
+  }
 }
 
 // 同僚と同じ誤射ダメージ量で、ラスボス弾による被弾を処理する（パリィ成功時はここに来ない）
@@ -6816,6 +6899,52 @@ function drawBossEvent() {
             ctx.arc(hx, hy, bossHoleRadius * 1.35, 0, Math.PI * 2);
             ctx.fill();
           }
+          continue;
+        }
+        if (hole.sequential) {
+          // 第7段階「就職活動」：中ボスと同じく、番号順にしか破壊できない
+          const numberIcon = midBossPhaseNumberIcons[hole.phaseIndex] || String(hole.phaseIndex + 1);
+          const isCurrent = hole === bossEvent.holes.find(h => h.sequential && !h.destroyed);
+          if (!isCurrent) {
+            ctx.beginPath();
+            ctx.fillStyle = 'rgba(120, 120, 120, 0.30)';
+            ctx.arc(hx, hy, bossHoleRadius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(180, 180, 180, 0.5)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.fillStyle = 'rgba(230, 230, 230, 0.7)';
+            ctx.font = 'bold 12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(numberIcon, hx, hy);
+            ctx.textBaseline = 'alphabetic';
+            ctx.textAlign = 'left';
+            continue;
+          }
+          const seqPulse = 0.6 + 0.4 * Math.sin(gameClockMs / 220 + pos.x);
+          const seqDamageRatio = hole.hitsTaken / hole.maxHits;
+          ctx.beginPath();
+          ctx.fillStyle = `rgba(255, ${Math.round(140 + seqDamageRatio * 60)}, 30, ${0.55 * seqPulse})`;
+          ctx.shadowColor = '#ff8a65';
+          ctx.shadowBlur = 14;
+          ctx.arc(hx, hy, bossHoleRadius, 0, Math.PI * 2);
+          ctx.fill();
+          if (hole.flashTimerMs > 0) {
+            ctx.shadowBlur = 0;
+            ctx.beginPath();
+            ctx.fillStyle = `rgba(255, 255, 255, ${hole.flashTimerMs / bossHoleFlashDurationMs})`;
+            ctx.arc(hx, hy, bossHoleRadius * 1.35, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.shadowBlur = 0;
+          ctx.fillStyle = 'white';
+          ctx.font = 'bold 12px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(numberIcon, hx, hy);
+          ctx.textBaseline = 'alphabetic';
+          ctx.textAlign = 'left';
           continue;
         }
         const pulse = 0.6 + 0.4 * Math.sin(gameClockMs / 220 + pos.x);
