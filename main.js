@@ -98,7 +98,7 @@ const dreamMemoryUpgradeDefs = [
   },
   {
     id: 'invincibleTest', label: '無敵（テスト用）',
-    describeLevel: () => '自分・同僚ともSAN・寿命が0にならず、脳疲労も常に0のまま、攻撃力が10倍になる（テスト用）',
+    describeLevel: () => '自分・同僚ともSAN・寿命が0にならず、脳疲労も常に0のまま、攻撃力が50倍になる（テスト用）',
     maxLevel: 1,
     costOverride: 1
   }
@@ -1811,8 +1811,10 @@ const guardReviveValue = 20;
 const guardImmunityDurationMs = 5000;
 let prayerGuardTimerMs = 0;
 let prayerGuardFloor = 0;
+let prayerGuardUsed = false; // 一度発動したら、そのプレイ中は二度と発動しない
 let gutsGuardTimerMs = 0;
 let gutsGuardFloor = 0;
+let gutsGuardUsed = false; // 一度発動したら、そのプレイ中は二度と発動しない
 
 // SAN・寿命のいずれかが尽きたら演出を経てゲームオーバーにする（二重発火防止にgameOver/deathSequenceで一度だけ発火）
 // どちらが尽きたかで演出とバッドエンドの種類を分ける
@@ -1825,19 +1827,21 @@ function checkVitalsGameOver(deathEndingType = null) {
     return;
   }
   if (san <= 0) {
-    if (dreamMemorySave.upgrades.prayerGuard >= 1 && prayerGuardTimerMs <= 0) {
+    if (dreamMemorySave.upgrades.prayerGuard >= 1 && !prayerGuardUsed) {
       san = guardReviveValue;
       prayerGuardFloor = guardReviveValue;
       prayerGuardTimerMs = guardImmunityDurationMs;
+      prayerGuardUsed = true;
       showMessage('……祈りが通じた。SAN 1で持ちこたえ、正気を取り戻した', 3000, '#ce93d8', '22px sans-serif');
       return;
     }
     startDeathSequence('san', deathEndingType || 'bad-san');
   } else if (lifespan <= 0) {
-    if (dreamMemorySave.upgrades.gutsGuard >= 1 && gutsGuardTimerMs <= 0) {
+    if (dreamMemorySave.upgrades.gutsGuard >= 1 && !gutsGuardUsed) {
       lifespan = guardReviveValue;
       gutsGuardFloor = guardReviveValue;
       gutsGuardTimerMs = guardImmunityDurationMs;
+      gutsGuardUsed = true;
       showMessage('……根性で持ちこたえた。寿命1で踏みとどまった', 3000, '#ff8a65', '22px sans-serif');
       return;
     }
@@ -2621,8 +2625,8 @@ function updatePartner(dt) {
       const angle = Math.atan2(target.y - partner.y, target.x - partner.x) +
         scatterDegrees * Math.PI / 180;
       const bulletSpeed = 6;
-      // 「無敵（テスト用）」：同僚の攻撃力も自機と同様に10倍になる
-      const partnerInvincibleDamageMultiplier = dreamMemorySave.upgrades.invincibleTest >= 1 ? 10 : 1;
+      // 「無敵（テスト用）」：同僚の攻撃力も自機と同様に50倍になる
+      const partnerInvincibleDamageMultiplier = dreamMemorySave.upgrades.invincibleTest >= 1 ? 50 : 1;
       const damage = Math.max(1, Math.round(
         baseBulletDamage * specialSkillEffects.partnerDamageMultiplier * (1 + skillLevel * 0.08) *
         partnerInvincibleDamageMultiplier
@@ -6000,8 +6004,8 @@ function update() {
 
           const speed = 6 * specialSkillEffects.bulletSpeedMultiplier;
           const damageBonus = 1 + skillLevel * 0.08;
-          // 「無敵（テスト用）」：攻撃力が10倍になる
-          const invincibleDamageMultiplier = dreamMemorySave.upgrades.invincibleTest >= 1 ? 10 : 1;
+          // 「無敵（テスト用）」：攻撃力が50倍になる
+          const invincibleDamageMultiplier = dreamMemorySave.upgrades.invincibleTest >= 1 ? 50 : 1;
           const damage = Math.max(1, Math.round(
             baseBulletDamage * conditionRatio * damageBonus * specialSkillEffects.damageMultiplier * invincibleDamageMultiplier
           ));
@@ -6466,7 +6470,7 @@ function update() {
       const contactConditionRatio = 1 - Math.max(0, Math.min(1, fatigue / maxFatigue));
       const contactDamage = Math.max(1, Math.round(
         baseBulletDamage * contactConditionRatio * (1 + skillLevel * 0.08) *
-        (dreamMemorySave.upgrades.invincibleTest >= 1 ? 10 : 1)
+        (dreamMemorySave.upgrades.invincibleTest >= 1 ? 50 : 1)
       ));
       en.hp = (en.hp || 1) - contactDamage;
       if (en.hp <= 0) defeated = true;
