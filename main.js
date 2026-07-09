@@ -8059,14 +8059,21 @@ function draw() {
       const homeGuardCharWidths = homeGuardChars.map(c => ctx.measureText(c).width);
       const homeGuardTotalWidth = homeGuardCharWidths.reduce((sum, w) => sum + w, 0) +
         homeGuardLetterSpacing * (homeGuardChars.length - 1);
-      ctx.textAlign = 'left';
+      ctx.textAlign = 'center';
       ctx.lineWidth = 3;
       ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
       ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
       let homeGuardX = -homeGuardTotalWidth / 2;
       homeGuardChars.forEach((c, i) => {
-        ctx.strokeText(c, homeGuardX, 0);
-        ctx.fillText(c, homeGuardX, 0);
+        const charCenterX = homeGuardX + homeGuardCharWidths[i] / 2;
+        // 一文字ごとに、±10度ほどの範囲でランダムな傾きを付ける（毎フレーム同じ形になる固定の乱数を使う）
+        const tiltDeg = (titleGlitchPseudoRandom(i * 53 + 7) - 0.5) * 20;
+        ctx.save();
+        ctx.translate(charCenterX, 0);
+        ctx.rotate(tiltDeg * Math.PI / 180);
+        ctx.strokeText(c, 0, 0);
+        ctx.fillText(c, 0, 0);
+        ctx.restore();
         homeGuardX += homeGuardCharWidths[i] + homeGuardLetterSpacing;
       });
       ctx.restore();
