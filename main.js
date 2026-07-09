@@ -5373,7 +5373,7 @@ function update() {
           }
           // 発射時に疲労を増やす。1秒間攻撃し続けていても増加は1秒に1回分にまとめ、
           // マルチタスク（同時複数発）で撃った場合はその1回分の負荷を1.5倍にする
-          registerFatigueAttack(shotCount > 1);
+          registerFatigueAttack(shotOffsets.length > 1);
         }
       }
     }
