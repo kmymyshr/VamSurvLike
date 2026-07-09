@@ -2884,7 +2884,7 @@ function getDefaultSpecialSkillEffects() {
 const specialSkillEffects = getDefaultSpecialSkillEffects();
 
 const specialSkills = [
-  { id: 'dual-shot', name: 'マルチタスク', description: 'レベルごとに同時発射する弾が1発増える。追加の弾は正面から±20度以内のランダムな方向へ飛ぶ' },
+  { id: 'dual-shot', name: 'マルチタスク', description: 'レベルごとに同時発射する弾が1発増える。追加の弾は正面から±20度以内のランダムな方向へ飛ぶ', maxLevel: 5 },
   { id: 'speed-up', name: 'フットワーク', description: '移動速度が上がる（Lv1:1.1倍 → Lv5:2.0倍）', maxLevel: 5 },
   { id: 'fatigue-save', name: '脳疲労耐性', description: '射撃による脳疲労を軽減する（Lv1:-35% → Lv5:-50%）', maxLevel: 5 },
   { id: 'rapid-fire', name: '処理速度A', description: '発射間隔を短縮する（Lv1:当初の75% → Lv5:当初の30%）', maxLevel: 5 },
@@ -2895,7 +2895,8 @@ const specialSkills = [
   { id: 'communication', name: 'コミュニケーション力', description: 'レベルごとに15%の確率で援護射撃が発生する。同僚との関係性が悪化する時の低下値を軽減（Lv1:当初の90% → Lv5:当初の50%）', maxLevel: 5 },
   {
     id: 'network-specialist', name: 'ネットワークスペシャリスト',
-    description: '弾が画面端でレベルごとに1回多く跳ね返る。画面端で反射した自弾（1回目以降すべて）は、自機がパリィ（オートパリィ含む）で狩り直せ、同僚が自動でパリィする確率も2倍になる'
+    description: '弾が画面端でレベルごとに1回多く跳ね返る。画面端で反射した自弾（1回目以降すべて）は、自機がパリィ（オートパリィ含む）で狩り直せ、同僚が自動でパリィする確率も2倍になる',
+    maxLevel: 5
   },
   { id: 'teamwork', name: 'チームワーク', description: '自分と同僚、お互いの弾が着弾しそうな時（敵からの弾を除く）、お互いパリィが発動しやすくなる（Lv5で発動率80%）', maxLevel: 5 },
   { id: 'meal-foresight', name: '食通', description: '昼食に登場する料理に、出現する順番の番号が表示されるようになる（習得は1回のみ）', maxLevel: 1 },
@@ -4411,8 +4412,8 @@ const bossTrueEndCues = [
 ];
 const bossTrueEndReturnAtMs = 9500; // このタイミングで「real-world time」画面へ進む（同僚が生存していない場合はここでタイトルへ戻る）
 const bossTrueEndLines = [
-  '「なんだか長い夢を見ていた気がする。」',
-  '職業訓練期間がもうすぐ終わる前に、早く就職活動を始めないと。'
+  '「…なんだか長い夢を見ていた気がする。」',
+  '…訓練期間が終わる前に、就職活動を始めないと。'
 ];
 // 真エンド（同僚生存）限定：ENDの後、現実の日時を表示する画面 →（クリックで）クリアメッセージ画面 → タイトルへ
 const bossClearMessageFadeMs = 1200;
@@ -8292,13 +8293,6 @@ function draw() {
     fullAutoModeEnabled
       ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 13px sans-serif' }
       : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 13px sans-serif' });
-  // プレイ中も3倍加速モードのON/OFFを切り替えられるボタン
-  drawUiButton(196, 278, 145, 32, `3倍加速: ${gameTimeScale === 3 ? 'ON' : 'OFF'}`,
-    () => { gameTimeScale = gameTimeScale === 3 ? 1 : 3; },
-    gameTimeScale === 3
-      ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 13px sans-serif' }
-      : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 13px sans-serif' });
-
   // 一時メッセージを画面上部の中央に表示する
   drawPendingMessages();
   // 画面右上に日付・時刻・曜日を表示する
@@ -8311,6 +8305,15 @@ function draw() {
   const dateStrWidth = ctx.measureText(dateStr).width;
   const dateStrX = canvas.width - 12 - dateStrWidth;
   ctx.fillText(dateStr, dateStrX, 28);
+
+  // プレイ中も3倍加速モードのON/OFFを切り替えられるボタン（右上の時刻表示のすぐ下に小さめに配置）
+  const speedToggleBtnW = 110, speedToggleBtnH = 24;
+  drawUiButton(canvas.width - 12 - speedToggleBtnW, 36, speedToggleBtnW, speedToggleBtnH,
+    `3倍加速: ${gameTimeScale === 3 ? 'ON' : 'OFF'}`,
+    () => { gameTimeScale = gameTimeScale === 3 ? 1 : 3; },
+    gameTimeScale === 3
+      ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 12px sans-serif' }
+      : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 12px sans-serif' });
 
   // 「巨大案件」で24時のまま時刻が止まっている間、鉛筆で取り消し線を何本も引いたような見た目にする
   if (midBossEvent && currentHour >= maxOvertimeHour) {
@@ -8338,7 +8341,7 @@ function draw() {
   if ((currentDate.getDay() === 0 || currentDate.getDay() === 6) &&
       !gameOver && !gameClear && !dayTransitionPhase && !weekendWorkChoice &&
       !restActivityChoice && !weekendWorkQuotaChoice && !acknowledgementNotice) {
-    drawUiButton(canvas.width - 160, 38, 148, 40, '帰宅する (H)', goHomeFromWeekendWork,
+    drawUiButton(canvas.width - 160, 70, 148, 40, '帰宅する (H)', goHomeFromWeekendWork,
       { fillStyle: 'rgba(84, 60, 30, 0.65)', strokeStyle: '#ffb74d', font: 'bold 15px sans-serif' });
   }
 
