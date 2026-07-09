@@ -108,10 +108,26 @@ function dreamMemoryUpgradeCost(currentLevel) {
   return 5 + currentLevel * 4;
 }
 
+// ===== エンディングリスト（タイトル画面から確認できる、到達済みエンディングの一覧） =====
+const endingListDefs = [
+  { id: 'true', icon: '🌟', label: 'TRUE END', hint: 'ランク10に到達し、特殊な選択を全て正しく行い、同僚を失わずに完走する' },
+  { id: 'normal', icon: '🏁', label: 'NORMAL END', hint: '月末を迎えて一区切りをつける' },
+  { id: 'bad-san', icon: '🌀', label: 'BAD END（心）', hint: 'SANが0になる' },
+  { id: 'bad-lifespan', icon: '⚰️', label: 'BAD END（寿命）', hint: '寿命が0になる' },
+  { id: 'bad-partner-shot', icon: '💔', label: 'BAD END（同僚）', hint: '同僚の誤射でとどめを刺される' },
+  { id: 'trueAlive', icon: '👁️', label: '目覚めエンド', hint: 'ラスボスを撃破し、同僚が生存している状態で終える' },
+  { id: 'truePartnerLost', icon: '🖤', label: 'もう一つの目覚めエンド', hint: 'ラスボスを撃破するが、同僚を失っている' }
+];
+
 function loadDreamMemorySave() {
   const fallbackUpgrades = {};
   dreamMemoryUpgradeDefs.forEach(def => { fallbackUpgrades[def.id] = 0; });
-  const fallback = { points: 0, upgrades: fallbackUpgrades, lastRun: null, trueEndCleared: false };
+  const fallbackEndingsCleared = {};
+  endingListDefs.forEach(def => { fallbackEndingsCleared[def.id] = false; });
+  const fallback = {
+    points: 0, upgrades: fallbackUpgrades, lastRun: null,
+    trueEndCleared: false, endingsCleared: fallbackEndingsCleared
+  };
   try {
     const raw = localStorage.getItem(dreamMemoryStorageKey);
     if (!raw) return fallback;
@@ -130,11 +146,15 @@ function loadDreamMemorySave() {
       relationship: Math.max(0, Math.min(100, Math.floor(rawLastRun.relationship) || 0)),
       endingType: rawLastRun.endingType || null
     } : null;
+    const rawEndingsCleared = parsed.endingsCleared || {};
+    const endingsCleared = {};
+    endingListDefs.forEach(def => { endingsCleared[def.id] = !!rawEndingsCleared[def.id]; });
     return {
       points: Math.max(0, Math.floor(parsed.points) || 0),
       upgrades,
       lastRun,
-      trueEndCleared: !!parsed.trueEndCleared
+      trueEndCleared: !!parsed.trueEndCleared,
+      endingsCleared
     };
   } catch (e) {
     return fallback;
@@ -373,6 +393,7 @@ let gameClear = false;
 let startScreen = true;
 let setupStep = null;
 let dreamMemoryShopActive = false; // タイトル画面から開く、夢の記憶ポイントでの強化画面
+let endingListActive = false; // タイトル画面から開く、到達済みエンディング一覧画面
 
 // ===== アイコン選択後のひとことメッセージ演出（表示→フェードアウトして次の画面へ） =====
 const playerIconGreetingLines = [
@@ -3357,7 +3378,7 @@ function performBulletParry(bullet, fromX, fromY, actorAngle) {
 }
 
 // ===== ラスボス（自機・同僚のSANが同時に20を切ると出現する、名状しがたい巨大な敵） =====
-// 通常の敵は出現を止め、パリィで打ち返した弾だけが有効打になる特別な戦闘に切り替わる
+// 通常の敵は出現を止め、発射口だけが弱点になる特別な戦闘に切り替わる（通常弾・パリィで打ち返した弾のどちらも有効打）
 const bossImage = loadImage('images/dreamcatcher/last_boss.png');
 const bossSanTriggerThreshold = 20;
 const bossWidthRatio = 0.7; // 画面幅に対するラスボスの幅の割合
@@ -3403,7 +3424,7 @@ function getBossGeometry() {
 
 // 両者のSANが同時に閾値を切ったら、ラスボス出現を開始する（発生中・クールダウン中は何もしない）
 function checkBossEventTrigger() {
-  if (bossEvent || !partner.active) return;
+  if (bossEvent || midBossEvent || !partner.active) return;
   const bothLow = san < bossSanTriggerThreshold && partner.san < bossSanTriggerThreshold;
   if (bothLow && !bossEventOnCooldown) {
     startBossEvent();
@@ -3696,6 +3717,7 @@ function finishBossTrueEnd() {
   const earnedDreamMemoryPoints = Math.floor(score / dreamMemoryScoreDivisor);
   dreamMemorySave.points += earnedDreamMemoryPoints;
   dreamMemorySave.trueEndCleared = true;
+  dreamMemorySave.endingsCleared[bossFinalSequence.partnerAlive ? 'trueAlive' : 'truePartnerLost'] = true;
   dreamMemorySave.lastRun = selectedPartnerIcon ? {
     playerGender: selectedGender,
     partnerIcon: selectedPartnerIcon,
@@ -3718,8 +3740,6 @@ const midBossFireIntervalMs = 1300;
 const midBossBulletSpeed = 4.0;
 const midBossBulletDamageSan = 8;
 const midBossBulletDamageLifespan = 2;
-const midBossMoveRangeX = 30;
-const midBossMoveRangeY = 16;
 const midBossHitsPerHoleBase = 100; // DAY7時点の耐久力（自機初期状態の通常攻撃100発相当）
 const midBossScoreReward = 150; // 通常の敵より多めのスコア
 const midBossRetreatDurationMs = 3000; // 振動・フェードアウトして消えるまでの時間
@@ -3736,11 +3756,13 @@ function getMidBossDurabilityMultiplier(day) {
 
 function getMidBossGeometry() {
   const width = canvas.width * midBossWidthRatio;
-  const offsetX = midBossEvent ? midBossEvent.offsetX : 0;
-  const offsetY = (midBossEvent && midBossEvent.phase === 'active') ? midBossEvent.offsetY : 0;
-  const x = (canvas.width - width) / 2 + offsetX;
+  // 出現しきってから退場するまでの間は、窓の範囲を動き回っている現在位置を使う
+  if (midBossEvent && (midBossEvent.phase === 'active' || midBossEvent.phase === 'retreat')) {
+    return { x: midBossEvent.roamX, y: midBossEvent.roamY, width, height: midBossHeight };
+  }
+  const x = (canvas.width - width) / 2;
   const descendProgress = midBossEvent ? midBossEvent.descendProgress : 0;
-  const topY = -midBossHeight + midBossHeight * descendProgress + offsetY;
+  const topY = -midBossHeight + midBossHeight * descendProgress;
   return { x, y: topY, width, height: midBossHeight };
 }
 
@@ -3758,13 +3780,15 @@ function getMidBossHoleAbsolutePosition(hole) {
 }
 
 function startMidBossEvent() {
+  const width = canvas.width * midBossWidthRatio;
+  const startX = (canvas.width - width) / 2;
   midBossEvent = {
     phase: 'descending',
     descendProgress: 0,
     holes: generateMidBossHoles(),
     hitsPerHole: Math.round(midBossHitsPerHoleBase * getMidBossDurabilityMultiplier(dayNumber)),
     fireTimerMs: midBossFireIntervalMs,
-    offsetX: 0, offsetY: 0, moveTargetX: 0, moveTargetY: 0, moveTimerMs: 0,
+    roamX: startX, roamY: 0, roamTargetX: startX, roamTargetY: 0, moveTimerMs: 0,
     retreatTimerMs: 0
   };
   showMessage('「巨大案件」が発生した！ 定時までに片付けられず、居残りが確定した……', 3800, '#ff8a65', '22px sans-serif');
@@ -3787,16 +3811,21 @@ function updateMidBossEvent(dt) {
     return;
   }
 
-  // 本体が上下左右にゆっくり動き回る
+  // 本体が窓の範囲を自由に動き回る
   midBossEvent.moveTimerMs -= dt * 1000;
   if (midBossEvent.moveTimerMs <= 0) {
-    midBossEvent.moveTargetX = (Math.random() * 2 - 1) * midBossMoveRangeX;
-    midBossEvent.moveTargetY = (Math.random() * 2 - 1) * midBossMoveRangeY;
-    midBossEvent.moveTimerMs = 1200 + Math.random() * 1400;
+    const width = canvas.width * midBossWidthRatio;
+    const minX = 10;
+    const maxX = Math.max(minX, canvas.width - width - 10);
+    const minY = 0;
+    const maxY = Math.max(minY, windowZoneBottomY - midBossHeight);
+    midBossEvent.roamTargetX = minX + Math.random() * (maxX - minX);
+    midBossEvent.roamTargetY = minY + Math.random() * (maxY - minY);
+    midBossEvent.moveTimerMs = 1500 + Math.random() * 1800;
   }
-  const moveEase = Math.min(1, dt * bossMoveEaseFactor);
-  midBossEvent.offsetX += (midBossEvent.moveTargetX - midBossEvent.offsetX) * moveEase;
-  midBossEvent.offsetY += (midBossEvent.moveTargetY - midBossEvent.offsetY) * moveEase;
+  const moveEase = Math.min(1, dt * bossMoveEaseFactor * 0.6); // 動き回る範囲が広いので、少しゆっくり移動させる
+  midBossEvent.roamX += (midBossEvent.roamTargetX - midBossEvent.roamX) * moveEase;
+  midBossEvent.roamY += (midBossEvent.roamTargetY - midBossEvent.roamY) * moveEase;
 
   for (const hole of midBossEvent.holes) {
     if (hole.flashTimerMs > 0) hole.flashTimerMs = Math.max(0, hole.flashTimerMs - dt * 1000);
@@ -4967,9 +4996,9 @@ function update() {
       if (gameOver || deathSequence) return;
       continue;
     }
-    // ラスボスへの命中判定。パリィで打ち返した弾（'deflected'）が発射口に当たった時だけ有効打になる。
-    // 発射口以外に当たった弾や、通常の弾はそのまま素通りする
-    if (bossEvent && b.owner === 'deflected') {
+    // ラスボスへの命中判定。自機の通常弾・パリィで打ち返した弾（'deflected'）が発射口に当たると有効打になる。
+    // 発射口以外に当たった弾はそのまま素通りする
+    if (bossEvent && (b.owner === 'player' || b.owner === 'deflected')) {
       const hitHole = findHitBossHole(b.x, b.y);
       if (hitHole) {
         registerBossHoleHit(hitHole, b.x, b.y);
@@ -5216,6 +5245,10 @@ function drawEndScreenButtons(baseY) {
       relationship: partner.relationship,
       endingType: endingType
     } : null;
+    // 到達したエンディングを、タイトル画面のエンディングリストに記録する
+    if (endingType && dreamMemorySave.endingsCleared.hasOwnProperty(endingType)) {
+      dreamMemorySave.endingsCleared[endingType] = true;
+    }
     saveDreamMemorySave();
     location.reload();
   });
@@ -6184,6 +6217,55 @@ function draw() {
     return;
   }
 
+  if (endingListActive) {
+    drawSetupBackground();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffd54f';
+    ctx.font = 'bold 24px sans-serif';
+    ctx.fillText('エンディングリスト', canvas.width / 2, 34);
+    ctx.textAlign = 'left';
+
+    const rowX = 60;
+    const rowWidth = canvas.width - rowX * 2;
+    const rowHeight = 60;
+    const rowGap = 6;
+    const gridStartY = 56;
+
+    endingListDefs.forEach((def, index) => {
+      const rowY = gridStartY + index * (rowHeight + rowGap);
+      const achieved = !!dreamMemorySave.endingsCleared[def.id];
+
+      ctx.fillStyle = achieved ? 'rgba(103, 58, 183, 0.30)' : 'rgba(40, 40, 40, 0.45)';
+      ctx.fillRect(rowX, rowY, rowWidth, rowHeight);
+      ctx.strokeStyle = achieved ? '#ce93d8' : '#616161';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(rowX, rowY, rowWidth, rowHeight);
+
+      ctx.font = 'bold 26px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillStyle = achieved ? 'white' : '#616161';
+      ctx.fillText(achieved ? def.icon : '？', rowX + 14, rowY + 40);
+
+      ctx.font = 'bold 15px sans-serif';
+      ctx.fillStyle = achieved ? '#ffd54f' : '#9e9e9e';
+      ctx.fillText(achieved ? def.label : '？？？？？', rowX + 56, rowY + 24);
+
+      ctx.font = '12px sans-serif';
+      ctx.fillStyle = achieved ? '#cfd8dc' : '#757575';
+      const hintText = achieved ? def.hint : 'まだ到達していないエンディング';
+      const hintLines = wrapTextToWidth(hintText, rowWidth - 70).slice(0, 1);
+      ctx.fillText(hintLines[0] || '', rowX + 56, rowY + 44);
+    });
+
+    const gridBottom = gridStartY + endingListDefs.length * (rowHeight + rowGap) - rowGap;
+    const backBtnW = 200, backBtnH = 32;
+    ctx.textAlign = 'left';
+    drawUiButton(canvas.width / 2 - backBtnW / 2, gridBottom + 12, backBtnW, backBtnH,
+      '戻る', () => { endingListActive = false; },
+      { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
+    return;
+  }
+
   if (startScreen) {
     drawSetupBackground();
     ctx.save();
@@ -6220,10 +6302,13 @@ function draw() {
     drawUiButton(btnX, canvas.height / 2 + 68, btnW, 40,
       `夢の記憶ポイントで強化 (P: ${dreamMemorySave.points})`, () => { dreamMemoryShopActive = true; },
       { fillStyle: 'rgba(74, 20, 140, 0.55)', strokeStyle: '#ce93d8', font: 'bold 15px sans-serif' });
+    drawUiButton(btnX, canvas.height / 2 + 112, btnW, 34,
+      'エンディングリスト', () => { endingListActive = true; },
+      { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#ffd54f', font: 'bold 14px sans-serif' });
 
     // 前回プレイした自機・同僚の組み合わせが記録されている時だけ、選択画面を省略するボタンを出す
     const hasLastRunCombo = !!(dreamMemorySave.lastRun && dreamMemorySave.lastRun.partnerIcon);
-    let nextButtonY = canvas.height / 2 + 116;
+    let nextButtonY = canvas.height / 2 + 154;
     if (hasLastRunCombo) {
       drawUiButton(btnX, nextButtonY, btnW, 40,
         '夢と同じ設定で進める', startWithLastRunSettings,
