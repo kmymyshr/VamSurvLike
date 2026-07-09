@@ -98,7 +98,7 @@ const dreamMemoryUpgradeDefs = [
   },
   {
     id: 'invincibleTest', label: '無敵（テスト用）',
-    describeLevel: () => 'SAN・寿命が0にならず、脳疲労も常に0のまま、攻撃力が10倍になる（テスト用）',
+    describeLevel: () => '自分・同僚ともSAN・寿命が0にならず、脳疲労も常に0のまま、攻撃力が10倍になる（テスト用）',
     maxLevel: 1,
     costOverride: 1
   }
@@ -2600,8 +2600,11 @@ function updatePartner(dt) {
       const angle = Math.atan2(target.y - partner.y, target.x - partner.x) +
         scatterDegrees * Math.PI / 180;
       const bulletSpeed = 6;
+      // 「無敵（テスト用）」：同僚の攻撃力も自機と同様に10倍になる
+      const partnerInvincibleDamageMultiplier = dreamMemorySave.upgrades.invincibleTest >= 1 ? 10 : 1;
       const damage = Math.max(1, Math.round(
-        baseBulletDamage * specialSkillEffects.partnerDamageMultiplier * (1 + skillLevel * 0.08)
+        baseBulletDamage * specialSkillEffects.partnerDamageMultiplier * (1 + skillLevel * 0.08) *
+        partnerInvincibleDamageMultiplier
       ));
       // 関係性が50以上なら、現在の自分位置へ通る弾道は撃たずに見送る。
       const shouldAvoidShot = partner.relationship >= partnerRelationshipSafeFireThreshold &&
@@ -2668,6 +2671,14 @@ function updatePartner(dt) {
     }
   } else {
     partner.lowSanTimerMs = 0;
+  }
+
+  // 「無敵（テスト用）」：同僚にも同様の効果を適用する（SAN・寿命が0にならず、脳疲労も常に0のまま）
+  if (dreamMemorySave.upgrades.invincibleTest >= 1) {
+    partner.san = Math.max(partner.san, 1);
+    partner.lifespan = Math.max(partner.lifespan, 1);
+    partner.fatigue = 0;
+    return;
   }
 
   // 退場判定：SANか寿命が尽きたら以後登場しなくなり、プレイヤーにもSANダメージが入る
@@ -4246,10 +4257,16 @@ const bossTrueEndCues = [
   { start: 2700, fadeMs: 1500 }, // 2行目
   { start: 5700, fadeMs: 800 } // END
 ];
-const bossTrueEndReturnAtMs = 9500; // このタイミングでタイトルへ戻る
+const bossTrueEndReturnAtMs = 9500; // このタイミングで「real-world time」画面へ進む（同僚が生存していない場合はここでタイトルへ戻る）
 const bossTrueEndLines = [
   '「なんだか長い夢を見ていた気がする。」',
   '職業訓練期間がもうすぐ終わる前に、早く就職活動を始めないと。'
+];
+// 真エンド（同僚生存）限定：ENDの後、現実の日時を表示する画面 →（クリックで）クリアメッセージ画面 → タイトルへ
+const bossClearMessageFadeMs = 1200;
+const bossClearMessageLines = [
+  'クリアおめでとうございます。',
+  '最後までプレイありがとうございました。'
 ];
 // 同僚が生存していない場合の代替エンド（画面は黒くなり、1行だけ表示してENDへ）
 const bossAltEndCues = [
@@ -4281,8 +4298,22 @@ function updateBossFinalSequence(dt) {
     seq.phaseTimerMs = 0;
   } else if (seq.phase === 'trueEnd') {
     const returnAtMs = seq.partnerAlive ? bossTrueEndReturnAtMs : bossAltEndReturnAtMs;
-    if (seq.phaseTimerMs >= returnAtMs) finishBossTrueEnd();
+    if (seq.phaseTimerMs >= returnAtMs) {
+      if (seq.partnerAlive) {
+        // 真エンド（同僚生存）限定：ENDの後、現実の日時を表示する画面へ進む
+        seq.phase = 'realWorldTime';
+        seq.phaseTimerMs = 0;
+      } else {
+        finishBossTrueEnd();
+      }
+    }
+  } else if (seq.phase === 'clearMessageFadeIn' && seq.phaseTimerMs >= bossClearMessageFadeMs) {
+    seq.phase = 'clearMessageShown';
+    seq.phaseTimerMs = 0;
+  } else if (seq.phase === 'clearMessageFadeOut' && seq.phaseTimerMs >= bossClearMessageFadeMs) {
+    finishBossTrueEnd();
   }
+  // 'realWorldTime'・'clearMessageShown' はクリック待ちのため、ここでは時間経過だけでは進行しない
 }
 
 // 真エンドに到達した時点のScoreを夢の記憶ポイントへ変換し、クリア済フラグを保存してタイトルへ戻る
@@ -4789,6 +4820,17 @@ canvas.addEventListener('click', (event) => {
     dayTransitionPhase = 'in';
     dayTransitionTimer = dayTransitionDurationMs;
     lastUpdate = Date.now();
+    return;
+  }
+  // 真エンド（同僚生存）限定：現実の日時を表示する画面・クリアメッセージ画面は、クリックで次へ進む
+  if (bossFinalSequence && bossFinalSequence.phase === 'realWorldTime') {
+    bossFinalSequence.phase = 'clearMessageFadeIn';
+    bossFinalSequence.phaseTimerMs = 0;
+    return;
+  }
+  if (bossFinalSequence && bossFinalSequence.phase === 'clearMessageShown') {
+    bossFinalSequence.phase = 'clearMessageFadeOut';
+    bossFinalSequence.phaseTimerMs = 0;
     return;
   }
   const p = getCanvasPoint(event);
@@ -6286,6 +6328,14 @@ function drawBossFinalTransition() {
     : `rgba(0, 0, 0, ${fadeAlpha})`;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+  if (seq.phase === 'realWorldTime') {
+    drawRealWorldTimeScreen();
+    return;
+  }
+  if (seq.phase === 'clearMessageFadeIn' || seq.phase === 'clearMessageShown' || seq.phase === 'clearMessageFadeOut') {
+    drawClearMessageScreen(seq);
+    return;
+  }
   if (seq.phase !== 'trueEnd') return;
 
   ctx.save();
@@ -6329,6 +6379,58 @@ function drawBossFinalTransition() {
     }
   }
   ctx.restore();
+}
+
+// 真エンド（同僚生存）限定：ENDの後、白い画面に現実の日時を表示する（クリックで次の画面へ）
+function drawRealWorldTimeScreen() {
+  const now = new Date();
+  const yy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mi = String(now.getMinutes()).padStart(2, '0');
+  const ss = String(now.getSeconds()).padStart(2, '0');
+  const wd = weekdayNames[now.getDay()];
+  ctx.save();
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#666666';
+  ctx.font = '14px sans-serif';
+  ctx.fillText('real-world time', canvas.width - 16, 30);
+  ctx.fillStyle = '#222222';
+  ctx.font = 'bold 26px sans-serif';
+  ctx.fillText(`${yy}/${mm}/${dd} ${hh}:${mi}:${ss} (${wd})`, canvas.width - 16, 58);
+  ctx.textAlign = 'center';
+  ctx.font = '15px sans-serif';
+  ctx.fillStyle = '#888888';
+  ctx.fillText('クリックして進む', canvas.width / 2, canvas.height - 40);
+  ctx.restore();
+}
+
+// 真エンド（同僚生存）限定：最後のクリアメッセージ（フェードイン→表示→クリックでフェードアウト→タイトルへ）
+function drawClearMessageScreen(seq) {
+  let alpha = 1;
+  if (seq.phase === 'clearMessageFadeIn') {
+    alpha = Math.min(1, seq.phaseTimerMs / bossClearMessageFadeMs);
+  } else if (seq.phase === 'clearMessageFadeOut') {
+    alpha = Math.max(0, 1 - seq.phaseTimerMs / bossClearMessageFadeMs);
+  }
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#222222';
+  ctx.font = 'bold 26px sans-serif';
+  bossClearMessageLines.forEach((line, i) => {
+    ctx.fillText(line, canvas.width / 2, canvas.height / 2 - 20 + i * 44);
+  });
+  ctx.restore();
+  if (seq.phase === 'clearMessageShown') {
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font = '15px sans-serif';
+    ctx.fillStyle = '#888888';
+    ctx.fillText('クリックしてタイトルへ', canvas.width / 2, canvas.height / 2 + 100);
+    ctx.restore();
+  }
 }
 
 // 中ボス「巨大案件」の見た目を描く（正式な画像を用意するまでの仮の矩形）
