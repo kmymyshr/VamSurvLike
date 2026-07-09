@@ -7,38 +7,24 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="appLayout">
-    <!-- プレイ画面（キャンバス）の外、左側に常設する操作パネル。ゲームプレイ中だけ表示される -->
-    <div id="leftControlPanel">
-      <button id="btnFullAuto" type="button">完全オートモード: OFF</button>
-      <button id="btnTripleSpeed" type="button">3倍加速: OFF</button>
-      <button id="btnMobileAutoAim" type="button">スマホ用自動照準: OFF</button>
-    </div>
-    <div id="playColumn">
-      <div id="gameWrapper">
-        <canvas id="gameCanvas" width="800" height="600"></canvas>
-        <div id="touchControls">
-          <button id="btnAutoFire" type="button">自動/手動</button>
-          <button id="btnPause" type="button">II</button>
-        </div>
-      </div>
-      <!-- プレイ画面（キャンバス）の外、画面下部に確保した操作バー（移動十字ボタン・パリィ・連射ボタン） -->
-      <div id="bottomControlBar">
-        <div id="moveDpad">
-          <button id="btnMoveUp" type="button">▲</button>
-          <button id="btnMoveLeft" type="button">◀</button>
-          <button id="btnMoveRight" type="button">▶</button>
-          <button id="btnMoveDown" type="button">▼</button>
-        </div>
-        <div id="mobileAttackControls">
-          <!-- 連射ボタンの上に置く、パリィ（同僚弾のはじき返し）ボタン -->
-          <button id="btnMobileParry" type="button">パリィ</button>
-          <!-- 押している間連射する攻撃ボタン -->
-          <button id="btnMobileFire" type="button">連射</button>
-        </div>
-      </div>
+  <div id="gameWrapper">
+    <canvas id="gameCanvas" width="800" height="600"></canvas>
+    <div id="touchControls">
+      <button id="btnAutoFire" type="button">自動/手動</button>
+      <button id="btnPause" type="button">II</button>
     </div>
   </div>
+  <!-- プレイ画面（キャンバス）の外に置く、移動専用の十字ボタン -->
+  <div id="moveDpad">
+    <button id="btnMoveUp" type="button">▲</button>
+    <button id="btnMoveLeft" type="button">◀</button>
+    <button id="btnMoveRight" type="button">▶</button>
+    <button id="btnMoveDown" type="button">▼</button>
+  </div>
+  <!-- プレイ画面（キャンバス）の外に置く、押している間連射する攻撃ボタン -->
+  <button id="btnMobileFire" type="button">連射</button>
+  <!-- 連射ボタンの上に置く、パリィ（同僚弾のはじき返し）ボタン -->
+  <button id="btnMobileParry" type="button">パリィ</button>
   <div id="rotateOverlay">
     <p>スマートフォンを横向きにしてください</p>
   </div>

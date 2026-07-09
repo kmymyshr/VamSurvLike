@@ -9,63 +9,13 @@ html, body {
   user-select: none;
 }
 
-/* 画面全体を横に並べる最上位のレイアウト：左の操作パネル + プレイ画面側の列 */
-#appLayout {
-  display: flex;
-  flex-direction: row;
-  width: 100%;
-  height: 100%;
-}
-
-/* プレイ画面（キャンバス）の外、左側に常設する操作パネル。
-   ゲームプレイ中だけJSから表示され、常に固定幅を確保するのでキャンバスと重ならない */
-#leftControlPanel {
-  display: none;
-  flex-direction: column;
-  gap: 10px;
-  width: 176px;
-  flex: 0 0 176px;
-  box-sizing: border-box;
-  padding: 16px 10px;
-  background: rgba(8, 8, 14, 0.94);
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
-  overflow-y: auto;
-}
-
-#leftControlPanel button {
-  min-height: 56px;
-  padding: 8px 6px;
-  font-size: 13px;
-  font-weight: bold;
-  line-height: 1.3;
-  color: white;
-  background: rgba(60, 60, 60, 0.55);
-  border: 2px solid #90a4ae;
-  border-radius: 8px;
-  touch-action: manipulation;
-}
-
-#leftControlPanel button.active {
-  background: rgba(56, 142, 60, 0.6);
-  border-color: #a5d6a7;
-}
-
-/* 左の操作パネルを除いた、プレイ画面側の列（キャンバス＋下部操作バー） */
-#playColumn {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-
 #gameWrapper {
   position: relative;
   display: flex;
   justify-content: center;
   align-items: center;
-  flex: 1 1 auto;
-  min-height: 0;
+  width: 100%;
+  height: 100%;
 }
 
 canvas {
@@ -95,28 +45,18 @@ canvas {
   touch-action: manipulation;
 }
 
-/* プレイ画面（キャンバス）の外、画面下部に確保する操作バー。
-   常に一定の高さを占有するので、キャンバスがどんなウィンドウサイズでもここに重ならない */
-#bottomControlBar {
-  flex: 0 0 190px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  box-sizing: border-box;
-  padding: 0 max(16px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
-  touch-action: none;
-}
-
-/* 移動用の十字ボタン */
+/* プレイ画面（キャンバス）の外、画面左下に固定表示する移動用の十字ボタン */
 #moveDpad {
-  position: relative;
+  position: fixed;
+  left: max(16px, env(safe-area-inset-left));
+  bottom: max(16px, env(safe-area-inset-bottom));
   width: 150px;
   height: 150px;
   display: grid;
   grid-template-columns: 50px 50px 50px;
   grid-template-rows: 50px 50px 50px;
+  z-index: 20;
   touch-action: none;
-  flex: 0 0 auto;
 }
 
 #moveDpad button {
@@ -135,19 +75,11 @@ canvas {
 #btnMoveRight { grid-column: 3; grid-row: 2; border-radius: 0 8px 8px 0; }
 #btnMoveDown { grid-column: 2; grid-row: 3; border-radius: 0 0 8px 8px; }
 
-/* パリィ・連射ボタンをまとめる箱（内部で絶対位置指定し、パリィをすぐ上に積む） */
-#mobileAttackControls {
-  position: relative;
-  width: 100px;
-  height: 176px;
-  flex: 0 0 auto;
-}
-
-/* 押している間連射する攻撃ボタン */
+/* プレイ画面（キャンバス）の外、画面右下に固定表示する、押している間連射する攻撃ボタン */
 #btnMobileFire {
-  position: absolute;
-  left: 0;
-  bottom: 0;
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: max(16px, env(safe-area-inset-bottom));
   width: 100px;
   height: 100px;
   border-radius: 50%;
@@ -157,13 +89,14 @@ canvas {
   font-weight: bold;
   border: 2px solid rgba(255, 138, 101, 0.65);
   touch-action: none;
+  z-index: 20;
 }
 
 /* 連射ボタンの真上に置く、パリィ（同僚弾のはじき返し）ボタン */
 #btnMobileParry {
-  position: absolute;
-  left: 0;
-  bottom: 112px;
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: calc(max(16px, env(safe-area-inset-bottom)) + 100px + 12px);
   width: 100px;
   height: 64px;
   border-radius: 16px;
@@ -173,6 +106,7 @@ canvas {
   font-weight: bold;
   border: 2px solid rgba(128, 222, 234, 0.75);
   touch-action: none;
+  z-index: 20;
 }
 
 /* 縦持ち（ポートレート）のときだけ、横向きを促すオーバーレイを表示する */

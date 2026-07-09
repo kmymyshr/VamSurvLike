@@ -5341,40 +5341,9 @@ document.getElementById('btnPause').addEventListener('click', () => {
   lastUpdate = Date.now();
 });
 
-// ===== 画面外左の操作パネル（完全オートモード・3倍加速・スマホ用自動照準）=====
-// プレイ画面（キャンバス）とは重ならない、常設のサイドバーに表示する。実際のゲームプレイ中だけ表示する
-const leftControlPanelEl = document.getElementById('leftControlPanel');
-const btnFullAutoEl = document.getElementById('btnFullAuto');
-const btnTripleSpeedEl = document.getElementById('btnTripleSpeed');
-const btnMobileAutoAimEl = document.getElementById('btnMobileAutoAim');
-let leftControlPanelVisible = false;
-function setLeftControlPanelVisible(visible) {
-  if (leftControlPanelVisible === visible) return;
-  leftControlPanelVisible = visible;
-  leftControlPanelEl.style.display = visible ? 'flex' : 'none';
-  fitCanvasToViewport(); // サイドバーの表示/非表示でプレイ画面に使える幅が変わるため、サイズを再計算する
-}
-// パネルの表示中は毎フレーム呼び、ボタンの表示（ON/OFF・強調表示）を最新の状態に合わせる
-function updateLeftControlPanelLabels() {
-  btnFullAutoEl.textContent = `完全オートモード: ${fullAutoModeEnabled ? 'ON' : 'OFF'}`;
-  btnFullAutoEl.classList.toggle('active', fullAutoModeEnabled);
-  btnTripleSpeedEl.textContent = `3倍加速: ${gameTimeScale === 3 ? 'ON' : 'OFF'}`;
-  btnTripleSpeedEl.classList.toggle('active', gameTimeScale === 3);
-  btnMobileAutoAimEl.textContent = `スマホ用自動照準: ${mobileAutoAimEnabled ? 'ON' : 'OFF'}`;
-  btnMobileAutoAimEl.classList.toggle('active', mobileAutoAimEnabled);
-}
-btnFullAutoEl.addEventListener('click', () => { fullAutoModeEnabled = !fullAutoModeEnabled; });
-btnTripleSpeedEl.addEventListener('click', () => { gameTimeScale = gameTimeScale === 3 ? 1 : 3; });
-btnMobileAutoAimEl.addEventListener('click', () => setMobileAutoAimEnabled(!mobileAutoAimEnabled));
-
-// ===== キャンバスをウィンドウに合わせて拡大縮小する（内部解像度は800x600のまま）=====
-// 画面外左のサイドバー・画面下部の操作バーとキャンバスが重ならないよう、
-// window全体ではなく#gameWrapperの実際の余白サイズを基準に拡大縮小する
+// ===== キャンバスをウィンドウに合わせて拡大縮小する（内部解像度は800x600のまま） =====
 function fitCanvasToViewport() {
-  const wrapper = document.getElementById('gameWrapper');
-  const availWidth = wrapper.clientWidth || window.innerWidth;
-  const availHeight = wrapper.clientHeight || window.innerHeight;
-  const scale = Math.min(availWidth / canvas.width, availHeight / canvas.height);
+  const scale = Math.min(window.innerWidth / canvas.width, window.innerHeight / canvas.height);
   canvas.style.width = `${canvas.width * scale}px`;
   canvas.style.height = `${canvas.height * scale}px`;
 }
@@ -7664,9 +7633,6 @@ function draw() {
   // タップ可能な矩形を、今フレームの表示内容に合わせて作り直す
   uiButtons = [];
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  // 画面外左の操作パネル（完全オート・3倍加速・スマホ用自動照準）は、実際のゲームプレイ画面でだけ表示する。
-  // ここではデフォルトで非表示にし、通常プレイのHUDを描く箇所でだけ表示状態に切り替える
-  setLeftControlPanelVisible(false);
 
   // 力尽きた演出中は、通常のゲーム画面は描かず専用の演出画面のみを表示する
   if (deathSequence) {
@@ -8852,10 +8818,28 @@ function draw() {
         ((autoFireEnabled || fullAutoModeEnabled) && autoFireResting ? '（疲労のため一時休止）' : '')),
     12, 268
   );
-  // 完全オートモード・3倍加速・スマホ用自動照準は、プレイ画面（キャンバス）と重ならない
-  // 画面外左のサイドバー（#leftControlPanel）に表示する
-  setLeftControlPanelVisible(true);
-  updateLeftControlPanelLabels();
+  // 完全オートモード・3倍加速・スマホ用自動照準：左下に縦にコンパクトに並べる。
+  // クイズや固定敵の説明パネル（窓付近・画面上部）とは被らない位置
+  const toggleBtnW = 170, toggleBtnH = 26, toggleBtnGap = 6;
+  const toggleBtnX = 12, toggleBtnStartY = 278;
+  drawUiButton(toggleBtnX, toggleBtnStartY, toggleBtnW, toggleBtnH,
+    `完全オートモード: ${fullAutoModeEnabled ? 'ON' : 'OFF'}`,
+    () => { fullAutoModeEnabled = !fullAutoModeEnabled; },
+    fullAutoModeEnabled
+      ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 12px sans-serif' }
+      : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 12px sans-serif' });
+  drawUiButton(toggleBtnX, toggleBtnStartY + (toggleBtnH + toggleBtnGap), toggleBtnW, toggleBtnH,
+    `3倍加速: ${gameTimeScale === 3 ? 'ON' : 'OFF'}`,
+    () => { gameTimeScale = gameTimeScale === 3 ? 1 : 3; },
+    gameTimeScale === 3
+      ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 12px sans-serif' }
+      : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 12px sans-serif' });
+  drawUiButton(toggleBtnX, toggleBtnStartY + (toggleBtnH + toggleBtnGap) * 2, toggleBtnW, toggleBtnH,
+    `スマホ用自動照準: ${mobileAutoAimEnabled ? 'ON' : 'OFF'}`,
+    () => setMobileAutoAimEnabled(!mobileAutoAimEnabled),
+    mobileAutoAimEnabled
+      ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 12px sans-serif' }
+      : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 12px sans-serif' });
   // 一時メッセージを画面上部の中央に表示する
   drawPendingMessages();
   // 画面右上に日付・時刻・曜日を表示する
