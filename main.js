@@ -3984,7 +3984,7 @@ const bossFireIntervalMs = 1300;
 const bossBulletSpeed = 4.2;
 const bossBulletDamageSan = 12;
 const bossBulletDamageLifespan = 3;
-// 5段階、各段階ごとに性質の異なる発射口を持つ（耐久力は以前の設定の約30%に調整済み）
+// 6段階、各段階ごとに性質の異なる発射口を持つ（耐久力は以前の設定の約30%に調整済み）
 const bossStageDefs = [
   {
     stage: 1, name: '視野狭窄', nameEn: 'Tunnel Vision',
@@ -4005,6 +4005,10 @@ const bossStageDefs = [
   {
     stage: 5, name: '劣等感', nameEn: 'Inferiority Feelings',
     holeCount: 10, hitsPerHole: 1, layout: 'wander-fast'
+  },
+  {
+    stage: 6, name: '内的葛藤', nameEn: 'Internal Conflict',
+    holeCount: 3, hitsPerHole: 30, layout: 'internal-conflict', selfConflict: true
   }
 ];
 const bossHoleRadius = 16;
@@ -4032,8 +4036,28 @@ const bossStageGlassTexts = {
       '人から注目され、返される言葉に喜びを感じる。',
       'たとえそれが、本質的な理解ではなく、表面的な反応にすぎなくても。'
     ]
+  },
+  5: {
+    title: '劣等感',
+    lines: [
+      '自分は他人より劣っているという感覚にとらわれ、自分の価値を低く見積もってしまう性質。',
+      '人と比べるたびに不足ばかりが目につき、相手の優れている部分を、自分の欠落の証のように感じる。',
+      '劣等感に囚われる限り、人は自分自身の価値を正しく見つめることができない。'
+    ]
+  },
+  6: {
+    title: '内的葛藤',
+    lines: [
+      '自分の中にある複数の声が互いに譲らず、心の内側で争い続けてしまう性質。',
+      '本当は進みたいのに怖れてしまい、変わりたいのに今の自分を手放せない。',
+      '自己葛藤に囚われる限り、人は戦うべき相手を見失い、自分自身を削り続けてしまう。'
+    ]
   }
 };
+// 第6段階（内的葛藤）：3つの自機アイコンが、互いに狙い合い体力を削り合う
+const bossInternalConflictDamagePerHit = 4; // 1回の攻撃で相手に与えるダメージ量
+const bossInternalConflictFireIntervalMs = 1400; // お互いを攻撃する間隔の基準値
+const bossInternalConflictLastStandDelayMs = 3000; // 最後の1人になってから爆発して消滅するまでの時間
 // 第4段階（承認欲求）：狙われただけで（当たらなくても）耐久力が少し回復してしまう。
 // パリィで打ち返した弾を当ててしまった場合は、さらに大きく回復する
 const bossApprovalFireHealAmount = 2;
@@ -4133,6 +4157,25 @@ function generateBossHoles(stage) {
         // 発射口ごとにランダムな初期位相を持たせ、全ての穴が同時に発射しないようにする
         fireTimerMs: Math.random() * bossFireIntervalMs,
         revive: true, showHealthBar: true
+      });
+    }
+    return holes;
+  }
+  if (stage === 6) {
+    // 第6段階「内的葛藤」：3つの自機アイコンが、ラスボスの範囲内を動き回りながら互いを狙い合う
+    for (let i = 0; i < def.holeCount; i++) {
+      let relX, relY, attempts = 0;
+      do {
+        relX = 0.2 + Math.random() * 0.6;
+        relY = 0.3 + Math.random() * 0.5;
+        attempts++;
+      } while (attempts < 20 && holes.some(h => Math.hypot(h.relX - relX, h.relY - relY) < bossHoleMinSpacing));
+      holes.push({
+        relX, relY, hitsTaken: 0, destroyed: false, flashTimerMs: 0, maxHits: def.hitsPerHole,
+        fireTimerMs: Math.random() * bossInternalConflictFireIntervalMs,
+        wanderTargetRelX: relX, wanderTargetRelY: relY,
+        wanderTimerMs: bossHoleWanderIntervalMinMs + Math.random() * (bossHoleWanderIntervalMaxMs - bossHoleWanderIntervalMinMs),
+        selfConflict: true
       });
     }
     return holes;
@@ -4251,11 +4294,24 @@ function updateBossEvent(dt) {
     if (hole.wanderTargetRelX !== undefined) {
       hole.wanderTimerMs -= dt * 1000;
       if (hole.wanderTimerMs <= 0) {
-        hole.wanderTargetRelX = 0.08 + Math.random() * 0.84;
-        hole.wanderTargetRelY = 0.25 + Math.random() * 0.65;
+        // 第6段階「内的葛藤」：時々、お互いから離れるように次の目標地点を選ぶ
+        const others = hole.selfConflict ? bossEvent.holes.filter(h => h !== hole && h.selfConflict && !h.destroyed) : [];
+        if (others.length > 0 && Math.random() < 0.5) {
+          const nearest = others.reduce((closest, h) => {
+            const d = Math.hypot(h.relX - hole.relX, h.relY - hole.relY);
+            return (!closest || d < closest.d) ? { h, d } : closest;
+          }, null).h;
+          const awayAngle = Math.atan2(hole.relY - nearest.relY, hole.relX - nearest.relX) + (Math.random() - 0.5) * 0.6;
+          const awayDist = 0.35 + Math.random() * 0.3;
+          hole.wanderTargetRelX = Math.min(0.92, Math.max(0.08, hole.relX + Math.cos(awayAngle) * awayDist));
+          hole.wanderTargetRelY = Math.min(0.9, Math.max(0.25, hole.relY + Math.sin(awayAngle) * awayDist));
+        } else {
+          hole.wanderTargetRelX = 0.08 + Math.random() * 0.84;
+          hole.wanderTargetRelY = 0.25 + Math.random() * 0.65;
+        }
         hole.wanderTimerMs = bossHoleWanderIntervalMinMs + Math.random() * (bossHoleWanderIntervalMaxMs - bossHoleWanderIntervalMinMs);
       }
-      // 第2段階「シャドウ」はゆっくり、第5段階「劣等感」は素早く動き回る
+      // 第2段階「シャドウ」はゆっくり、第5段階「劣等感」・第6段階「内的葛藤」は素早く動き回る
       const easeFactor = bossEvent.stage === 2 ? bossHoleWanderEaseFactorSlow : bossHoleWanderEaseFactor;
       const wanderEase = Math.min(1, dt * easeFactor);
       hole.relX += (hole.wanderTargetRelX - hole.relX) * wanderEase;
@@ -4268,12 +4324,55 @@ function updateBossEvent(dt) {
         hole.hitsTaken = Math.max(0, hole.hitsTaken - bossRegenPerSec * dt);
       }
     }
-    // 発射口ごとに独立したタイミングでランダムに発射する（全ての穴が同時に撃たないようにする）
+    // 発射口ごとに独立したタイミングでランダムに発射する（全ての穴が同時に撃たないようにする）。
+    // 第6段階「内的葛藤」は自機・同僚を攻撃せず、互いを攻撃し合う
     hole.fireTimerMs -= dt * 1000;
     if (hole.fireTimerMs <= 0) {
-      fireSingleBossHoleBullet(hole);
-      hole.fireTimerMs = bossFireIntervalMs * (0.6 + Math.random() * 0.8);
+      if (hole.selfConflict) {
+        performInternalConflictAttack(hole);
+        hole.fireTimerMs = bossInternalConflictFireIntervalMs * (0.7 + Math.random() * 0.6);
+      } else {
+        fireSingleBossHoleBullet(hole);
+        hole.fireTimerMs = bossFireIntervalMs * (0.6 + Math.random() * 0.8);
+      }
     }
+  }
+
+  // 第6段階「内的葛藤」：最後の1人になったら、少し待ってから爆発して消滅し、次の段階へ進む
+  if (bossEvent.stage === 6) {
+    const aliveSelfConflict = bossEvent.holes.filter(h => h.selfConflict && !h.destroyed);
+    if (aliveSelfConflict.length === 1) {
+      if (bossEvent.internalConflictLastStandTimerMs === undefined) {
+        bossEvent.internalConflictLastStandTimerMs = bossInternalConflictLastStandDelayMs;
+        showMessage('最後の1人になった……', 2200, '#ff1744', '20px sans-serif');
+      } else {
+        bossEvent.internalConflictLastStandTimerMs -= dt * 1000;
+        if (bossEvent.internalConflictLastStandTimerMs <= 0) {
+          const last = aliveSelfConflict[0];
+          const pos = getBossHoleAbsolutePosition(last);
+          spawnHitSpark(pos.x, pos.y, true);
+          explosionShakeTimer = Math.max(explosionShakeTimer, explosionEffectDuration);
+          bossEvent.internalConflictLastStandTimerMs = undefined;
+          finalizeBossHoleDestruction(last);
+        }
+      }
+    } else {
+      bossEvent.internalConflictLastStandTimerMs = undefined;
+    }
+  }
+}
+
+// 第6段階「内的葛藤」：ランダムに選んだ、生きている他の自機アイコンへ攻撃を行う（自機・同僚は対象にしない）
+function performInternalConflictAttack(hole) {
+  const others = bossEvent.holes.filter(h => h !== hole && h.selfConflict && !h.destroyed);
+  if (others.length === 0) return;
+  const target = others[Math.floor(Math.random() * others.length)];
+  target.hitsTaken += bossInternalConflictDamagePerHit;
+  target.flashTimerMs = bossHoleFlashDurationMs;
+  const pos = getBossHoleAbsolutePosition(target);
+  spawnHitSpark(pos.x, pos.y, false);
+  if (target.hitsTaken >= target.maxHits) {
+    finalizeBossHoleDestruction(target);
   }
 }
 
@@ -4290,15 +4389,9 @@ function autoParryByBossHole(bullet) {
   spawnDeflectEffect(bullet.x, bullet.y);
 }
 
-// 発射口に命中した弾を処理する。破壊しきい値に達したら穴を破壊し、
-// 段階の全ての穴が破壊されたら次の段階へ進める（最終段階なら撃破演出を開始する）
-function registerBossHoleHit(hole, hitX, hitY) {
-  hole.hitsTaken++;
-  hole.msSinceHit = 0; // 承認欲求：被弾した瞬間、回復までの猶予をリセットする
-  hole.flashTimerMs = bossHoleFlashDurationMs;
-  bossEvent.totalHitsLanded++;
-  spawnHitSpark(hitX, hitY, false);
-  if (hole.hitsTaken < hole.maxHits) return;
+// 発射口を破壊済みにし、段階の全ての穴が破壊されたら次の段階へ進める（最終段階なら撃破演出を開始する）。
+// 通常の被弾だけでなく、第6段階「内的葛藤」の内輪もめによる破壊（自爆含む）からも呼ばれる共通処理
+function finalizeBossHoleDestruction(hole) {
   hole.destroyed = true;
   if (hole.revive) hole.reviveTimerMs = bossReviveDelayMs;
   if (!bossEvent.holes.every(h => h.destroyed)) return;
@@ -4313,6 +4406,17 @@ function registerBossHoleHit(hole, hitX, hitY) {
   } else {
     startBossFinalSequence();
   }
+}
+
+// 発射口に命中した弾を処理する。破壊しきい値に達したら穴を破壊する
+function registerBossHoleHit(hole, hitX, hitY) {
+  hole.hitsTaken++;
+  hole.msSinceHit = 0; // 承認欲求：被弾した瞬間、回復までの猶予をリセットする
+  hole.flashTimerMs = bossHoleFlashDurationMs;
+  bossEvent.totalHitsLanded++;
+  spawnHitSpark(hitX, hitY, false);
+  if (hole.hitsTaken < hole.maxHits) return;
+  finalizeBossHoleDestruction(hole);
 }
 
 // 自機の狙いが発射口に重なっているかを調べ、重なっていればその穴を返す
@@ -6668,6 +6772,26 @@ function drawBossEvent() {
             ctx.fill();
           }
           ctx.restore();
+          if (hole.flashTimerMs > 0) {
+            ctx.beginPath();
+            ctx.fillStyle = `rgba(255, 255, 255, ${hole.flashTimerMs / bossHoleFlashDurationMs})`;
+            ctx.arc(hx, hy, bossHoleRadius * 1.35, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          continue;
+        }
+        if (hole.selfConflict) {
+          // 第6段階「内的葛藤」：3つの自機アイコン（シャドウと同じサイズ、色は通常のまま）が互いに動き回る
+          const iconImg = genderImageElements[selectedGender];
+          const iconSize = player.radius * 4.8;
+          if (iconImg && iconImg.complete && iconImg.naturalWidth > 0) {
+            ctx.drawImage(iconImg, hx - iconSize / 2, hy - iconSize / 2, iconSize, iconSize);
+          } else {
+            ctx.beginPath();
+            ctx.fillStyle = '#4dd0e1';
+            ctx.arc(hx, hy, player.radius, 0, Math.PI * 2);
+            ctx.fill();
+          }
           if (hole.flashTimerMs > 0) {
             ctx.beginPath();
             ctx.fillStyle = `rgba(255, 255, 255, ${hole.flashTimerMs / bossHoleFlashDurationMs})`;
