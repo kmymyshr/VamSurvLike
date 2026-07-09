@@ -3397,7 +3397,8 @@ const partnerAdventureScenes = {
 function startPartnerAdventure(onComplete) {
   const sceneKeys = Object.keys(partnerAdventureScenes);
   const scene = partnerAdventureScenes[sceneKeys[Math.floor(Math.random() * sceneKeys.length)]];
-  adventureState = { scene, nodeId: scene.start, onComplete };
+  // history：スレッド形式で表示する、これまでの同僚・自分のメッセージ履歴
+  adventureState = { scene, nodeId: scene.start, onComplete, history: [{ speaker: 'partner', text: scene.nodes[scene.start].text }] };
 }
 
 // アドベンチャーパートの選択肢を選ぶ。次のノードがあれば進み、なければ終了してonCompleteへ
@@ -3406,9 +3407,13 @@ function chooseAdventureOption(choiceIndex) {
   const node = adventureState.scene.nodes[adventureState.nodeId];
   const choice = node.choices[choiceIndex];
   if (!choice) return;
+  // 選んだ選択肢を、自分の発言としてスレッドに積む
+  adventureState.history.push({ speaker: 'player', text: choice.label });
   if (choice.effects) choice.effects();
   if (choice.next) {
     adventureState.nodeId = choice.next;
+    // 次のノードの本文を、同僚の発言としてスレッドに積む
+    adventureState.history.push({ speaker: 'partner', text: adventureState.scene.nodes[choice.next].text });
   } else {
     const onComplete = adventureState.onComplete;
     adventureState = null;
@@ -9151,33 +9156,108 @@ function draw() {
       { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
   }
 
-  // 「同僚と遊ぶ」アドベンチャーパート（簡易サウンドノベル）の画面
+  // 「同僚と遊ぶ」アドベンチャーパート：チャットのスレッド形式で、同僚・自分の発言を積み上げて表示する。
+  // 新しい発言が増えるたびに自動で一番下までスクロールし、選択肢は自分の入力欄のように画面下部へ表示する
   if (adventureState && !gameOver && !gameClear) {
     const node = adventureState.scene.nodes[adventureState.nodeId];
     ctx.fillStyle = 'rgba(4, 6, 12, 0.92)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    ctx.fillStyle = '#ffe0b2';
-    ctx.font = 'bold 20px sans-serif';
-    ctx.textAlign = 'left';
-    const textLines = wrapTextToWidth(node.text, canvas.width - 160);
-    textLines.forEach((line, i) => {
-      ctx.fillText(line, 80, 140 + i * 30);
-    });
+    // 画面下部：選択肢を並べる「入力欄」風のトレイ
+    const choiceBtnH = 50, choiceGap = 10, trayPadding = 18;
+    const trayContentH = node.choices.length * choiceBtnH + (node.choices.length - 1) * choiceGap;
+    const trayHintH = 26;
+    const trayH = trayContentH + trayPadding * 2 + trayHintH;
+    const trayX = 50, trayW = canvas.width - 100;
+    const trayY = canvas.height - trayH - 20;
 
-    const btnW2 = 560, btnH2 = 50;
-    const btnX2 = canvas.width / 2 - btnW2 / 2;
-    const choicesStartY = 140 + textLines.length * 30 + 40;
+    // 画面上部：スレッド（会話履歴）の表示範囲
+    const threadX = 50, threadW = canvas.width - 100;
+    const threadTop = 24;
+    const threadBottom = trayY - 16;
+    const threadH = threadBottom - threadTop;
+
+    // スレッド内の各発言（吹き出し）のレイアウトを、上から順に積み上げて計算する
+    ctx.font = 'bold 19px sans-serif';
+    const bubbleMaxTextWidth = threadW * 0.66;
+    const bubblePaddingX = 16, bubblePaddingY = 12, bubbleLineHeight = 26, nameLabelH = 20, entryGap = 16;
+    let contentH = 0;
+    const layout = adventureState.history.map(entry => {
+      const lines = wrapTextToWidth(entry.text, bubbleMaxTextWidth);
+      const lineWidth = Math.max(...lines.map(l => ctx.measureText(l).width), 40);
+      const bubbleW = Math.min(bubbleMaxTextWidth, lineWidth) + bubblePaddingX * 2;
+      const bubbleH = lines.length * bubbleLineHeight + bubblePaddingY * 2;
+      const entryH = nameLabelH + bubbleH + entryGap;
+      const item = { entry, lines, bubbleW, bubbleH, y: contentH + nameLabelH };
+      contentH += entryH;
+      return item;
+    });
+    // 新しい発言ほど下に来るので、はみ出した分だけ上へずらして「常に最新（一番下）が見える」ようにする（自動スクロール）
+    const scrollOffset = Math.max(0, contentH - threadH);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(threadX, threadTop, threadW, threadH);
+    ctx.clip();
+    layout.forEach(item => {
+      const isPartner = item.entry.speaker === 'partner';
+      const bubbleY = threadTop - scrollOffset + item.y;
+      if (bubbleY + item.bubbleH < threadTop || bubbleY > threadBottom) return; // 表示範囲外は描かない
+      const bubbleX = isPartner ? threadX : threadX + threadW - item.bubbleW;
+      ctx.font = 'bold 13px sans-serif';
+      ctx.fillStyle = isPartner ? '#80deea' : '#ce93d8';
+      ctx.textAlign = isPartner ? 'left' : 'right';
+      ctx.fillText(isPartner ? '同僚' : '自分', isPartner ? bubbleX + 4 : bubbleX + item.bubbleW - 4, bubbleY - 6);
+
+      ctx.fillStyle = isPartner ? 'rgba(0, 96, 100, 0.55)' : 'rgba(74, 20, 140, 0.55)';
+      ctx.strokeStyle = isPartner ? '#4dd0e1' : '#ce93d8';
+      ctx.lineWidth = 2;
+      if (ctx.roundRect) {
+        ctx.beginPath();
+        ctx.roundRect(bubbleX, bubbleY, item.bubbleW, item.bubbleH, 14);
+        ctx.fill();
+        ctx.stroke();
+      } else {
+        ctx.fillRect(bubbleX, bubbleY, item.bubbleW, item.bubbleH);
+        ctx.strokeRect(bubbleX, bubbleY, item.bubbleW, item.bubbleH);
+      }
+
+      ctx.font = 'bold 19px sans-serif';
+      ctx.fillStyle = '#fffaf0';
+      ctx.textAlign = 'left';
+      item.lines.forEach((line, li) => {
+        ctx.fillText(line, bubbleX + bubblePaddingX, bubbleY + bubblePaddingY + bubbleLineHeight * (li + 1) - 6);
+      });
+    });
+    ctx.restore();
+    ctx.textAlign = 'left';
+
+    // 画面下部：自分の「入力欄」のように、選択肢をそのまま選べるトレイ
+    ctx.fillStyle = 'rgba(20, 20, 30, 0.8)';
+    ctx.strokeStyle = '#7e57c2';
+    ctx.lineWidth = 2;
+    if (ctx.roundRect) {
+      ctx.beginPath();
+      ctx.roundRect(trayX, trayY, trayW, trayH, 18);
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      ctx.fillRect(trayX, trayY, trayW, trayH);
+      ctx.strokeRect(trayX, trayY, trayW, trayH);
+    }
+
     node.choices.forEach((choice, i) => {
-      drawUiButton(btnX2, choicesStartY + i * 60, btnW2, btnH2, `${i + 1}. ${choice.label}`,
-        () => chooseAdventureOption(i));
+      const by = trayY + trayPadding + i * (choiceBtnH + choiceGap);
+      drawUiButton(trayX + trayPadding, by, trayW - trayPadding * 2, choiceBtnH,
+        `${i + 1}. ${choice.label}`, () => chooseAdventureOption(i),
+        { fillStyle: 'rgba(103, 58, 183, 0.45)', strokeStyle: '#b39ddb', font: 'bold 17px sans-serif' });
     });
 
     ctx.fillStyle = '#cfd8dc';
-    ctx.font = '14px sans-serif';
+    ctx.font = '13px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('数字キー / タップで選択', canvas.width / 2,
-      choicesStartY + node.choices.length * 60 + 20);
+    ctx.fillText('数字キー / タップで選択',
+      canvas.width / 2, trayY + trayPadding + trayContentH + trayHintH - 4);
     ctx.textAlign = 'left';
   }
 
