@@ -475,7 +475,7 @@ let explosionShakeTimer = 0;
 let friendlyFireHitFlashTimer = 0;
 
 // ===== 脳疲労システム =====
-const maxFatigue = 100 + dreamMemorySave.upgrades.fatigueCap * 10; // 夢の記憶ポイントの「初期脳疲労の上限緩和」で底上げされる
+let maxFatigue = 100 + dreamMemorySave.upgrades.fatigueCap * 10; // 夢の記憶ポイントの「初期脳疲労の上限緩和」で底上げされる（ゲーム開始時にapplyDreamMemoryUpgradesForNewGameで再計算）
 let fatigue = 0; // 0が元気な状態、maxFatigueが疲労の限界
 
 // 時間帯が進むほど、回復してもここより下がらなくなる「脳疲労の下限」。
@@ -605,7 +605,7 @@ const idleRecoveryPerSec = 12; // 待機時の1秒あたりの回復量
 const timeOfDayFatigueMultiplierMax = 1.8; // 終業時刻ごろに到達する最大倍率（残業中はさらにやや伸びる）
 const stunRecoveryPerSec = 18; // 行動不能中は通常より早く疲労を回復する
 const fireRateMultiplier = 1.5; // 疲労が多いほど発射間隔を延ばす倍率
-const baseBulletDamage = 2 + dreamMemorySave.upgrades.bulletDamage; // 疲労がないときの基本攻撃力（夢の記憶ポイントの「初期攻撃力」で底上げされる）
+let baseBulletDamage = 2 + dreamMemorySave.upgrades.bulletDamage; // 疲労がないときの基本攻撃力（夢の記憶ポイントの「初期攻撃力」で底上げされる、ゲーム開始時にapplyDreamMemoryUpgradesForNewGameで再計算）
 
 // ===== 回復アイテム（チョコレート） =====
 const chocolateLifetimeMs = 10000; // 出現してから消えるまでの時間（10秒）
@@ -1207,9 +1207,9 @@ function endWorkday() {
 }
 // ===== SAN（精神力）システム =====
 // 「DreamCatcher」を購入していると、SAN上限は25に固定される（ラスボスに遭遇しやすくするため）
-const maxSan = dreamMemorySave.upgrades.dreamCatcher >= 1
+let maxSan = dreamMemorySave.upgrades.dreamCatcher >= 1
   ? 25
-  : 100 + dreamMemorySave.upgrades.maxSan * 10; // 夢の記憶ポイントの「初期SAN上限」で底上げされる
+  : 100 + dreamMemorySave.upgrades.maxSan * 10; // 夢の記憶ポイントの「初期SAN上限」で底上げされる（ゲーム開始時にapplyDreamMemoryUpgradesForNewGameで再計算）
 let san = maxSan;
 
 // SANが減少する量
@@ -1229,7 +1229,7 @@ let friendlyFireInvincibleTimer = 0;
 // ===== 寿命（健康）システム =====
 // SANダメージの蓄積や、脳疲労・SANの悪い状態が長く続くことで少しずつ削れていく。
 // 0になったらSANとは別にゲームオーバーになる（＝一時的にSANを回復させても、慢性的な消耗の蓄積だけは元に戻らない）
-const maxLifespan = 100 + dreamMemorySave.upgrades.maxLifespan * 10; // 夢の記憶ポイントの「初期寿命上限」で底上げされる
+let maxLifespan = 100 + dreamMemorySave.upgrades.maxLifespan * 10; // 夢の記憶ポイントの「初期寿命上限」で底上げされる（ゲーム開始時にapplyDreamMemoryUpgradesForNewGameで再計算）
 let lifespan = maxLifespan;
 const sanDamageToLifespanRatio = 0.15; // SANダメージを受けるたびに、その15%ぶん寿命も削れる
 const highFatigueThresholdRatio = 0.8; // 脳疲労がこの割合を超えている状態を「高疲労」とみなす
@@ -1525,7 +1525,7 @@ const partnerInvincibleDuration = 1200;
 const partnerLossSanPenalty = 20; // 同僚が力尽きたとき、プレイヤーが受けるSANダメージ
 const partnerRelationshipMax = 100;
 // 夢の記憶ポイントの「同僚との初期関係性」で底上げされる（上限は超えない）
-const partnerRelationshipInitial = Math.min(partnerRelationshipMax, 50 + dreamMemorySave.upgrades.partnerBond * 5);
+let partnerRelationshipInitial = Math.min(partnerRelationshipMax, 50 + dreamMemorySave.upgrades.partnerBond * 5); // ゲーム開始時にapplyDreamMemoryUpgradesForNewGameで再計算
 const partnerRelationshipSafeFireThreshold = 50;
 const partnerRelationshipDamagePerHit = 15;
 const partnerRelationshipRetaliationThreshold = 40;
@@ -2209,7 +2209,7 @@ function nextMonday(date) {
 }
 
 // 夢の記憶ポイントの「週間ノルマ緩和」による軽減倍率（レベルごとに3%緩和、最大15%）
-const weeklyQuotaEaseMultiplier = 1 - dreamMemorySave.upgrades.quotaEase * 0.03;
+let weeklyQuotaEaseMultiplier = 1 - dreamMemorySave.upgrades.quotaEase * 0.03; // ゲーム開始時にapplyDreamMemoryUpgradesForNewGameで再計算
 
 // ランクに応じて今週のノルマを再設定する
 // 集中して手を止めずにプレイしてようやく届く程度の、ぎりぎり達成できる水準にしてある
@@ -3066,8 +3066,27 @@ function selectMode(timeScale) {
   setupStep = 'gender';
 }
 
+// タイトル画面の「夢の記憶ポイントで強化」でレベルを購入・払い戻し（思い直す）した内容を、
+// これから始まるゲームの初期値に反映する。これらの値はスクリプト読み込み時に一度だけ計算されるため、
+// ゲーム開始直前に呼び直さないと、同じページを読み込んだままショップで変更した内容が実際のプレイに反映されないバグがあった
+function applyDreamMemoryUpgradesForNewGame() {
+  score = dreamMemorySave.upgrades.startScore * 20;
+  maxFatigue = 100 + dreamMemorySave.upgrades.fatigueCap * 10;
+  baseBulletDamage = 2 + dreamMemorySave.upgrades.bulletDamage;
+  maxSan = dreamMemorySave.upgrades.dreamCatcher >= 1 ? 25 : 100 + dreamMemorySave.upgrades.maxSan * 10;
+  san = maxSan;
+  maxLifespan = 100 + dreamMemorySave.upgrades.maxLifespan * 10;
+  lifespan = maxLifespan;
+  skillLevel = dreamMemorySave.upgrades.skillLevel;
+  partnerRelationshipInitial = Math.min(partnerRelationshipMax, 50 + dreamMemorySave.upgrades.partnerBond * 5);
+  weeklyQuotaEaseMultiplier = 1 - dreamMemorySave.upgrades.quotaEase * 0.03;
+  partnerParryChance = Math.min(1, 0.3 + dreamMemorySave.upgrades.partnerAutoParry * 0.14);
+  player.speed = 4 + dreamMemorySave.upgrades.moveSpeed * 0.3;
+}
+
 // 性別・アイコンの選択が完了した時点で、実際にゲームを開始する
 function beginGameplay() {
+  applyDreamMemoryUpgradesForNewGame();
   gameClockMs = 0;
   lastUpdate = Date.now();
   lastHourTime = 0;
@@ -3917,7 +3936,7 @@ function damagePartnerByMidBossBullet() {
 const deflectRange = 90; // これより近くにある同僚弾だけをパリィできる（やや緩めの判定）
 // 同僚が被弾しそうな時にパリィする確率。デフォルト30%で、夢の記憶ポイントの
 // 「同僚のオートパリィレベル」で最大100%まで強化できる
-const partnerParryChance = Math.min(1, 0.3 + dreamMemorySave.upgrades.partnerAutoParry * 0.14);
+let partnerParryChance = Math.min(1, 0.3 + dreamMemorySave.upgrades.partnerAutoParry * 0.14); // ゲーム開始時にapplyDreamMemoryUpgradesForNewGameで再計算
 const deflectDamageMultiplier = 2; // パリィした弾は通常の2倍のダメージになる
 const deflectFatigueCost = 5; // キーを振るたび（成否問わず）暫定的に蓄積する脳疲労
 function attemptDeflectPartnerBullet() {
@@ -6269,16 +6288,29 @@ function draw() {
   if (startScreen) {
     drawSetupBackground();
     ctx.save();
-    ctx.font = 'bold 52px "Comic Sans MS", "Chalkboard SE", "Marker Felt", cursive, sans-serif';
+    ctx.font = 'bold 38px "Comic Sans MS", "Chalkboard SE", "Marker Felt", cursive, sans-serif';
     ctx.textAlign = 'center';
     ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
     ctx.shadowBlur = 6;
     ctx.shadowOffsetY = 3;
     ctx.lineWidth = 6;
     ctx.strokeStyle = '#ff8fab';
-    ctx.strokeText('Workin’ FunDead', canvas.width / 2, canvas.height / 2 - 130);
+    ctx.strokeText('ここで寝たらただのサラリーマン', canvas.width / 2, canvas.height / 2 - 154);
     ctx.fillStyle = '#fffaf0';
-    ctx.fillText('Workin’ FunDead', canvas.width / 2, canvas.height / 2 - 130);
+    ctx.fillText('ここで寝たらただのサラリーマン', canvas.width / 2, canvas.height / 2 - 154);
+    ctx.restore();
+
+    ctx.save();
+    ctx.font = 'bold 24px "Comic Sans MS", "Chalkboard SE", "Marker Felt", cursive, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+    ctx.shadowBlur = 4;
+    ctx.shadowOffsetY = 2;
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = '#ff8fab';
+    ctx.strokeText('Workin’ FunDead', canvas.width / 2, canvas.height / 2 - 118);
+    ctx.fillStyle = '#fffaf0';
+    ctx.fillText('Workin’ FunDead', canvas.width / 2, canvas.height / 2 - 118);
     ctx.restore();
     ctx.textAlign = 'left';
 
