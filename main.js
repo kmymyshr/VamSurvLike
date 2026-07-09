@@ -3913,7 +3913,10 @@ const parryBulletSpeedMultiplier = 1.5; // パリィした弾は、パリィ前�
 function performBulletParry(bullet, fromX, fromY, actorAngle) {
   const speed = (Math.hypot(bullet.vx, bullet.vy) || 6) * parryBulletSpeedMultiplier;
   let angle;
-  if (bullet.sourceHole && !bullet.sourceHole.destroyed &&
+  if (bullet.stage3Reflected) {
+    // 第3段階「確証バイアス」に跳ね返された弾は、再度パリィしてもランダムな方向へ飛ぶ
+    angle = Math.random() * Math.PI * 2;
+  } else if (bullet.sourceHole && !bullet.sourceHole.destroyed &&
       (bullet.sourceHoleKind === 'midBoss' ? midBossEvent : bossEvent)) {
     // ラスボス・中ボス弾は、それを撃った発射口へ打ち返す
     const holePos = bullet.sourceHoleKind === 'midBoss'
@@ -3964,20 +3967,40 @@ const bossFireIntervalMs = 1300;
 const bossBulletSpeed = 4.2;
 const bossBulletDamageSan = 12;
 const bossBulletDamageLifespan = 3;
-// 段階ごとの発射口（穴）の数：5個すべて破壊→7個をランダム配置→10個がランダムに動き回る
-const bossHoleCountsByStage = [5, 7, 10];
+// 5段階、各段階ごとに性質の異なる発射口を持つ（耐久力は以前の設定の約30%に調整済み）
+const bossStageDefs = [
+  {
+    stage: 1, name: 'ダークテトラッド', nameEn: 'Dark Tetrad',
+    holeCount: 4, hitsPerHole: 25, layout: 'fixed'
+  },
+  {
+    stage: 2, name: 'シャドウ', nameEn: 'Shadow',
+    holeCount: 2, hitsPerHole: 40, layout: 'wander-slow', disguise: true
+  },
+  {
+    stage: 3, name: '確証バイアス', nameEn: 'Confirmation Bias',
+    holeCount: 3, hitsPerHole: 20, layout: 'fixed', parryOnly: true
+  },
+  {
+    stage: 4, name: '承認欲求', nameEn: 'Need for Approval',
+    holeCount: 1, hitsPerHole: 50, layout: 'fixed', regen: true, burstDirections: 5
+  },
+  {
+    stage: 5, name: '劣等感', nameEn: 'Inferiority Feelings',
+    holeCount: 10, hitsPerHole: 1, layout: 'wander-fast'
+  }
+];
 const bossHoleRadius = 16;
 const bossHoleFlashDurationMs = 220; // 命中した瞬間、穴を光らせて着弾を示す時間
-// 全体で「1万発当てないと壊れない」程度の耐久力になるよう、穴1個あたりの必要命中数を割り出す
-const bossTotalHitsToDefeat = 10000;
-const bossHitsPerHole = Math.round(
-  (bossTotalHitsToDefeat / bossHoleCountsByStage.reduce((a, b) => a + b, 0)) * 0.1
-);
-// 段階2・3のランダム配置の間隔と、段階3の移動先を変える間隔
+// 段階2・3・4・5のランダム配置の間隔と、動き回る穴の移動先を変える間隔
 const bossHoleMinSpacing = 0.16; // 相対座標（0〜1）での最低距離
 const bossHoleWanderIntervalMinMs = 900;
 const bossHoleWanderIntervalMaxMs = 1600;
-const bossHoleWanderEaseFactor = 2.2;
+const bossHoleWanderEaseFactor = 2.2; // 第5段階（劣等感）：素早く動き回る
+const bossHoleWanderEaseFactorSlow = 0.5; // 第2段階（シャドウ）：ゆっくり動き回る
+// 第4段階（承認欲求）：被弾していない間、耐久力が少しずつ回復する
+const bossRegenGraceMs = 1500;
+const bossRegenPerSec = 3;
 // 本体が上下左右にゆっくり動き回る範囲と、目標地点を変える間隔
 const bossMoveRangeX = 50;
 const bossMoveRangeY = 26;
@@ -4035,22 +4058,23 @@ function checkBossEventTrigger() {
 
 // 段階に応じた発射口を生成する（相対座標 relX/relY で持ち、ラスボス本体の動きに追従させる）
 function generateBossHoles(stage) {
-  const count = bossHoleCountsByStage[stage - 1];
+  const def = bossStageDefs[stage - 1];
   const holes = [];
   if (stage === 1) {
-    // 第1段階は、既存の見た目に合わせて横一列に均等配置する
-    for (let i = 0; i < count; i++) {
+    // 第1段階「ダークテトラッド」：横一列に均等配置し、位置は変わらない
+    for (let i = 0; i < def.holeCount; i++) {
       holes.push({
-        relX: (i + 1) / (count + 1), relY: 0.65,
-        hitsTaken: 0, destroyed: false, flashTimerMs: 0,
+        relX: (i + 1) / (def.holeCount + 1), relY: 0.65,
+        hitsTaken: 0, destroyed: false, flashTimerMs: 0, maxHits: def.hitsPerHole,
         // 発射口ごとにランダムな初期位相を持たせ、全ての穴が同時に発射しないようにする
         fireTimerMs: Math.random() * bossFireIntervalMs
       });
     }
     return holes;
   }
-  // 第2・3段階は、ある程度の間隔を保ちつつランダムな位置に配置する
-  for (let i = 0; i < count; i++) {
+  // それ以外の段階は、ある程度の間隔を保ちつつランダムな位置に配置する
+  // （'wander-slow'・'wander-fast'は後で動き回り、'fixed'はこの位置のまま固定される）
+  for (let i = 0; i < def.holeCount; i++) {
     let relX, relY, attempts = 0;
     do {
       relX = 0.08 + Math.random() * 0.84;
@@ -4058,15 +4082,19 @@ function generateBossHoles(stage) {
       attempts++;
     } while (attempts < 20 && holes.some(h => Math.hypot(h.relX - relX, h.relY - relY) < bossHoleMinSpacing));
     const hole = {
-      relX, relY, hitsTaken: 0, destroyed: false, flashTimerMs: 0,
+      relX, relY, hitsTaken: 0, destroyed: false, flashTimerMs: 0, maxHits: def.hitsPerHole,
       fireTimerMs: Math.random() * bossFireIntervalMs
     };
-    if (stage === 3) {
-      // 第3段階の穴は、ラスボス上をランダムに動き回る
+    if (def.layout === 'wander-slow' || def.layout === 'wander-fast') {
       hole.wanderTargetRelX = relX;
       hole.wanderTargetRelY = relY;
       hole.wanderTimerMs = bossHoleWanderIntervalMinMs + Math.random() * (bossHoleWanderIntervalMaxMs - bossHoleWanderIntervalMinMs);
     }
+    if (def.parryOnly) hole.parryOnly = true;
+    if (def.regen) hole.regen = true;
+    if (def.burstDirections) hole.burstDirections = def.burstDirections;
+    // 第2段階「シャドウ」：1つは自機、もう1つは同僚を模した半透明アイコンにする
+    if (def.disguise) hole.disguiseRole = i === 0 ? 'player' : 'partner';
     holes.push(hole);
   }
   return holes;
@@ -4139,20 +4167,29 @@ function updateBossEvent(dt) {
 
   checkBossContactDamage();
 
-  // 発射口の点滅（被弾エフェクト）を減衰させ、第3段階なら穴自体もランダムに動かす
+  // 発射口の点滅（被弾エフェクト）を減衰させ、段階に応じて穴自体を動かしたり回復させたりする
   for (const hole of bossEvent.holes) {
     if (hole.flashTimerMs > 0) hole.flashTimerMs = Math.max(0, hole.flashTimerMs - dt * 1000);
     if (hole.destroyed) continue;
-    if (bossEvent.stage === 3) {
+    if (hole.wanderTargetRelX !== undefined) {
       hole.wanderTimerMs -= dt * 1000;
       if (hole.wanderTimerMs <= 0) {
         hole.wanderTargetRelX = 0.08 + Math.random() * 0.84;
         hole.wanderTargetRelY = 0.25 + Math.random() * 0.65;
         hole.wanderTimerMs = bossHoleWanderIntervalMinMs + Math.random() * (bossHoleWanderIntervalMaxMs - bossHoleWanderIntervalMinMs);
       }
-      const wanderEase = Math.min(1, dt * bossHoleWanderEaseFactor);
+      // 第2段階「シャドウ」はゆっくり、第5段階「劣等感」は素早く動き回る
+      const easeFactor = bossEvent.stage === 2 ? bossHoleWanderEaseFactorSlow : bossHoleWanderEaseFactor;
+      const wanderEase = Math.min(1, dt * easeFactor);
       hole.relX += (hole.wanderTargetRelX - hole.relX) * wanderEase;
       hole.relY += (hole.wanderTargetRelY - hole.relY) * wanderEase;
+    }
+    // 第4段階「承認欲求」：しばらく被弾していないと、耐久力が少しずつ回復する
+    if (hole.regen) {
+      hole.msSinceHit = (hole.msSinceHit || 0) + dt * 1000;
+      if (hole.msSinceHit > bossRegenGraceMs && hole.hitsTaken > 0) {
+        hole.hitsTaken = Math.max(0, hole.hitsTaken - bossRegenPerSec * dt);
+      }
     }
     // 発射口ごとに独立したタイミングでランダムに発射する（全ての穴が同時に撃たないようにする）
     hole.fireTimerMs -= dt * 1000;
@@ -4163,21 +4200,36 @@ function updateBossEvent(dt) {
   }
 }
 
+// 第3段階「確証バイアス」：自機・同僚の通常弾を自動的にパリィし、ランダムな方向へ跳ね返す。
+// 跳ね返った弾はそのまま敵の攻撃として扱われるが、こちらが改めてパリィで打ち返せば有効打になる
+function autoParryByBossHole(bullet) {
+  const speed = Math.hypot(bullet.vx, bullet.vy) || bossBulletSpeed;
+  const angle = Math.random() * Math.PI * 2;
+  bullet.vx = Math.cos(angle) * speed;
+  bullet.vy = Math.sin(angle) * speed;
+  bullet.owner = 'boss';
+  bullet.sourceHole = undefined;
+  bullet.stage3Reflected = true;
+  spawnDeflectEffect(bullet.x, bullet.y);
+}
+
 // 発射口に命中した弾を処理する。破壊しきい値に達したら穴を破壊し、
 // 段階の全ての穴が破壊されたら次の段階へ進める（最終段階なら撃破演出を開始する）
 function registerBossHoleHit(hole, hitX, hitY) {
   hole.hitsTaken++;
+  hole.msSinceHit = 0; // 承認欲求：被弾した瞬間、回復までの猶予をリセットする
   hole.flashTimerMs = bossHoleFlashDurationMs;
   bossEvent.totalHitsLanded++;
   spawnHitSpark(hitX, hitY, false);
-  if (hole.hitsTaken < bossHitsPerHole) return;
+  if (hole.hitsTaken < hole.maxHits) return;
   hole.destroyed = true;
   if (!bossEvent.holes.every(h => h.destroyed)) return;
-  if (bossEvent.stage < bossHoleCountsByStage.length) {
+  if (bossEvent.stage < bossStageDefs.length) {
     bossEvent.stage++;
     bossEvent.holes = generateBossHoles(bossEvent.stage);
+    const nextDef = bossStageDefs[bossEvent.stage - 1];
     showMessage(
-      `発射口をすべて破壊した！ さらに${bossEvent.holes.length}個の発射口が現れた……`,
+      `突破した！ 次は「${nextDef.name} / ${nextDef.nameEn}」……${bossEvent.holes.length}個の発射口が現れた`,
       3200, '#ff1744', '22px sans-serif'
     );
   } else {
@@ -4227,17 +4279,12 @@ function checkBossContactDamage() {
   }
 }
 
-// 発射口1つぶんの弾を発射する（発射口ごとに独立したタイミングで呼ばれる）
-function fireSingleBossHoleBullet(hole) {
-  const pos = getBossHoleAbsolutePosition(hole);
-  // 穴ごとに、自機・同僚のどちらを狙うかをランダムに決める（同僚も直接狙われる）
-  const target = (partner.active && Math.random() < 0.5) ? partner : player;
-  const angle = Math.atan2(target.y - pos.y, target.x - pos.x) + (Math.random() - 0.5) * 0.35;
+function pushBossHoleBullet(pos, angle, hole, speedMultiplier = 1) {
   bullets.push({
     x: pos.x,
     y: pos.y,
-    vx: Math.cos(angle) * bossBulletSpeed,
-    vy: Math.sin(angle) * bossBulletSpeed,
+    vx: Math.cos(angle) * bossBulletSpeed * speedMultiplier,
+    vy: Math.sin(angle) * bossBulletSpeed * speedMultiplier,
     radius: 7,
     damage: 1,
     bounces: 0,
@@ -4245,6 +4292,39 @@ function fireSingleBossHoleBullet(hole) {
     sourceHole: hole, // パリィで打ち返した時、この発射口へ向けて反射させるために覚えておく
     sourceHoleKind: 'boss'
   });
+}
+
+// 発射口1つぶんの弾を発射する（発射口ごとに独立したタイミングで呼ばれる）
+function fireSingleBossHoleBullet(hole) {
+  const pos = getBossHoleAbsolutePosition(hole);
+  // 第4段階「承認欲求」：同時に5方向へ発射する
+  if (hole.burstDirections) {
+    const baseAngle = Math.random() * Math.PI * 2;
+    for (let i = 0; i < hole.burstDirections; i++) {
+      pushBossHoleBullet(pos, baseAngle + (Math.PI * 2 * i) / hole.burstDirections, hole);
+    }
+    return;
+  }
+  // 第2段階「シャドウ」：自機・同僚それぞれの戦い方を真似た攻撃をしてくる
+  if (hole.disguiseRole === 'player') {
+    // 自機の「マルチタスク」を真似て、わずかにずらした2発を素早く撃つ
+    const baseAngle = Math.atan2(player.y - pos.y, player.x - pos.x);
+    [-0.15, 0.15].forEach(offset => {
+      pushBossHoleBullet(pos, baseAngle + offset, hole, 1.3);
+    });
+    return;
+  }
+  if (hole.disguiseRole === 'partner') {
+    // 同僚のように、自機・同僚のどちらかをランダムに狙い、狙いにやや幅を持たせる
+    const target = (partner.active && Math.random() < 0.5) ? partner : player;
+    const angle = Math.atan2(target.y - pos.y, target.x - pos.x) + (Math.random() - 0.5) * 0.5;
+    pushBossHoleBullet(pos, angle, hole);
+    return;
+  }
+  // 穴ごとに、自機・同僚のどちらを狙うかをランダムに決める（同僚も直接狙われる）
+  const target = (partner.active && Math.random() < 0.5) ? partner : player;
+  const angle = Math.atan2(target.y - pos.y, target.x - pos.x) + (Math.random() - 0.5) * 0.35;
+  pushBossHoleBullet(pos, angle, hole);
 }
 
 // 同僚と同じ誤射ダメージ量で、ラスボス弾による被弾を処理する（パリィ成功時はここに来ない）
@@ -4422,7 +4502,7 @@ const midBossFireIntervalMs = 1300;
 const midBossBulletSpeed = 4.0;
 const midBossBulletDamageSan = 8;
 const midBossBulletDamageLifespan = 2;
-const midBossHitsPerHoleBase = 100; // DAY7時点の耐久力（自機初期状態の通常攻撃100発相当）
+const midBossHitsPerHoleBase = 30; // DAY7時点の耐久力（以前の設定の約30%）
 const midBossScoreReward = 150; // 通常の敵より多めのスコア
 const midBossRetreatDurationMs = 3000; // 振動・フェードアウトして消えるまでの時間
 let midBossEvent = null; // null、または { phase, holes, currentPhaseIndex, hitsPerHole, descendProgress, fireTimerMs, roamX, roamY, moveTargetX, moveTargetY, moveTimerMs, retreatTimerMs, phaseTextAlpha, phaseTextFadingOut }
@@ -5837,18 +5917,24 @@ function update() {
         continue;
       }
     }
-    // ラスボスへの命中判定。自機の通常弾・パリィで打ち返した弾（'deflected'）が発射口に当たると有効打になる。
+    // ラスボスへの命中判定。自機・同僚の通常弾、パリィで打ち返した弾（'deflected'）が発射口に当たると有効打になる。
     // 発射口以外に当たった弾はそのまま素通りする
-    if (bossEvent && (b.owner === 'player' || b.owner === 'deflected')) {
+    if (bossEvent && (b.owner === 'player' || b.owner === 'deflected' || b.owner === 'partner')) {
       const hitHole = findHitBossHole(b.x, b.y);
       if (hitHole) {
+        if (hitHole.parryOnly && b.owner !== 'deflected') {
+          // 第3段階「確証バイアス」：通常弾は完全にパリィされ、ランダムな方向へ跳ね返る。
+          // 弾自体は消費せず、以後は敵の攻撃として扱う（打ち返せばダメージが通る）
+          autoParryByBossHole(b);
+          continue;
+        }
         registerBossHoleHit(hitHole, b.x, b.y);
         bullets.splice(i, 1);
         continue;
       }
     }
-    // 「巨大案件」への命中判定。こちらは通常の攻撃（自機の弾）でも発射口を破壊できる
-    if (midBossEvent && (b.owner === 'player' || b.owner === 'deflected')) {
+    // 「巨大案件」への命中判定。こちらは通常の攻撃（自機・同僚の弾）でも発射口を破壊できる
+    if (midBossEvent && (b.owner === 'player' || b.owner === 'deflected' || b.owner === 'partner')) {
       const hitMidHole = findHitMidBossHole(b.x, b.y);
       if (hitMidHole) {
         registerMidBossHoleHit(hitMidHole, b.x, b.y);
@@ -6262,20 +6348,20 @@ function drawBackground() {
 }
 
 // ラスボス出現中の画面演出（暗く赤みがかった夜のような雰囲気）と、仮の見た目を描く
+// 撃破演出：本体はその場に留まったまま、画像の縁から中央に向かって消滅していく（0〜dissolveDurationMs）。
+// 消滅しきったら、その場に自機のアイコンが現れ（フェードイン）、少し留まってからフェードアウトする
+const bossDefeatDissolveDurationMs = 5000;
+const bossDefeatIconFadeInMs = 500;
+const bossDefeatIconHoldMs = 1500;
 function drawBossEvent() {
   if (!bossEvent) return;
   const geo = getBossGeometry();
 
-  // 撃破後の退場演出中は、振動しながら・透明になりながら画面上へ完全に引き下がる
+  // 撃破後の退場演出中：本体は動かず、その場で縁から中央に向かって消滅していく
   const retreating = bossFinalSequence && bossFinalSequence.phase === 'retreat';
-  const retreatProgress = retreating
-    ? Math.min(1, bossFinalSequence.phaseTimerMs / bossFinalRetreatDurationMs)
-    : 0;
-  // 透明化は退場の進み具合の150%の速さで進める（振動の幅は半分、頻度は倍にする）
-  const retreatFadeProgress = Math.min(1, retreatProgress * 1.5);
-  const retreatAlpha = 1 - retreatFadeProgress;
-  const retreatOffsetY = -retreatProgress * (bossHeight + 400);
-  const retreatShakeX = retreating ? Math.sin(gameClockMs / 17.5) * 5 * (1 - retreatProgress * 0.3) : 0;
+  const retreatMs = retreating ? bossFinalSequence.phaseTimerMs : 0;
+  const dissolveProgress = retreating ? Math.min(1, retreatMs / bossDefeatDissolveDurationMs) : 0;
+  const bodyAlpha = 1 - dissolveProgress;
 
   // 画面全体を、赤黒く沈んだ夜のような色合いに染める
   ctx.save();
@@ -6287,63 +6373,128 @@ function drawBossEvent() {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.restore();
 
-  // ラスボス本体：last_boss.png を、目・口のあたりが見えるように下寄りを切り出して表示する
-  ctx.save();
-  ctx.globalAlpha = retreatAlpha;
-  const bodyX = geo.x + retreatShakeX;
-  const bodyY = geo.y + retreatOffsetY;
-  ctx.fillStyle = 'rgba(6, 2, 10, 0.9)';
-  ctx.fillRect(bodyX, bodyY, geo.width, geo.height);
-  if (bossImage.complete && bossImage.naturalWidth > 0) {
-    const scale = geo.width / bossImage.naturalWidth;
-    const sourceHeight = Math.min(bossImage.naturalHeight, geo.height / scale);
-    const sourceY = Math.max(0, bossImage.naturalHeight * 0.42);
-    const clampedSourceHeight = Math.min(sourceHeight, bossImage.naturalHeight - sourceY);
-    ctx.drawImage(
-      bossImage,
-      0, sourceY, bossImage.naturalWidth, clampedSourceHeight,
-      bodyX, bodyY, geo.width, clampedSourceHeight * scale
-    );
-  }
+  if (bodyAlpha > 0) {
+    // ラスボス本体：last_boss.png を、目・口のあたりが見えるように下寄りを切り出して表示する。
+    // 撃破後は、縁から中央に向かって縮んでいく矩形でクリップし、その場で消滅していくように見せる
+    ctx.save();
+    if (retreating) {
+      const insetW = geo.width * dissolveProgress * 0.5;
+      const insetH = geo.height * dissolveProgress * 0.5;
+      ctx.beginPath();
+      ctx.rect(geo.x + insetW, geo.y + insetH, Math.max(0, geo.width - insetW * 2), Math.max(0, geo.height - insetH * 2));
+      ctx.clip();
+    }
+    const bodyX = geo.x;
+    const bodyY = geo.y;
+    ctx.fillStyle = 'rgba(6, 2, 10, 0.9)';
+    ctx.fillRect(bodyX, bodyY, geo.width, geo.height);
+    if (bossImage.complete && bossImage.naturalWidth > 0) {
+      const scale = geo.width / bossImage.naturalWidth;
+      const sourceHeight = Math.min(bossImage.naturalHeight, geo.height / scale);
+      const sourceY = Math.max(0, bossImage.naturalHeight * 0.42);
+      const clampedSourceHeight = Math.min(sourceHeight, bossImage.naturalHeight - sourceY);
+      ctx.drawImage(
+        bossImage,
+        0, sourceY, bossImage.naturalWidth, clampedSourceHeight,
+        bodyX, bodyY, geo.width, clampedSourceHeight * scale
+      );
+    }
 
-  // 発射口を描く：健在なら赤く脈打つ光（被弾直後は白く点滅）、破壊済みなら黒く焼け落ちた見た目にする
-  for (const hole of bossEvent.holes) {
-    const pos = getBossHoleAbsolutePosition(hole);
-    const hx = pos.x + retreatShakeX;
-    const hy = pos.y + retreatOffsetY;
-    if (hole.destroyed) {
-      ctx.beginPath();
-      ctx.fillStyle = 'rgba(15, 15, 15, 0.85)';
-      ctx.arc(hx, hy, bossHoleRadius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(90, 90, 90, 0.6)';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      continue;
+    if (!retreating) {
+      // 発射口を描く：健在なら赤く脈打つ光（被弾直後は白く点滅）、破壊済みなら黒く焼け落ちた見た目にする。
+      // 第2段階「シャドウ」は、赤い光の代わりに半透明の自機・同僚アイコンとして表示する
+      for (const hole of bossEvent.holes) {
+        const pos = getBossHoleAbsolutePosition(hole);
+        const hx = pos.x;
+        const hy = pos.y;
+        if (hole.destroyed) {
+          ctx.beginPath();
+          ctx.fillStyle = 'rgba(15, 15, 15, 0.85)';
+          ctx.arc(hx, hy, bossHoleRadius, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(90, 90, 90, 0.6)';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          continue;
+        }
+        if (hole.disguiseRole) {
+          const iconImg = hole.disguiseRole === 'player'
+            ? genderImageElements[selectedGender]
+            : partnerIconImageElements[selectedPartnerIcon];
+          ctx.save();
+          ctx.globalAlpha = 0.55;
+          if (iconImg && iconImg.complete && iconImg.naturalWidth > 0) {
+            const iconSize = bossHoleRadius * 2.4;
+            ctx.drawImage(iconImg, hx - iconSize / 2, hy - iconSize / 2, iconSize, iconSize);
+          } else {
+            ctx.beginPath();
+            ctx.fillStyle = hole.disguiseRole === 'player' ? '#4dd0e1' : '#80cbc4';
+            ctx.arc(hx, hy, bossHoleRadius, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.restore();
+          if (hole.flashTimerMs > 0) {
+            ctx.beginPath();
+            ctx.fillStyle = `rgba(255, 255, 255, ${hole.flashTimerMs / bossHoleFlashDurationMs})`;
+            ctx.arc(hx, hy, bossHoleRadius * 1.35, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          continue;
+        }
+        const pulse = 0.6 + 0.4 * Math.sin(gameClockMs / 220 + pos.x);
+        const damageRatio = hole.hitsTaken / hole.maxHits;
+        ctx.beginPath();
+        ctx.fillStyle = hole.parryOnly
+          ? `rgba(180, 30, 255, ${0.55 * pulse})`
+          : `rgba(255, ${Math.round(30 + damageRatio * 140)}, 30, ${0.55 * pulse})`;
+        ctx.shadowColor = hole.parryOnly ? '#b428ff' : '#ff1744';
+        ctx.shadowBlur = 16;
+        ctx.arc(hx, hy, bossHoleRadius, 0, Math.PI * 2);
+        ctx.fill();
+        // 命中した瞬間、穴を白く点滅させて着弾したことが分かるようにする
+        if (hole.flashTimerMs > 0) {
+          ctx.shadowBlur = 0;
+          ctx.beginPath();
+          ctx.fillStyle = `rgba(255, 255, 255, ${hole.flashTimerMs / bossHoleFlashDurationMs})`;
+          ctx.arc(hx, hy, bossHoleRadius * 1.35, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
     }
-    const pulse = 0.6 + 0.4 * Math.sin(gameClockMs / 220 + pos.x);
-    const damageRatio = hole.hitsTaken / bossHitsPerHole;
-    ctx.beginPath();
-    ctx.fillStyle = `rgba(255, ${Math.round(30 + damageRatio * 140)}, 30, ${0.55 * pulse})`;
-    ctx.shadowColor = '#ff1744';
-    ctx.shadowBlur = 16;
-    ctx.arc(hx, hy, bossHoleRadius, 0, Math.PI * 2);
-    ctx.fill();
-    // 命中した瞬間、穴を白く点滅させて着弾したことが分かるようにする
-    if (hole.flashTimerMs > 0) {
-      ctx.shadowBlur = 0;
-      ctx.beginPath();
-      ctx.fillStyle = `rgba(255, 255, 255, ${hole.flashTimerMs / bossHoleFlashDurationMs})`;
-      ctx.arc(hx, hy, bossHoleRadius * 1.35, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    ctx.restore();
   }
-  ctx.restore();
 
   // 退場演出の最初の2秒は、画面全体を不規則にフラッシュさせる
-  if (retreating && bossFinalSequence.phaseTimerMs < bossFinalFlashDurationMs && Math.random() < 0.15) {
+  if (retreating && retreatMs < bossFinalFlashDurationMs && Math.random() < 0.15) {
     ctx.fillStyle = `rgba(255, 255, 255, ${0.3 + Math.random() * 0.5})`;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  // 本体が消滅しきったら、その場に自機のアイコンが現れ、少し留まってからフェードアウトする
+  if (retreating && dissolveProgress >= 1) {
+    const iconMs = retreatMs - bossDefeatDissolveDurationMs;
+    const iconFadeOutMs = Math.max(200, bossFinalRetreatDurationMs - bossDefeatDissolveDurationMs - bossDefeatIconFadeInMs - bossDefeatIconHoldMs);
+    let iconAlpha = 0;
+    if (iconMs < bossDefeatIconFadeInMs) {
+      iconAlpha = Math.max(0, Math.min(1, iconMs / bossDefeatIconFadeInMs));
+    } else if (iconMs < bossDefeatIconFadeInMs + bossDefeatIconHoldMs) {
+      iconAlpha = 1;
+    } else {
+      const fadeOutT = iconMs - bossDefeatIconFadeInMs - bossDefeatIconHoldMs;
+      iconAlpha = Math.max(0, 1 - fadeOutT / iconFadeOutMs);
+    }
+    if (iconAlpha > 0) {
+      const playerIconImg = genderImageElements[selectedGender];
+      const iconSize = 90;
+      const iconX = geo.x + geo.width / 2;
+      const iconY = geo.y + geo.height / 2;
+      ctx.save();
+      ctx.globalAlpha = iconAlpha;
+      if (playerIconImg && playerIconImg.complete && playerIconImg.naturalWidth > 0) {
+        ctx.drawImage(playerIconImg, iconX - iconSize / 2, iconY - iconSize / 2, iconSize, iconSize);
+      }
+      ctx.restore();
+    }
   }
 
   // HPバー（降りきって本格的な戦闘が始まってから、撃破演出が始まるまで表示する）
@@ -6351,7 +6502,10 @@ function drawBossEvent() {
     const barW = canvas.width * 0.6;
     const barX = (canvas.width - barW) / 2;
     const barY = geo.y + geo.height + 60;
-    const hpRatio = Math.max(0, 1 - bossEvent.totalHitsLanded / bossTotalHitsToDefeat);
+    // 現在の段階に残っている「これから必要な命中数」の合計から、その段階だけのHP比率を出す
+    const stageMaxHits = bossEvent.holes.reduce((sum, h) => sum + h.maxHits, 0);
+    const stageRemainingHits = bossEvent.holes.reduce((sum, h) => sum + Math.max(0, h.maxHits - h.hitsTaken), 0);
+    const hpRatio = stageMaxHits > 0 ? Math.max(0, Math.min(1, stageRemainingHits / stageMaxHits)) : 0;
     ctx.save();
     ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
     ctx.fillRect(barX, barY, barW, 16);
@@ -6364,8 +6518,9 @@ function drawBossEvent() {
     ctx.font = 'bold 14px sans-serif';
     ctx.textAlign = 'center';
     const destroyedHoles = bossEvent.holes.filter(h => h.destroyed).length;
+    const stageDef = bossStageDefs[bossEvent.stage - 1];
     ctx.fillText(
-      `ラスボス（第${bossEvent.stage}段階：発射口 ${destroyedHoles}/${bossEvent.holes.length} 破壊）`,
+      `${stageDef.name} / ${stageDef.nameEn}（第${bossEvent.stage}段階：${destroyedHoles}／${bossEvent.holes.length} 破壊）`,
       canvas.width / 2, barY - 8
     );
     ctx.textAlign = 'left';
@@ -6461,7 +6616,7 @@ function drawRealWorldTimeScreen() {
   ctx.textAlign = 'center';
   ctx.font = '15px sans-serif';
   ctx.fillStyle = '#888888';
-  ctx.fillText('クリックして進む', canvas.width / 2, canvas.height - 40);
+  ctx.fillText('現実に戻る', canvas.width / 2, canvas.height - 40);
   ctx.restore();
 }
 
@@ -6610,6 +6765,24 @@ function drawMidBossEvent() {
     ctx.textAlign = 'left';
     ctx.restore();
 
+    // 体力バー（現在対応中のフェーズの残り耐久力を表す）
+    const currentHole = midBossEvent.holes[currentIndex];
+    if (currentHole && !currentHole.destroyed) {
+      const barW = canvas.width * 0.5;
+      const barX = (canvas.width - barW) / 2;
+      const barY = geo.y + geo.height + 28;
+      const hpRatio = Math.max(0, Math.min(1, 1 - currentHole.hitsTaken / midBossEvent.hitsPerHole));
+      ctx.save();
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+      ctx.fillRect(barX, barY, barW, 12);
+      ctx.fillStyle = '#ffb74d';
+      ctx.fillRect(barX, barY, barW * hpRatio, 12);
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(barX, barY, barW, 12);
+      ctx.restore();
+    }
+
     // 現在対応中のフェーズの内容文を、フェードイン・フェードアウトしながら表示する
     const phaseDef = midBossPhaseDefs[currentIndex];
     if (phaseDef && midBossEvent.phaseTextAlpha > 0) {
@@ -6617,7 +6790,7 @@ function drawMidBossEvent() {
       ctx.globalAlpha = midBossEvent.phaseTextAlpha;
       const panelW = 420, panelH = 62;
       const panelX = canvas.width / 2 - panelW / 2;
-      const panelY = geo.y + geo.height + 32;
+      const panelY = geo.y + geo.height + 48;
       ctx.fillStyle = 'rgba(40, 30, 10, 0.75)';
       ctx.fillRect(panelX, panelY, panelW, panelH);
       ctx.strokeStyle = '#ffb74d';
