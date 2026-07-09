@@ -4019,6 +4019,16 @@ const bossHoleWanderIntervalMinMs = 900;
 const bossHoleWanderIntervalMaxMs = 1600;
 const bossHoleWanderEaseFactor = 2.2; // 第5段階（劣等感）：素早く動き回る
 const bossHoleWanderEaseFactorSlow = 0.5; // 第2段階（シャドウ）：ゆっくり動き回る
+// 第4段階（承認欲求）：他の段階より、場所を切り替える頻度・動く速さを緩やかにする
+const bossApprovalWanderIntervalMinMs = 1800;
+const bossApprovalWanderIntervalMaxMs = 2800;
+const bossHoleWanderEaseFactorMedium = 1.0;
+// 段階に応じた、動き回る穴の移動先を変える間隔（[最小, 最大]）を返す
+function getBossHoleWanderIntervalMs(stage) {
+  return stage === 4
+    ? [bossApprovalWanderIntervalMinMs, bossApprovalWanderIntervalMaxMs]
+    : [bossHoleWanderIntervalMinMs, bossHoleWanderIntervalMaxMs];
+}
 // 第4段階（承認欲求）：被弾していない間、耐久力が少しずつ回復する
 const bossRegenGraceMs = 1500;
 const bossRegenPerSec = 3;
@@ -4063,6 +4073,8 @@ const bossInternalConflictLastStandDelayMs = 3000; // 最後の1人になって�
 const bossApprovalFireHealAmount = 2;
 const bossApprovalParryHealAmount = 8;
 const bossApprovalHealFlashDurationMs = 300;
+// 承認欲求は他の段階より防御力が弱く、通常弾1発あたりのダメージが大きい（通常は1発=1ダメージ相当）
+const bossApprovalDamageMultiplier = 3;
 // 発射地点・角度から伸ばした直線が、指定した発射口の近くを通るかどうかを判定する
 // （実際に命中するかどうかは問わない。「狙われた」というだけで承認欲求は満たされてしまう）
 function isAngleAimedAtBossHole(fromX, fromY, angle, hole) {
@@ -4196,7 +4208,8 @@ function generateBossHoles(stage) {
     if (def.layout === 'wander-slow' || def.layout === 'wander-fast') {
       hole.wanderTargetRelX = relX;
       hole.wanderTargetRelY = relY;
-      hole.wanderTimerMs = bossHoleWanderIntervalMinMs + Math.random() * (bossHoleWanderIntervalMaxMs - bossHoleWanderIntervalMinMs);
+      const [wanderMin, wanderMax] = getBossHoleWanderIntervalMs(stage);
+      hole.wanderTimerMs = wanderMin + Math.random() * (wanderMax - wanderMin);
     }
     if (def.parryOnly) hole.parryOnly = true;
     if (def.regen) hole.regen = true;
@@ -4309,10 +4322,13 @@ function updateBossEvent(dt) {
           hole.wanderTargetRelX = 0.08 + Math.random() * 0.84;
           hole.wanderTargetRelY = 0.25 + Math.random() * 0.65;
         }
-        hole.wanderTimerMs = bossHoleWanderIntervalMinMs + Math.random() * (bossHoleWanderIntervalMaxMs - bossHoleWanderIntervalMinMs);
+        const [wanderMin, wanderMax] = getBossHoleWanderIntervalMs(bossEvent.stage);
+        hole.wanderTimerMs = wanderMin + Math.random() * (wanderMax - wanderMin);
       }
-      // 第2段階「シャドウ」はゆっくり、第5段階「劣等感」・第6段階「内的葛藤」は素早く動き回る
-      const easeFactor = bossEvent.stage === 2 ? bossHoleWanderEaseFactorSlow : bossHoleWanderEaseFactor;
+      // 第2段階「シャドウ」はゆっくり、第4段階「承認欲求」は緩やかに、第5段階「劣等感」・第6段階「内的葛藤」は素早く動き回る
+      const easeFactor = bossEvent.stage === 2 ? bossHoleWanderEaseFactorSlow
+        : bossEvent.stage === 4 ? bossHoleWanderEaseFactorMedium
+        : bossHoleWanderEaseFactor;
       const wanderEase = Math.min(1, dt * easeFactor);
       hole.relX += (hole.wanderTargetRelX - hole.relX) * wanderEase;
       hole.relY += (hole.wanderTargetRelY - hole.relY) * wanderEase;
@@ -4410,7 +4426,9 @@ function finalizeBossHoleDestruction(hole) {
 
 // 発射口に命中した弾を処理する。破壊しきい値に達したら穴を破壊する
 function registerBossHoleHit(hole, hitX, hitY) {
-  hole.hitsTaken++;
+  // 第4段階「承認欲求」：他の段階より防御力が弱く大きなダメージが入り、
+  // さらに、この着弾は「狙われただけで回復した分」も込みで耐久力を減らす
+  hole.hitsTaken += hole.approvalSeeking ? bossApprovalDamageMultiplier + bossApprovalFireHealAmount : 1;
   hole.msSinceHit = 0; // 承認欲求：被弾した瞬間、回復までの猶予をリセットする
   hole.flashTimerMs = bossHoleFlashDurationMs;
   bossEvent.totalHitsLanded++;
