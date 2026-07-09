@@ -7274,12 +7274,14 @@ function draw() {
     return;
   }
 
-  // アイコン選択直後のひとことメッセージ演出（表示→フェードアウト）
+  // アイコン選択直後のひとことメッセージ演出（フェードイン→フェードアウト）
   if (iconGreetingPhase) {
     drawSetupBackground();
-    const alpha = iconGreetingPhase === 'fadeout'
-      ? Math.max(0, Math.min(1, iconGreetingTimer / iconGreetingFadeMs))
-      : 1;
+    const alpha = iconGreetingPhase === 'fadein'
+      ? Math.max(0, Math.min(1, iconGreetingTimer / iconGreetingFadeInMs))
+      : iconGreetingPhase === 'fadeout'
+        ? Math.max(0, Math.min(1, iconGreetingTimer / iconGreetingFadeMs))
+        : 1;
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.textAlign = 'center';
@@ -7293,7 +7295,7 @@ function draw() {
     }
     ctx.font = 'bold 26px sans-serif';
     ctx.fillStyle = '#ffe082';
-    ctx.fillText(iconGreetingText.slice(0, iconGreetingRevealedCount), canvas.width / 2, canvas.height / 2 + 60);
+    ctx.fillText(iconGreetingText, canvas.width / 2, canvas.height / 2 + 60);
     ctx.restore();
     ctx.textAlign = 'left';
     return;
