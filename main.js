@@ -8048,11 +8048,8 @@ function draw() {
         ctx.stroke();
       }
 
-      // 「自宅警備員」：サラリーマンと同じフォント・サイズ、白地に黒縁。ゆっくりフェードイン・フェードアウトを繰り返す
-      const fadeCycleMs = 2200;
-      const fadeAlpha = (Math.sin(Date.now() / fadeCycleMs) + 1) / 2;
+      // 「自宅警備員」：サラリーマンと同じフォント・サイズ、白地に黒縁で固定表示する
       ctx.save();
-      ctx.globalAlpha = fadeAlpha;
       ctx.translate(targetCenterX, titleY - 30);
       ctx.rotate(-0.05);
       ctx.textAlign = 'center';
