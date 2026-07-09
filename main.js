@@ -1823,6 +1823,21 @@ let gutsGuardUsed = false; // 一度発動したら、そのプレイ中は二�
 // どちらが尽きたかで演出とバッドエンドの種類を分ける
 function checkVitalsGameOver(deathEndingType = null) {
   if (gameOver || deathSequence) return;
+  // ノーマルルート終了時の負けイベント戦闘：同僚が健在の間、自機は何度でもSAN1・寿命1で復活する。
+  // 同僚離脱後に被弾したら、通常のゲームオーバーではなくノーマルエンドの共通演出へ進む
+  if (normalEndSequence && normalEndSequence.phase === 'battle') {
+    if (!normalEndSequence.partnerLost) {
+      san = Math.max(san, 1);
+      lifespan = Math.max(lifespan, 1);
+      return;
+    }
+    if (san <= 0 || lifespan <= 0) {
+      bossEvent = null;
+      normalEndSequence.phase = 'fadeOut';
+      normalEndSequence.phaseTimerMs = 0;
+    }
+    return;
+  }
   // 「無敵（テスト用）」：SAN・寿命が0にならないようにする
   if (dreamMemorySave.upgrades.invincibleTest >= 1) {
     san = Math.max(san, 1);
@@ -2705,8 +2720,10 @@ function updatePartner(dt) {
     partner.lowSanTimerMs = 0;
   }
 
-  // 「無敵（テスト用）」：同僚にも同様の効果を適用する（SAN・寿命が0にならず、脳疲労も常に0のまま）
-  if (dreamMemorySave.upgrades.invincibleTest >= 1) {
+  // 「無敵（テスト用）」：同僚にも同様の効果を適用する（SAN・寿命が0にならず、脳疲労も常に0のまま）。
+  // ただし、ノーマルルート終了時の負けイベント戦闘中はこの無敵を無効化する
+  const normalEndBattleActive = normalEndSequence && normalEndSequence.phase === 'battle';
+  if (dreamMemorySave.upgrades.invincibleTest >= 1 && !normalEndBattleActive) {
     partner.san = Math.max(partner.san, 1);
     partner.lifespan = Math.max(partner.lifespan, 1);
     partner.fatigue = 0;
@@ -2720,6 +2737,7 @@ function updatePartner(dt) {
     partnerLossReason = partner.lifespan <= 0 ? 'lifespan' : 'san';
     partnerLifespanAtLoss = partner.lifespan;
     showMessage('同僚が力尽きてしまった…', 4000, '#ef9a9a', '24px sans-serif');
+    if (normalEndBattleActive) normalEndSequence.partnerLost = true;
     damageSan(partnerLossSanPenalty);
   }
 }
@@ -3476,8 +3494,16 @@ function chooseAdventureOption(choiceIndex) {
 function applyRestActivity(choiceIndex) {
   if (choiceIndex === 1) {
     if (partner.active) {
-      // アドベンチャーパート自体がこの日の出来事なので、通常のランダムイベントは発生させず週明けへ進む
-      startPartnerAdventure(() => startDayTransition(jumpToNextMondayAndResetWeek));
+      // アドベンチャーパート自体がこの日の出来事なので、通常のランダムイベントは発生させず週明けへ進む。
+      // ただし、ADV3をノーマルルート（夢ルートではない）で終えた場合は、これが最終日として
+      // 特別な「負けイベント」戦闘（第？？？？戦）を経てノーマルエンドへ直行する
+      startPartnerAdventure(() => {
+        if (adventureRunCount === 3 && !dreamRouteCompleted) {
+          startNormalEndBattleSequence();
+        } else {
+          startDayTransition(jumpToNextMondayAndResetWeek);
+        }
+      });
     } else if (partnerLossReason === 'lifespan') {
       // 寿命が尽きての離脱はもう戻らない。会いに行った虚しさで自機のSANが大きく削れる
       san = Math.max(0, Math.floor(san * partnerLossGriefSanRatio));
@@ -4462,6 +4488,9 @@ function updateBossEvent(dt) {
       } else if (hole.sequential) {
         fireJobSeekingHoleBullet(hole);
         hole.fireTimerMs = hole.fireIntervalMs * (0.7 + Math.random() * 0.6);
+      } else if (hole.indestructible) {
+        fireIndestructibleBossBullet(hole);
+        hole.fireTimerMs = normalEndFireIntervalMs * (0.6 + Math.random() * 0.6);
       } else {
         fireSingleBossHoleBullet(hole);
         hole.fireTimerMs = bossFireIntervalMs * (0.6 + Math.random() * 0.8);
@@ -4541,6 +4570,12 @@ function finalizeBossHoleDestruction(hole) {
 
 // 発射口に命中した弾を処理する。破壊しきい値に達したら穴を破壊する
 function registerBossHoleHit(hole, hitX, hitY) {
+  // ノーマルルート終了時の負けイベント戦闘：発射口は決して破壊できない（当たった見た目だけ出す）
+  if (hole.indestructible) {
+    hole.flashTimerMs = bossHoleFlashDurationMs;
+    spawnHitSpark(hitX, hitY, false);
+    return;
+  }
   // 第4段階「承認欲求」：他の段階より防御力が弱く大きなダメージが入り、
   // さらに、この着弾は「狙われただけで回復した分」も込みで耐久力を減らす
   hole.hitsTaken += hole.approvalSeeking ? bossApprovalDamageMultiplier + bossApprovalFireHealAmount : 1;
@@ -4831,6 +4866,161 @@ const bossAltEndCues = [
 ];
 const bossAltEndReturnAtMs = 5800; // このタイミングでタイトルへ戻る
 let bossFinalSequence = null; // null、または { phase, phaseTimerMs, partnerAlive }
+
+// ===== ノーマルルート終了時の「負けイベント」戦闘（第？？？？） =====
+// ADV3をノーマルルート（夢ルートではない）で終えた場合、これが最終日となり、
+// オフィスが静止→暗転→ラスボス（通常）降臨→必ず負ける特別な戦闘、を経てノーマルエンドへ至る
+const normalEndBossImage = loadImage('images/dreamcatcher/last_boss_normal.png');
+const normalEndFreezeDurationMs = 2500; // 自機・同僚が操作不可のまま静止している時間
+const normalEndShakeDurationMs = 2200; // 振動・明滅しながら画面が暗転するまでの時間
+const normalEndHoleCount = 7;
+const normalEndBulletSpeed = 6.5; // 通常のラスボス弾より速い、高速弾
+const normalEndFireIntervalMs = 700;
+const normalEndPartnerAutoParryCap = 0.5; // 同僚のオートパリィ確率は、この戦闘中は最大でもこの値までしか出ない
+const normalEndPartnerLoseDelayMinMs = 12000; // 同僚が力尽きるまでの時間（幅を持たせた保険。実際は被弾で先に力尽きることが多い）
+const normalEndPartnerLoseDelayMaxMs = 18000;
+const normalEndFadeOutDurationMs = 1200;
+let normalEndSequence = null; // null、または { phase, phaseTimerMs, battleTimerMs, partnerLoseAtMs, partnerLost }
+
+// 「同僚と遊ぶ」ADV3をノーマルルートで終えた直後に呼ばれる。この日が最終日として扱われる
+function startNormalEndBattleSequence() {
+  enemies.length = 0;
+  fixedEnemies.length = 0;
+  quizState = null;
+  lunchState = null;
+  scheduledReport = null;
+  currentHour = maxOvertimeHour;
+  lastHourTime = gameClockMs;
+  player.x = canvas.width / 2 - 24;
+  player.y = canvas.height / 2;
+  if (partner.active) {
+    partner.x = canvas.width / 2 + 24;
+    partner.y = canvas.height / 2;
+    partner.vx = 0;
+    partner.vy = 0;
+  }
+  normalEndSequence = { phase: 'freeze', phaseTimerMs: 0, battleTimerMs: 0, partnerLoseAtMs: 0, partnerLost: false };
+}
+
+// freeze（静止）→shake（振動・暗転）の間だけ進める。descendへ移ったらラスボス（通常）を出現させる
+function updateNormalEndSequence(rawDt) {
+  normalEndSequence.phaseTimerMs += rawDt * 1000;
+  if (normalEndSequence.phase === 'freeze' && normalEndSequence.phaseTimerMs >= normalEndFreezeDurationMs) {
+    normalEndSequence.phase = 'shake';
+    normalEndSequence.phaseTimerMs = 0;
+  } else if (normalEndSequence.phase === 'shake' && normalEndSequence.phaseTimerMs >= normalEndShakeDurationMs) {
+    normalEndSequence.phase = 'descend';
+    normalEndSequence.phaseTimerMs = 0;
+    // 同僚のオートパリィ確率をこの戦闘の間だけ制限する（このシーケンス後は必ずタイトルへ戻るため、以後に影響しない）
+    partnerParryChance = Math.min(partnerParryChance, normalEndPartnerAutoParryCap);
+    bossEvent = {
+      phase: 'descending', stage: 0, holes: [], totalHitsLanded: 0, descendProgress: 0,
+      savedEnemies: [], offsetX: 0, offsetY: 0, moveTargetX: 0, moveTargetY: 0, moveTimerMs: 0,
+      useAltImage: true, nameOverride: '？？？？'
+    };
+  } else if (normalEndSequence.phase === 'fadeOut' && normalEndSequence.phaseTimerMs >= normalEndFadeOutDurationMs) {
+    normalEndSequence.phase = 'endScreen';
+    normalEndSequence.phaseTimerMs = 0;
+  } else if (normalEndSequence.phase === 'endScreenFadeOut' && normalEndSequence.phaseTimerMs >= 800) {
+    finishNormalEndSequence();
+  }
+}
+
+// 7つの発射口が、ランダムに動き回りながら高速弾を放つ。決して破壊できない（負けイベント専用）
+function generateIndestructibleBossHoles() {
+  const holes = [];
+  for (let i = 0; i < normalEndHoleCount; i++) {
+    let relX, relY, attempts = 0;
+    do {
+      relX = 0.08 + Math.random() * 0.84;
+      relY = 0.25 + Math.random() * 0.65;
+      attempts++;
+    } while (attempts < 20 && holes.some(h => Math.hypot(h.relX - relX, h.relY - relY) < bossHoleMinSpacing));
+    holes.push({
+      relX, relY, hitsTaken: 0, destroyed: false, flashTimerMs: 0, maxHits: 999999,
+      fireTimerMs: Math.random() * normalEndFireIntervalMs,
+      wanderTargetRelX: relX, wanderTargetRelY: relY,
+      wanderTimerMs: bossHoleWanderIntervalMinMs + Math.random() * (bossHoleWanderIntervalMaxMs - bossHoleWanderIntervalMinMs),
+      indestructible: true
+    });
+  }
+  return holes;
+}
+
+// 破壊できない発射口からの発射（ランダムに自機・同僚のどちらかを高速弾で狙う）
+function fireIndestructibleBossBullet(hole) {
+  const pos = getBossHoleAbsolutePosition(hole);
+  const target = (partner.active && Math.random() < 0.5) ? partner : player;
+  const angle = Math.atan2(target.y - pos.y, target.x - pos.x) + (Math.random() - 0.5) * 0.3;
+  pushBossHoleBullet(pos, angle, hole, normalEndBulletSpeed / bossBulletSpeed);
+}
+
+// ノーマルルート共通のエンディング（黒背景に「{partner}を助けないと…」がフェードイン→フェードアウト→タイトルへ）
+function finishNormalEndSequence() {
+  const endingId = getNormalEndingByRelationship();
+  const earnedDreamMemoryPoints = Math.floor(score / dreamMemoryScoreDivisor);
+  dreamMemorySave.points += earnedDreamMemoryPoints;
+  dreamMemorySave.endingsCleared[endingId] = true;
+  dreamMemorySave.lastRun = selectedPartnerIcon ? {
+    playerGender: selectedGender,
+    partnerIcon: selectedPartnerIcon,
+    relationship: partner.relationship,
+    endingType: endingId
+  } : null;
+  saveDreamMemorySave();
+  location.reload();
+}
+
+// freeze（静止）・shake（振動・暗転）中の画面：オフィスの中央に自機・同僚が立ち尽くしている
+function drawNormalEndFreezeScene() {
+  drawBackground();
+  const selfImg = genderImageElements[selectedPlayerIcon];
+  if (selfImg && selfImg.complete && selfImg.naturalWidth > 0) {
+    const selfImgSize = player.radius * 4.8;
+    ctx.drawImage(selfImg, player.x - selfImgSize / 2, player.y - selfImgSize / 2, selfImgSize, selfImgSize);
+  }
+  if (partner.active) {
+    const partnerImg = partnerIconImageElements[selectedPartnerIcon];
+    if (partnerImg && partnerImg.complete && partnerImg.naturalWidth > 0) {
+      const partnerImgSize = partner.radius * 4.8;
+      ctx.drawImage(partnerImg, partner.x - partnerImgSize / 2, partner.y - partnerImgSize / 2, partnerImgSize, partnerImgSize);
+    }
+  }
+  if (normalEndSequence.phase === 'shake') {
+    const p = Math.min(1, normalEndSequence.phaseTimerMs / normalEndShakeDurationMs);
+    const flashOn = Math.sin(gameClockMs / 40) > 0;
+    ctx.fillStyle = flashOn ? `rgba(180, 0, 0, ${0.2 + p * 0.3})` : `rgba(0, 0, 0, ${0.15 + p * 0.3})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // 徐々に真っ黒へフェードアウトしていく
+    ctx.fillStyle = `rgba(0, 0, 0, ${p})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const shakeX = (Math.random() - 0.5) * 10 * p;
+    const shakeY = (Math.random() - 0.5) * 10 * p;
+    canvas.style.transform = `translate(${shakeX}px, ${shakeY}px)`;
+  } else {
+    canvas.style.transform = '';
+  }
+}
+
+// fadeOut（暗転を維持）・endScreen（テキストがフェードイン）・endScreenFadeOut（テキストがフェードアウト）
+function drawNormalEndEndingScreen() {
+  ctx.fillStyle = 'black';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (normalEndSequence.phase === 'endScreen' || normalEndSequence.phase === 'endScreenFadeOut') {
+    const alpha = normalEndSequence.phase === 'endScreen'
+      ? Math.min(1, normalEndSequence.phaseTimerMs / 1000)
+      : Math.max(0, 1 - normalEndSequence.phaseTimerMs / 800);
+    const pronoun = getPartnerPronoun(selectedPartnerIcon);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 20px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${pronoun}を助けないと…`, canvas.width / 2, canvas.height / 2);
+    ctx.restore();
+    ctx.textAlign = 'left';
+  }
+}
 
 function startBossFinalSequence() {
   // ラスボスを退けた瞬間の同僚の生死で、この先のエンディングの分岐を決めておく
@@ -5409,6 +5599,12 @@ canvas.addEventListener('click', (event) => {
     bossFinalSequence.phaseTimerMs = 0;
     return;
   }
+  // ノーマルルート終了時の負けイベント戦闘：エンディング文がフェードイン表示中にクリックすると、フェードアウトしてタイトルへ
+  if (normalEndSequence && normalEndSequence.phase === 'endScreen') {
+    normalEndSequence.phase = 'endScreenFadeOut';
+    normalEndSequence.phaseTimerMs = 0;
+    return;
+  }
   const p = getCanvasPoint(event);
   for (const b of uiButtons) {
     if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) {
@@ -5483,6 +5679,14 @@ function update() {
   // ラスボス撃破後の演出中は、この処理だけを進め、他の一切（自機・同僚・時間経過など）を停止する（3倍加速の影響を受けない）
   if (bossFinalSequence) {
     updateBossFinalSequence(rawDt);
+    return;
+  }
+
+  // ノーマルルート終了時の「負けイベント」戦闘演出。
+  // freeze/shake/fadeOut/endScreen中は他の一切を停止する。descend/battle中は、ラスボス（通常）を
+  // 降臨・行動させるため、この後の通常のbossEvent更新処理へそのまま進める
+  if (normalEndSequence && normalEndSequence.phase !== 'descend' && normalEndSequence.phase !== 'battle') {
+    updateNormalEndSequence(rawDt);
     return;
   }
 
@@ -5630,6 +5834,24 @@ function update() {
   if (bossEvent) {
     updateBossEvent(dt);
     if (gameOver || deathSequence) return;
+    // ノーマルルート終了時の負けイベント戦闘：降りきったら開始し、時間経過で同僚を強制離脱させる
+    if (normalEndSequence && normalEndSequence.phase === 'descend' && bossEvent.phase === 'active') {
+      normalEndSequence.phase = 'battle';
+      normalEndSequence.battleTimerMs = 0;
+      normalEndSequence.partnerLoseAtMs = normalEndPartnerLoseDelayMinMs +
+        Math.random() * (normalEndPartnerLoseDelayMaxMs - normalEndPartnerLoseDelayMinMs);
+      bossEvent.holes = generateIndestructibleBossHoles();
+    }
+    if (normalEndSequence && normalEndSequence.phase === 'battle') {
+      normalEndSequence.battleTimerMs += rawDt * 1000;
+      if (partner.active && !normalEndSequence.partnerLost &&
+          normalEndSequence.battleTimerMs >= normalEndSequence.partnerLoseAtMs) {
+        partner.active = false;
+        partnerLossReason = 'san';
+        normalEndSequence.partnerLost = true;
+        showMessage(`${getPartnerPronoun(selectedPartnerIcon)}が力尽きて離脱した……`, 3000, '#ff8a80', '22px sans-serif');
+      }
+    }
   } else {
   // 「巨大案件」（中ボス）の進行を処理する。通常の敵・時間経過は止めず並行して進む
   if (midBossEvent) {
@@ -5647,8 +5869,8 @@ function update() {
     lastHourTime += passed * hourMs;
     currentHour += passed;
     processTimedHourEvents(previousHour, currentHour);
-    // 「巨大案件」が残っていれば、24時になっても時刻をそこで止めて片付くまで居残る
-    if (midBossEvent && currentHour >= maxOvertimeHour) {
+    // 「巨大案件」や、ノーマルルート終了時の負けイベント戦闘中は、24時になっても時刻をそこで止める
+    if ((midBossEvent || (normalEndSequence && normalEndSequence.phase === 'battle')) && currentHour >= maxOvertimeHour) {
       currentHour = maxOvertimeHour;
       lastHourTime = gameClockMs;
       return;
@@ -6895,12 +7117,14 @@ function drawBossEvent() {
     ctx.globalAlpha = bodyAlpha;
     const bodyX = geo.x + exitShakeX;
     const bodyY = geo.y + exitOffsetY;
-    // 背景の塗りつぶしは行わない：last_boss.pngの透明部分は、そのまま背景が透けて見えるようにする
-    if (bossImage.complete && bossImage.naturalWidth > 0) {
-      const scale = geo.width / bossImage.naturalWidth;
-      const sourceHeight = Math.min(bossImage.naturalHeight, geo.height / scale);
-      const sourceY = Math.max(0, bossImage.naturalHeight * 0.42);
-      const clampedSourceHeight = Math.min(sourceHeight, bossImage.naturalHeight - sourceY);
+    // 背景の塗りつぶしは行わない：透明部分は、そのまま背景が透けて見えるようにする。
+    // ノーマルルート終了時の負けイベント戦闘では、last_boss_normal.png を代わりに使う
+    const activeBossImage = bossEvent.useAltImage ? normalEndBossImage : bossImage;
+    if (activeBossImage.complete && activeBossImage.naturalWidth > 0) {
+      const scale = geo.width / activeBossImage.naturalWidth;
+      const sourceHeight = Math.min(activeBossImage.naturalHeight, geo.height / scale);
+      const sourceY = Math.max(0, activeBossImage.naturalHeight * 0.42);
+      const clampedSourceHeight = Math.min(sourceHeight, activeBossImage.naturalHeight - sourceY);
       // 上端が画面内に見えないよう、下端（顔まわり）の位置は変えずに全体を少し拡大して表示する
       const baseDrawWidth = geo.width;
       const baseDrawHeight = clampedSourceHeight * scale;
@@ -6909,8 +7133,8 @@ function drawBossEvent() {
       const drawX = bodyX + (baseDrawWidth - drawWidth) / 2;
       const drawY = bodyY + baseDrawHeight - drawHeight;
       ctx.drawImage(
-        bossImage,
-        0, sourceY, bossImage.naturalWidth, clampedSourceHeight,
+        activeBossImage,
+        0, sourceY, activeBossImage.naturalWidth, clampedSourceHeight,
         drawX, drawY, drawWidth, drawHeight
       );
     }
@@ -7138,11 +7362,13 @@ function drawBossEvent() {
     ctx.font = 'bold 14px sans-serif';
     ctx.textAlign = 'center';
     const destroyedHoles = bossEvent.holes.filter(h => h.destroyed).length;
-    const stageDef = bossStageDefs[bossEvent.stage - 1];
-    ctx.fillText(
-      `${stageDef.name} / ${stageDef.nameEn}（第${bossEvent.stage}段階：${destroyedHoles}／${bossEvent.holes.length} 破壊）`,
-      canvas.width / 2, barY - 8
-    );
+    const headerText = bossEvent.nameOverride
+      ? bossEvent.nameOverride
+      : (() => {
+        const stageDef = bossStageDefs[bossEvent.stage - 1];
+        return `${stageDef.name} / ${stageDef.nameEn}（第${bossEvent.stage}段階：${destroyedHoles}／${bossEvent.holes.length} 破壊）`;
+      })();
+    ctx.fillText(headerText, canvas.width / 2, barY - 8);
     ctx.textAlign = 'left';
     ctx.restore();
   }
@@ -7751,6 +7977,17 @@ function draw() {
   // それ以降（背景復帰・白フェード・真エンド）は専用の画面に切り替える
   if (bossFinalSequence && bossFinalSequence.phase !== 'retreat') {
     drawBossFinalTransition();
+    return;
+  }
+
+  // ノーマルルート終了時の負けイベント戦闘：静止→暗転までは専用の画面、降臨後の戦闘は通常の描画に任せる
+  if (normalEndSequence && (normalEndSequence.phase === 'freeze' || normalEndSequence.phase === 'shake')) {
+    drawNormalEndFreezeScene();
+    return;
+  }
+  if (normalEndSequence && (normalEndSequence.phase === 'fadeOut' || normalEndSequence.phase === 'endScreen' ||
+      normalEndSequence.phase === 'endScreenFadeOut')) {
+    drawNormalEndEndingScreen();
     return;
   }
 
@@ -9230,109 +9467,40 @@ function draw() {
       { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
   }
 
-  // 「同僚と遊ぶ」アドベンチャーパート：チャットのスレッド形式で、同僚・自分の発言を積み上げて表示する。
-  // 新しい発言が増えるたびに自動で一番下までスクロールし、選択肢は自分の入力欄のように画面下部へ表示する
+  // 「同僚と遊ぶ」アドベンチャーパート：地の文＋会話文をそのまま1画面に表示する、通常のノベル形式
   if (adventureState && !gameOver && !gameClear) {
     const node = adventureState.scene.nodes[adventureState.nodeId];
     ctx.fillStyle = 'rgba(4, 6, 12, 0.92)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // 画面下部：選択肢を並べる「入力欄」風のトレイ
-    const choiceBtnH = 50, choiceGap = 10, trayPadding = 18;
-    const trayContentH = node.choices.length * choiceBtnH + (node.choices.length - 1) * choiceGap;
-    const trayHintH = 26;
-    const trayH = trayContentH + trayPadding * 2 + trayHintH;
-    const trayX = 50, trayW = canvas.width - 100;
-    const trayY = canvas.height - trayH - 20;
-
-    // 画面上部：スレッド（会話履歴）の表示範囲
-    const threadX = 50, threadW = canvas.width - 100;
-    const threadTop = 24;
-    const threadBottom = trayY - 16;
-    const threadH = threadBottom - threadTop;
-
-    // スレッド内の各発言（吹き出し）のレイアウトを、上から順に積み上げて計算する
-    ctx.font = 'bold 19px sans-serif';
-    const bubbleMaxTextWidth = threadW * 0.66;
-    const bubblePaddingX = 16, bubblePaddingY = 12, bubbleLineHeight = 26, nameLabelH = 20, entryGap = 16;
-    let contentH = 0;
-    const layout = adventureState.history.map(entry => {
-      const lines = wrapTextToWidth(entry.text, bubbleMaxTextWidth);
-      const lineWidth = Math.max(...lines.map(l => ctx.measureText(l).width), 40);
-      const bubbleW = Math.min(bubbleMaxTextWidth, lineWidth) + bubblePaddingX * 2;
-      const bubbleH = lines.length * bubbleLineHeight + bubblePaddingY * 2;
-      const entryH = nameLabelH + bubbleH + entryGap;
-      const item = { entry, lines, bubbleW, bubbleH, y: contentH + nameLabelH };
-      contentH += entryH;
-      return item;
-    });
-    // 新しい発言ほど下に来るので、はみ出した分だけ上へずらして「常に最新（一番下）が見える」ようにする（自動スクロール）
-    const scrollOffset = Math.max(0, contentH - threadH);
-
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(threadX, threadTop, threadW, threadH);
-    ctx.clip();
-    layout.forEach(item => {
-      const isPartner = item.entry.speaker === 'partner';
-      const bubbleY = threadTop - scrollOffset + item.y;
-      if (bubbleY + item.bubbleH < threadTop || bubbleY > threadBottom) return; // 表示範囲外は描かない
-      const bubbleX = isPartner ? threadX : threadX + threadW - item.bubbleW;
-      ctx.font = 'bold 13px sans-serif';
-      ctx.fillStyle = isPartner ? '#80deea' : '#ce93d8';
-      ctx.textAlign = isPartner ? 'left' : 'right';
-      ctx.fillText(isPartner ? '同僚' : '自分', isPartner ? bubbleX + 4 : bubbleX + item.bubbleW - 4, bubbleY - 6);
-
-      ctx.fillStyle = isPartner ? 'rgba(0, 96, 100, 0.55)' : 'rgba(74, 20, 140, 0.55)';
-      ctx.strokeStyle = isPartner ? '#4dd0e1' : '#ce93d8';
-      ctx.lineWidth = 2;
-      if (ctx.roundRect) {
-        ctx.beginPath();
-        ctx.roundRect(bubbleX, bubbleY, item.bubbleW, item.bubbleH, 14);
-        ctx.fill();
-        ctx.stroke();
-      } else {
-        ctx.fillRect(bubbleX, bubbleY, item.bubbleW, item.bubbleH);
-        ctx.strokeRect(bubbleX, bubbleY, item.bubbleW, item.bubbleH);
-      }
-
-      ctx.font = 'bold 19px sans-serif';
-      ctx.fillStyle = '#fffaf0';
-      ctx.textAlign = 'left';
-      item.lines.forEach((line, li) => {
-        ctx.fillText(line, bubbleX + bubblePaddingX, bubbleY + bubblePaddingY + bubbleLineHeight * (li + 1) - 6);
-      });
-    });
-    ctx.restore();
+    ctx.fillStyle = '#ffe0b2';
+    ctx.font = 'bold 21px sans-serif';
     ctx.textAlign = 'left';
+    const partnerGender = partnerGenderById[selectedPartnerIcon];
+    const bodyText = resolveGenderedAdventureText(node.text, partnerGender);
+    // 本文中の改行（地の文と会話文の段落分け）はそのまま活かし、段落ごとに幅で折り返す
+    let textLines = [];
+    bodyText.split('\n').forEach(paragraph => {
+      textLines = textLines.concat(wrapTextToWidth(paragraph, canvas.width - 160));
+    });
+    textLines.forEach((line, i) => {
+      ctx.fillText(line, 80, 90 + i * 30);
+    });
 
-    // 画面下部：自分の「入力欄」のように、選択肢をそのまま選べるトレイ
-    ctx.fillStyle = 'rgba(20, 20, 30, 0.8)';
-    ctx.strokeStyle = '#7e57c2';
-    ctx.lineWidth = 2;
-    if (ctx.roundRect) {
-      ctx.beginPath();
-      ctx.roundRect(trayX, trayY, trayW, trayH, 18);
-      ctx.fill();
-      ctx.stroke();
-    } else {
-      ctx.fillRect(trayX, trayY, trayW, trayH);
-      ctx.strokeRect(trayX, trayY, trayW, trayH);
-    }
-
+    const btnW2 = 600, btnH2 = 52;
+    const btnX2 = canvas.width / 2 - btnW2 / 2;
+    const choicesStartY = 90 + textLines.length * 30 + 36;
     node.choices.forEach((choice, i) => {
-      const by = trayY + trayPadding + i * (choiceBtnH + choiceGap);
       const choiceLabel = resolveGenderedAdventureText(choice.label, selectedGender);
-      drawUiButton(trayX + trayPadding, by, trayW - trayPadding * 2, choiceBtnH,
-        `${i + 1}. ${choiceLabel}`, () => chooseAdventureOption(i),
-        { fillStyle: 'rgba(103, 58, 183, 0.45)', strokeStyle: '#b39ddb', font: 'bold 17px sans-serif' });
+      drawUiButton(btnX2, choicesStartY + i * 62, btnW2, btnH2, `${i + 1}. ${choiceLabel}`,
+        () => chooseAdventureOption(i), { font: 'bold 19px sans-serif' });
     });
 
     ctx.fillStyle = '#cfd8dc';
-    ctx.font = '13px sans-serif';
+    ctx.font = '14px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('数字キー / タップで選択',
-      canvas.width / 2, trayY + trayPadding + trayContentH + trayHintH - 4);
+      canvas.width / 2, choicesStartY + node.choices.length * 62 + 20);
     ctx.textAlign = 'left';
   }
 
