@@ -1212,6 +1212,22 @@ let fixedEnemyRecoveryDisabledTimerMs = 0; // 待機時の脳疲労回復が無�
 let fixedEnemyInfectedTickTimerMs = 0; // 感染中、継続的にSANが少しずつ削れていく
 let fixedEnemyVisionObscuredTimerMs = 0; // HUDの一部（アイテム等）が見えづらくなる（盗聴・スニッフィング）
 
+// 固定敵を撃破した時、その用語の現実の説明文を窓の上あたりにフェードイン→一定時間表示→フェードアウトさせる
+const fixedEnemyDefeatInfoFadeInMs = 500;
+const fixedEnemyDefeatInfoHoldMs = 3000;
+const fixedEnemyDefeatInfoFadeOutMs = 500;
+let fixedEnemyDefeatInfoDisplay = null; // null、または { name, info, elapsedMs }
+
+function getFixedEnemyDefeatInfoAlpha() {
+  const d = fixedEnemyDefeatInfoDisplay;
+  if (!d) return 0;
+  if (d.elapsedMs < fixedEnemyDefeatInfoFadeInMs) return d.elapsedMs / fixedEnemyDefeatInfoFadeInMs;
+  const holdEnd = fixedEnemyDefeatInfoFadeInMs + fixedEnemyDefeatInfoHoldMs;
+  if (d.elapsedMs < holdEnd) return 1;
+  const fadeOutElapsed = d.elapsedMs - holdEnd;
+  return Math.max(0, 1 - fadeOutElapsed / fixedEnemyDefeatInfoFadeOutMs);
+}
+
 function getFixedEnemyMoveSpeedMultiplier() {
   return fixedEnemyMoveSpeedDebuffTimerMs > 0 ? 0.6 : 1;
 }
@@ -1334,6 +1350,7 @@ function defeatFixedEnemy() {
   weeklyScoreGained += reward;
   checkEarlyQuotaAchievement();
   showMessage(`${def.name} を撃退！ Score +${reward}`, 2500, '#69f0ae', '23px sans-serif');
+  fixedEnemyDefeatInfoDisplay = { name: def.name, info: def.info, elapsedMs: 0 };
   if (def.persistAfterDefeat) {
     // バックドア設置：撃破後もしばらくすると同じ場所から不意打ちの一発が飛んでくる
     const shots = 1 + Math.floor(Math.random() * 2);
@@ -1455,6 +1472,15 @@ function updateFixedEnemy(dt) {
   }
   if (partner.active && partner.hijackedTimerMs > 0) {
     partner.hijackedTimerMs = Math.max(0, partner.hijackedTimerMs - dtMs);
+  }
+
+  // 固定敵撃破後の説明文表示（フェードイン→表示→フェードアウト）を進める
+  if (fixedEnemyDefeatInfoDisplay) {
+    fixedEnemyDefeatInfoDisplay.elapsedMs += dtMs;
+    if (fixedEnemyDefeatInfoDisplay.elapsedMs >=
+        fixedEnemyDefeatInfoFadeInMs + fixedEnemyDefeatInfoHoldMs + fixedEnemyDefeatInfoFadeOutMs) {
+      fixedEnemyDefeatInfoDisplay = null;
+    }
   }
 
   // バックドア設置：撃破後に予約された不意打ちを処理する
@@ -4201,13 +4227,29 @@ function finishBossTrueEnd() {
 }
 
 // ===== 中ボス「巨大案件」（DAY7ごと・18時に出現する）=====
-// ラスボスと似た動作（発射口・移動・退場演出）だが、通常攻撃でも発射口を破壊できる
+// ラスボスと似た動作（フェーズ・移動・退場演出）だが、通常攻撃でもフェーズを破壊できる
 const midBossWidthRatio = 0.4; // 画面幅に対する矩形の幅の割合
 const midBossHeight = 90;
 const midBossDescendDurationSec = 2.5;
-const midBossHoleCount = 3;
+// 案件の進め方（企画～リリース）になぞらえた、7つのフェーズ。番号順にしか破壊できない
+const midBossPhaseDefs = [
+  { name: '企画', info: '解決したい課題、目的、費用対効果を考える。' },
+  { name: '要件定義', info: '必要な機能、性能、利用者、業務ルールを決める。' },
+  { name: '基本設計', info: '利用者から見える画面や機能、システム全体の構成を決める。' },
+  { name: '詳細設計', info: 'プログラム単位の処理、データ項目、内部ロジックを細かく決める。' },
+  { name: '開発', info: 'プログラムを実装する。' },
+  { name: 'テスト', info: '不具合がないか、要件を満たしているか確認する。' },
+  { name: 'リリース・運用保守', info: 'システムをリリースし、運用・保守を行う。' }
+];
+const midBossPhaseCount = midBossPhaseDefs.length;
+const midBossPhaseNumberIcons = ['①', '②', '③', '④', '⑤', '⑥', '⑦'];
 const midBossHoleRadius = 14;
 const midBossHoleFlashDurationMs = 220;
+const midBossHoleMinSpacing = 0.24;
+const midBossHoleWanderIntervalMinMs = 1400; // ラスボスの発射口よりゆっくり動き回る
+const midBossHoleWanderIntervalMaxMs = 2400;
+const midBossHoleWanderEaseFactor = 0.6;
+const midBossPhaseTextFadeMs = 600; // フェーズ内容文のフェードイン・フェードアウトにかかる時間
 const midBossFireIntervalMs = 1300;
 const midBossBulletSpeed = 4.0;
 const midBossBulletDamageSan = 8;
@@ -4215,7 +4257,7 @@ const midBossBulletDamageLifespan = 2;
 const midBossHitsPerHoleBase = 100; // DAY7時点の耐久力（自機初期状態の通常攻撃100発相当）
 const midBossScoreReward = 150; // 通常の敵より多めのスコア
 const midBossRetreatDurationMs = 3000; // 振動・フェードアウトして消えるまでの時間
-let midBossEvent = null; // null、または { phase, holes, hitsPerHole, descendProgress, fireTimerMs, offsetX, offsetY, moveTargetX, moveTargetY, moveTimerMs, retreatTimerMs }
+let midBossEvent = null; // null、または { phase, holes, currentPhaseIndex, hitsPerHole, descendProgress, fireTimerMs, roamX, roamY, moveTargetX, moveTargetY, moveTimerMs, retreatTimerMs, phaseTextAlpha, phaseTextFadingOut }
 
 // DAY7=1倍、DAY14=2倍、DAY21=3倍、DAY28以降=5倍（暫定）
 function getMidBossDurabilityMultiplier(day) {
@@ -4238,10 +4280,22 @@ function getMidBossGeometry() {
   return { x, y: topY, width, height: midBossHeight };
 }
 
+// フェーズ（発射口）はそれぞれ独立に、案件本体の上をゆっくりランダムに動き回る
 function generateMidBossHoles() {
   const holes = [];
-  for (let i = 0; i < midBossHoleCount; i++) {
-    holes.push({ relX: (i + 1) / (midBossHoleCount + 1), relY: 0.6, hitsTaken: 0, destroyed: false, flashTimerMs: 0 });
+  for (let i = 0; i < midBossPhaseCount; i++) {
+    let relX, relY, attempts = 0;
+    do {
+      relX = 0.1 + Math.random() * 0.8;
+      relY = 0.25 + Math.random() * 0.5;
+      attempts++;
+    } while (attempts < 20 && holes.some(h => Math.hypot(h.relX - relX, h.relY - relY) < midBossHoleMinSpacing));
+    holes.push({
+      phaseIndex: i, relX, relY,
+      wanderTargetRelX: relX, wanderTargetRelY: relY,
+      wanderTimerMs: midBossHoleWanderIntervalMinMs + Math.random() * (midBossHoleWanderIntervalMaxMs - midBossHoleWanderIntervalMinMs),
+      hitsTaken: 0, destroyed: false, flashTimerMs: 0
+    });
   }
   return holes;
 }
@@ -4258,10 +4312,13 @@ function startMidBossEvent() {
     phase: 'descending',
     descendProgress: 0,
     holes: generateMidBossHoles(),
+    currentPhaseIndex: 0,
     hitsPerHole: Math.round(midBossHitsPerHoleBase * getMidBossDurabilityMultiplier(dayNumber)),
     fireTimerMs: midBossFireIntervalMs,
     roamX: startX, roamY: 0, roamTargetX: startX, roamTargetY: 0, moveTimerMs: 0,
-    retreatTimerMs: 0
+    retreatTimerMs: 0,
+    phaseTextAlpha: 0,
+    phaseTextFadingOut: false
   };
   showMessage('「巨大案件」が発生した！ 定時までに片付けられず、居残りが確定した……', 3800, '#ff8a65', '22px sans-serif');
 }
@@ -4271,7 +4328,7 @@ function updateMidBossEvent(dt) {
     midBossEvent.descendProgress = Math.min(1, midBossEvent.descendProgress + dt / midBossDescendDurationSec);
     if (midBossEvent.descendProgress >= 1) {
       midBossEvent.phase = 'active';
-      showMessage('「巨大案件」出現！ 発射口を破壊して片付けろ！', 3000, '#ff8a65', '22px sans-serif');
+      showMessage('「巨大案件」出現！ フェーズを番号順に破壊して片付けろ！', 3000, '#ff8a65', '22px sans-serif');
     }
     return;
   }
@@ -4299,8 +4356,28 @@ function updateMidBossEvent(dt) {
   midBossEvent.roamX += (midBossEvent.roamTargetX - midBossEvent.roamX) * moveEase;
   midBossEvent.roamY += (midBossEvent.roamTargetY - midBossEvent.roamY) * moveEase;
 
+  // フェーズ（発射口）ごとの点滅減衰と、ゆっくりランダムな徘徊
+  const wanderEase = Math.min(1, dt * midBossHoleWanderEaseFactor);
   for (const hole of midBossEvent.holes) {
     if (hole.flashTimerMs > 0) hole.flashTimerMs = Math.max(0, hole.flashTimerMs - dt * 1000);
+    if (hole.destroyed) continue;
+    hole.wanderTimerMs -= dt * 1000;
+    if (hole.wanderTimerMs <= 0) {
+      hole.wanderTargetRelX = 0.1 + Math.random() * 0.8;
+      hole.wanderTargetRelY = 0.25 + Math.random() * 0.5;
+      hole.wanderTimerMs = midBossHoleWanderIntervalMinMs + Math.random() * (midBossHoleWanderIntervalMaxMs - midBossHoleWanderIntervalMinMs);
+    }
+    hole.relX += (hole.wanderTargetRelX - hole.relX) * wanderEase;
+    hole.relY += (hole.wanderTargetRelY - hole.relY) * wanderEase;
+  }
+
+  // 現在対応中のフェーズの内容文を、フェードイン／フェードアウトさせながら表示する
+  const phaseFadeStep = dt * 1000 / midBossPhaseTextFadeMs;
+  if (midBossEvent.phaseTextFadingOut) {
+    midBossEvent.phaseTextAlpha = Math.max(0, midBossEvent.phaseTextAlpha - phaseFadeStep);
+    if (midBossEvent.phaseTextAlpha <= 0) midBossEvent.phaseTextFadingOut = false;
+  } else {
+    midBossEvent.phaseTextAlpha = Math.min(1, midBossEvent.phaseTextAlpha + phaseFadeStep);
   }
 
   midBossEvent.fireTimerMs -= dt * 1000;
@@ -4327,13 +4404,13 @@ function fireMidBossBullets() {
   }
 }
 
+// 番号順にしか破壊できないため、現在対応中のフェーズ以外は命中判定を持たない
 function findHitMidBossHole(x, y) {
   if (!midBossEvent || midBossEvent.phase !== 'active') return null;
-  for (const hole of midBossEvent.holes) {
-    if (hole.destroyed) continue;
-    const pos = getMidBossHoleAbsolutePosition(hole);
-    if (Math.hypot(x - pos.x, y - pos.y) <= midBossHoleRadius + 6) return hole;
-  }
+  const hole = midBossEvent.holes[midBossEvent.currentPhaseIndex];
+  if (!hole || hole.destroyed) return null;
+  const pos = getMidBossHoleAbsolutePosition(hole);
+  if (Math.hypot(x - pos.x, y - pos.y) <= midBossHoleRadius + 6) return hole;
   return null;
 }
 
@@ -4342,8 +4419,13 @@ function registerMidBossHoleHit(hole, hitX, hitY) {
   hole.flashTimerMs = midBossHoleFlashDurationMs;
   spawnHitSpark(hitX, hitY, hole.hitsTaken >= midBossEvent.hitsPerHole);
   if (hole.hitsTaken < midBossEvent.hitsPerHole) return;
+  // フェーズ破壊：発射口自体が消滅し、内容文はフェードアウトさせてから次のフェーズへ進む
   hole.destroyed = true;
-  if (!midBossEvent.holes.every(h => h.destroyed)) return;
+  const def = midBossPhaseDefs[hole.phaseIndex];
+  showMessage(`${hole.phaseIndex + 1}. ${def.name}完了！`, 2400, '#69f0ae', '22px sans-serif');
+  midBossEvent.phaseTextFadingOut = true;
+  midBossEvent.currentPhaseIndex++;
+  if (midBossEvent.currentPhaseIndex < midBossPhaseCount) return;
   score += midBossScoreReward;
   showMessage(`「巨大案件」を片付けた！ Score +${midBossScoreReward}`, 2800, '#69f0ae', '22px sans-serif');
   midBossEvent.phase = 'retreat';
@@ -6159,6 +6241,7 @@ function drawMidBossEvent() {
     const pos = getMidBossHoleAbsolutePosition(hole);
     const hx = pos.x + retreatShakeX;
     const hy = pos.y + retreatOffsetY;
+    const numberIcon = midBossPhaseNumberIcons[hole.phaseIndex] || String(hole.phaseIndex + 1);
     if (hole.destroyed) {
       ctx.beginPath();
       ctx.fillStyle = 'rgba(15, 15, 15, 0.85)';
@@ -6167,6 +6250,25 @@ function drawMidBossEvent() {
       ctx.strokeStyle = 'rgba(90, 90, 90, 0.6)';
       ctx.lineWidth = 2;
       ctx.stroke();
+      continue;
+    }
+    const isCurrent = hole.phaseIndex === midBossEvent.currentPhaseIndex;
+    if (!isCurrent) {
+      // 自分の番がまだ来ていないフェーズは、破壊できないことが分かるよう暗く鍵をかけたように描く
+      ctx.beginPath();
+      ctx.fillStyle = 'rgba(120, 120, 120, 0.30)';
+      ctx.arc(hx, hy, midBossHoleRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(180, 180, 180, 0.5)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(230, 230, 230, 0.7)';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(numberIcon, hx, hy);
+      ctx.textBaseline = 'alphabetic';
+      ctx.textAlign = 'left';
       continue;
     }
     const pulse = 0.6 + 0.4 * Math.sin(gameClockMs / 220 + pos.x);
@@ -6184,21 +6286,56 @@ function drawMidBossEvent() {
       ctx.arc(hx, hy, midBossHoleRadius * 1.3, 0, Math.PI * 2);
       ctx.fill();
     }
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(numberIcon, hx, hy);
+    ctx.textBaseline = 'alphabetic';
+    ctx.textAlign = 'left';
   }
   ctx.restore();
 
   if (midBossEvent.phase === 'active') {
-    const destroyedHoles = midBossEvent.holes.filter(h => h.destroyed).length;
+    const currentIndex = midBossEvent.currentPhaseIndex;
     ctx.save();
     ctx.fillStyle = 'white';
     ctx.font = 'bold 13px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(
-      `巨大案件：発射口 ${destroyedHoles}/${midBossEvent.holes.length} 破壊`,
+      `巨大案件：フェーズ ${Math.min(currentIndex + 1, midBossPhaseCount)}/${midBossPhaseCount}`,
       canvas.width / 2, geo.y + geo.height + 20
     );
     ctx.textAlign = 'left';
     ctx.restore();
+
+    // 現在対応中のフェーズの内容文を、フェードイン・フェードアウトしながら表示する
+    const phaseDef = midBossPhaseDefs[currentIndex];
+    if (phaseDef && midBossEvent.phaseTextAlpha > 0) {
+      ctx.save();
+      ctx.globalAlpha = midBossEvent.phaseTextAlpha;
+      const panelW = 420, panelH = 62;
+      const panelX = canvas.width / 2 - panelW / 2;
+      const panelY = geo.y + geo.height + 32;
+      ctx.fillStyle = 'rgba(40, 30, 10, 0.75)';
+      ctx.fillRect(panelX, panelY, panelW, panelH);
+      ctx.strokeStyle = '#ffb74d';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(panelX, panelY, panelW, panelH);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ffe0b2';
+      ctx.font = 'bold 15px sans-serif';
+      ctx.fillText(
+        `${midBossPhaseNumberIcons[currentIndex] || currentIndex + 1} ${phaseDef.name}`,
+        canvas.width / 2, panelY + 22
+      );
+      ctx.fillStyle = '#fff3e0';
+      ctx.font = '13px sans-serif';
+      ctx.fillText(phaseDef.info, canvas.width / 2, panelY + 44);
+      ctx.textAlign = 'left';
+      ctx.restore();
+    }
   }
 }
 
@@ -7364,6 +7501,39 @@ function draw() {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(fixedEnemy.def.decoyIcon || '❓', fixedEnemy.decoy.x, fixedEnemy.decoy.y);
+      ctx.restore();
+    }
+  }
+
+  // 固定敵を撃破した直後、その用語の現実の説明文を窓の上あたりにフェードイン→表示→フェードアウトする
+  if (fixedEnemyDefeatInfoDisplay) {
+    const infoAlpha = getFixedEnemyDefeatInfoAlpha();
+    if (infoAlpha > 0) {
+      ctx.save();
+      ctx.globalAlpha = infoAlpha;
+      // 自分・同僚のプロフィール枠（左上）と日付表示（右上）を避け、窓の中央〜右寄りに表示する
+      const panelX = 320;
+      const panelW = Math.min(450, canvas.width - panelX - 20);
+      const panelCenterX = panelX + panelW / 2;
+      ctx.font = '13px sans-serif';
+      const infoLines = wrapTextToWidth(fixedEnemyDefeatInfoDisplay.info, panelW - 32);
+      const panelH = 34 + infoLines.length * 18;
+      const panelY = 40;
+      ctx.fillStyle = 'rgba(20, 20, 30, 0.78)';
+      ctx.fillRect(panelX, panelY, panelW, panelH);
+      ctx.strokeStyle = '#ff8a80';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(panelX, panelY, panelW, panelH);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ffcdd2';
+      ctx.font = 'bold 15px sans-serif';
+      ctx.fillText(fixedEnemyDefeatInfoDisplay.name, panelCenterX, panelY + 22);
+      ctx.fillStyle = '#eeeeee';
+      ctx.font = '13px sans-serif';
+      infoLines.forEach((line, i) => {
+        ctx.fillText(line, panelCenterX, panelY + 42 + i * 18);
+      });
+      ctx.textAlign = 'left';
       ctx.restore();
     }
   }
