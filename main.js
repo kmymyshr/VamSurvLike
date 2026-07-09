@@ -111,12 +111,12 @@ function dreamMemoryUpgradeCost(currentLevel) {
 // ===== エンディングリスト（タイトル画面から確認できる、到達済みエンディングの一覧） =====
 const endingListDefs = [
   { id: 'trueAlive', icon: '👁️', label: '目覚めエンド', hint: 'ラスボスを撃破し、同僚が生存している状態で終える' },
-  { id: 'truePartnerLost', icon: '🖤', label: 'もう一つの目覚めエンド', hint: 'ラスボスを撃破するが、同僚を失っている' },
+  { id: 'truePartnerLost', icon: '🖤', label: '再び悪夢エンド', hint: 'ラスボスを撃破するが、同僚を失っている' },
   { id: 'true', icon: '🌟', label: 'TRUE END', hint: 'ランク7に到達し、特殊な選択を全て正しく行い、同僚を失わずに完走する' },
   { id: 'normal', icon: '🏁', label: 'NORMAL END', hint: '月末を迎えて一区切りをつける' },
-  { id: 'bad-san', icon: '🌀', label: 'BAD END（心）', hint: 'SANが0になる' },
-  { id: 'bad-lifespan', icon: '⚰️', label: 'BAD END（寿命）', hint: '寿命が0になる' },
-  { id: 'bad-partner-shot', icon: '💔', label: 'BAD END（同僚）', hint: '同僚の誤射でとどめを刺される' }
+  { id: 'bad-san', icon: '🌀', label: 'END（心）', hint: 'SANが0になる' },
+  { id: 'bad-lifespan', icon: '⚰️', label: 'END（寿命）', hint: '寿命が0になる' },
+  { id: 'bad-partner-shot', icon: '💔', label: 'END（同僚）', hint: '同僚の誤射でとどめを刺される' }
 ];
 
 function loadDreamMemorySave() {
