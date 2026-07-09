@@ -889,6 +889,7 @@ let weeklyScoreGained = 0; // 今週のスコア獲得量（減点は含まな�
 let weekendWorkChoice = false; // 「休日出勤しますか」の選択待ち
 let restActivityChoice = false; // 「休日の過ごし方」3択の選択待ち
 let restStudyPending = false; // 休日の「勉強」からスキル選択を開いた後の後続処理待ち
+const restStudyTotalPicks = 3; // 休日の「勉強」で選べる特殊スキルの回数
 let weekendWorkQuotaChoice = false; // 休日出勤中にノルマ達成し、「家に帰りますか」の選択待ち
 const weekendWorkSanDrainPerSec = 0.5; // 休日出勤中、1秒あたり緩やかに減少するSAN
 const weekendWorkLifespanDrainPerSec = 0.15; // 休日出勤中、1秒あたり緩やかに減少する寿命
@@ -1007,10 +1008,17 @@ function pushEntityOutsideScheduledReport(entity) {
 }
 
 // ===== 固定敵（IT用語モチーフの特殊な出現敵） =====
-// 週に3回程度、平日のランダムなタイミングで1体だけ出現する、移動しない特殊な敵。
+// 現実の経過時間で平均30秒に1件ほど、ランダムなタイミングでマップ上に出現する、移動しない特殊な敵。
+// ゲーム内時間（時刻・日数）の進行状況やラスボス・中ボスの有無に関わらず出現し続け、最大5体まで同時に存在できる。
 // 名称はIT・セキュリティ用語から取り、現実の攻撃内容にちなんだ攻撃パターン・被弾時の悪影響を持つ。
-const fixedEnemyCheckHour = 13; // 平日13時に判定する（昼食・定時報告・クイズと時間帯が被らないように選定）
-const fixedEnemySpawnChance = 0.6; // 平日5日 × 60% ≈ 週3回程度の出現
+const fixedEnemyMaxConcurrent = 5;
+const fixedEnemyDurabilityMultiplier = 3; // 耐久力（HP）を全体的に3倍にする
+const fixedEnemySpawnIntervalAvgMs = 30000; // 現実の時間で平均30秒に1件（指数分布でかなりばらつかせる）
+const fixedEnemySpawnIntervalMinMs = 500; // 連続発生時でも、これより短い間隔にはしない
+function getRandomFixedEnemySpawnIntervalMs() {
+  // 指数分布：平均が上の定数になるようにしつつ、運が悪いと連続発生し得るほどのばらつきを持たせる
+  return Math.max(fixedEnemySpawnIntervalMinMs, -Math.log(1 - Math.random()) * fixedEnemySpawnIntervalAvgMs);
+}
 const fixedEnemyBulletSpeed = 5;
 const fixedEnemyBulletRadius = 6;
 const decoyBaseSanDamage = 8; // 「おとり」系（フィッシング等）に触れた時の共通の基礎ダメージ
@@ -1198,7 +1206,9 @@ const fixedEnemyDefs = [
   }
 ];
 
-let fixedEnemy = null; // 現在アクティブな固定敵。1体のみ同時出現する
+let fixedEnemies = []; // 現在アクティブな固定敵（最大fixedEnemyMaxConcurrent体）
+let fixedEnemySpawnTimerMs = getRandomFixedEnemySpawnIntervalMs(); // 次の出現までの残り時間（現実のミリ秒）
+let fixedEnemyLastRealMs = null; // 実時間の経過を測るための直前のDate.now()
 const pendingFixedEnemyBackdoors = []; // バックドア設置：撃破後もしばらく残る、不意打ち予約リスト
 
 // 被弾時の効果に使う、状態異常タイマー（0より大きい間だけ効果が続く）
@@ -1284,7 +1294,7 @@ function applyFixedEnemyEffect(effect, target = 'player') {
 }
 
 function spawnFixedEnemy() {
-  if (fixedEnemy || scheduledReport || bossEvent || midBossEvent) return;
+  if (fixedEnemies.length >= fixedEnemyMaxConcurrent) return;
   const def = fixedEnemyDefs[Math.floor(Math.random() * fixedEnemyDefs.length)];
   const radius = def.radius;
   let position;
@@ -1299,13 +1309,19 @@ function spawnFixedEnemy() {
     ];
     position = corners[Math.floor(Math.random() * corners.length)];
   } else {
-    position = getRandomEventPosition(radius);
+    // 既に出ている他の固定敵と重ならない位置を探す（20回試して見つからなければ最後の候補をそのまま使う）
+    let attempts = 0;
+    do {
+      position = getRandomEventPosition(radius);
+      attempts++;
+    } while (attempts < 20 && fixedEnemies.some(fx =>
+      Math.hypot(fx.x - position.x, fx.y - position.y) < fx.radius + radius + 40));
   }
   const collisionSafeMargin = radius + player.radius * 2 + 2;
   position.x = Math.max(collisionSafeMargin, Math.min(canvas.width - collisionSafeMargin, position.x));
   position.y = Math.max(collisionSafeMargin, Math.min(canvas.height - collisionSafeMargin, position.y));
-  const maxHp = Math.ceil(def.hpBase * getEnemyDifficultyMultiplier());
-  fixedEnemy = {
+  const maxHp = Math.ceil(def.hpBase * fixedEnemyDurabilityMultiplier * getEnemyDifficultyMultiplier());
+  const fx = {
     def, x: position.x, y: position.y, radius,
     hp: maxHp, maxHp,
     timerMs: def.instantFirstAttack ? 250 : def.intervalMs,
@@ -1315,36 +1331,41 @@ function spawnFixedEnemy() {
     decoyTimerMs: def.attackType === 'decoy' ? def.intervalMs : 0,
     patternIndex: 0
   };
+  fixedEnemies.push(fx);
   showMessage(`${def.icon} ${def.name} が発生！`, 3000, '#ff8a80', '22px sans-serif');
 }
 
-function clearFixedEnemyAtDayEnd() {
-  if (!fixedEnemy) return;
-  showMessage(`${fixedEnemy.def.name} を見逃してしまった…`, 2200, '#ff8a80');
-  fixedEnemy = null;
+function clearFixedEnemiesAtDayEnd() {
+  if (fixedEnemies.length === 0) return;
+  const names = [...new Set(fixedEnemies.map(fx => fx.def.name))].join('・');
+  showMessage(`${names} を見逃してしまった…`, 2200, '#ff8a80');
+  fixedEnemies = [];
 }
 
 // 固定敵は接触ダメージを持たないが、自分も同僚も通り抜けられない
 function pushEntityOutsideFixedEnemy(entity) {
-  if (!fixedEnemy || !entity) return;
-  let dx = entity.x - fixedEnemy.x;
-  let dy = entity.y - fixedEnemy.y;
-  let distance = Math.hypot(dx, dy);
-  const minimumDistance = entity.radius + fixedEnemy.radius + 1;
-  if (distance >= minimumDistance) return;
-  if (distance === 0) {
-    dx = 1;
-    dy = 0;
-    distance = 1;
+  if (!entity) return;
+  for (const fx of fixedEnemies) {
+    let dx = entity.x - fx.x;
+    let dy = entity.y - fx.y;
+    let distance = Math.hypot(dx, dy);
+    const minimumDistance = entity.radius + fx.radius + 1;
+    if (distance >= minimumDistance) continue;
+    if (distance === 0) {
+      dx = 1;
+      dy = 0;
+      distance = 1;
+    }
+    entity.x = fx.x + (dx / distance) * minimumDistance;
+    entity.y = fx.y + (dy / distance) * minimumDistance;
+    clampToPlayableFloor(entity);
   }
-  entity.x = fixedEnemy.x + (dx / distance) * minimumDistance;
-  entity.y = fixedEnemy.y + (dy / distance) * minimumDistance;
-  clampToPlayableFloor(entity);
 }
 
-function defeatFixedEnemy() {
-  if (!fixedEnemy) return;
-  const def = fixedEnemy.def;
+function defeatFixedEnemy(fx) {
+  const index = fixedEnemies.indexOf(fx);
+  if (index === -1) return;
+  const def = fx.def;
   const reward = Math.ceil(28 * specialSkillEffects.scoreGainMultiplier * getEnemyDifficultyMultiplier());
   score += reward;
   weeklyScoreGained += reward;
@@ -1357,11 +1378,11 @@ function defeatFixedEnemy() {
     for (let i = 0; i < shots; i++) {
       pendingFixedEnemyBackdoors.push({
         remainingMs: 4000 + Math.random() * 8000 + i * 5000,
-        x: fixedEnemy.x, y: fixedEnemy.y
+        x: fx.x, y: fx.y
       });
     }
   }
-  fixedEnemy = null;
+  fixedEnemies.splice(index, 1);
 }
 
 function spawnFixedEnemyBullet(fromX, fromY, angle, def) {
@@ -1494,13 +1515,29 @@ function updateFixedEnemy(dt) {
     }
   }
 
-  if (!fixedEnemy) return;
-  fixedEnemy.ageMs += dtMs;
-  fixedEnemy.timerMs -= dtMs;
-  if (fixedEnemy.timerMs <= 0) {
-    performFixedEnemyAttack(fixedEnemy);
+  // 固定敵の出現判定は、ゲーム内時間の進行状況（ラスボス・中ボスによる時間停止を含む）に関わらず、
+  // 現実の経過時間（Date.now()）で行う。平均30秒に1件、指数分布で大きくばらつかせ、連続発生もあり得るようにする
+  const nowReal = Date.now();
+  const realDtMs = fixedEnemyLastRealMs !== null ? Math.max(0, nowReal - fixedEnemyLastRealMs) : 0;
+  fixedEnemyLastRealMs = nowReal;
+  if (!setupStep && !startScreen && !gameOver && !gameClear) {
+    fixedEnemySpawnTimerMs -= realDtMs;
+    let spawnGuard = 0; // 万一の無限ループを避ける安全弁
+    while (fixedEnemySpawnTimerMs <= 0 && fixedEnemies.length < fixedEnemyMaxConcurrent && spawnGuard < fixedEnemyMaxConcurrent) {
+      spawnFixedEnemy();
+      fixedEnemySpawnTimerMs += getRandomFixedEnemySpawnIntervalMs();
+      spawnGuard++;
+    }
   }
-  updateFixedEnemyDecoy(fixedEnemy, dt);
+
+  for (const fx of fixedEnemies) {
+    fx.ageMs += dtMs;
+    fx.timerMs -= dtMs;
+    if (fx.timerMs <= 0) {
+      performFixedEnemyAttack(fx);
+    }
+    updateFixedEnemyDecoy(fx, dt);
+  }
 }
 
 // --- 昼食：12時に順番付きで出現する食べ物 ---
@@ -1669,11 +1706,6 @@ function processTimedHourEvents(previousHour, newHour) {
         Math.random() < quizChancePerOpportunity) {
       startQuizEvent();
     }
-    // 固定敵（IT用語モチーフ）：平日13時に、週3回程度の確率で1体出現する
-    if (isWeekday && hour === fixedEnemyCheckHour && !fixedEnemy &&
-        Math.random() < fixedEnemySpawnChance) {
-      spawnFixedEnemy();
-    }
   }
 }
 
@@ -1681,7 +1713,7 @@ function resolveTimedSystemsAtDayEnd() {
   failScheduledReport();
   finishLunchAtDayEnd();
   quizState = null;
-  clearFixedEnemyAtDayEnd();
+  clearFixedEnemiesAtDayEnd();
 }
 
 // 一日の終了処理（終業時刻・残業の限界時刻・定時報告を残業中に片付けた場合のいずれからも呼ばれる）
@@ -2931,21 +2963,38 @@ function recomputeSpecialSkillEffects() {
 
 const specialSkillSelectionLockDurationMs = 1000; // 表示直後の連続タップ／クリックによる誤選択を防ぐ猶予時間
 let specialSkillSelectionUnlockAt = 0; // この時刻（Date.now()基準）を過ぎるまで選択を受け付けない
+const specialSkillMaxRerolls = 3; // 表示された3択を選び直せる回数（1回の選択機会ごとにリセットされる）
+let specialSkillRerollsRemaining = specialSkillMaxRerolls;
+
+// 取得済みスキルも候補に含め、再取得するとレベルアップできる（ただしmaxLevelに達したスキルは除外する）
+function getAvailableSpecialSkillsPool() {
+  return specialSkills.filter(skill =>
+    !(skill.maxLevel && (specialSkillLevels.get(skill.id) || 0) >= skill.maxLevel));
+}
+
+// Fisher-Yates法で配列をシャッフルした新しい配列を返す（元の配列は変更しない）
+function shuffleArray(array) {
+  const result = array.slice();
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+}
 
 function openSpecialSkillSelection(title) {
-  // 取得済みスキルも候補に含め、再取得するとレベルアップできる（ただしmaxLevelに達したスキルは除外する）
-  const availableSkills = specialSkills.filter(skill =>
-    !(skill.maxLevel && (specialSkillLevels.get(skill.id) || 0) >= skill.maxLevel));
-
-  // Fisher-Yates法で候補をシャッフルし、先頭から3つ選ぶ
-  for (let i = availableSkills.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [availableSkills[i], availableSkills[j]] = [availableSkills[j], availableSkills[i]];
-  }
-  specialSkillChoices = availableSkills.slice(0, 3);
+  specialSkillChoices = shuffleArray(getAvailableSpecialSkillsPool()).slice(0, 3);
   specialSkillSelectionTitle = title;
   specialSkillSelectionActive = true;
   specialSkillSelectionUnlockAt = Date.now() + specialSkillSelectionLockDurationMs;
+  specialSkillRerollsRemaining = specialSkillMaxRerolls;
+}
+
+// 表示中の3択を、残り回数の範囲内で選び直す（リロール）
+function rerollSpecialSkillChoices() {
+  if (Date.now() < specialSkillSelectionUnlockAt || specialSkillRerollsRemaining <= 0) return;
+  specialSkillRerollsRemaining--;
+  specialSkillChoices = shuffleArray(getAvailableSpecialSkillsPool()).slice(0, 3);
 }
 
 function chooseSpecialSkill(choiceIndex) {
@@ -2971,7 +3020,12 @@ function chooseSpecialSkill(choiceIndex) {
 
   if (pendingSpecialSkillSelections > 0) {
     pendingSpecialSkillSelections--;
-    openSpecialSkillSelection('レベルアップ：特殊スキルを選択');
+    if (restStudyPending) {
+      const pickNumber = restStudyTotalPicks - pendingSpecialSkillSelections;
+      openSpecialSkillSelection(`休日の勉強：特殊スキルを選択（${pickNumber}/${restStudyTotalPicks}）`);
+    } else {
+      openSpecialSkillSelection('レベルアップ：特殊スキルを選択');
+    }
     return;
   }
 
@@ -3360,7 +3414,8 @@ function applyRestActivity(choiceIndex) {
       () => finishRestDayAndAdvanceToMonday());
   } else if (choiceIndex === 3) {
     restStudyPending = true;
-    openSpecialSkillSelection('休日の勉強：特殊スキルを選択');
+    pendingSpecialSkillSelections = restStudyTotalPicks - 1;
+    openSpecialSkillSelection(`休日の勉強：特殊スキルを選択（1/${restStudyTotalPicks}）`);
   }
 }
 
@@ -3830,9 +3885,13 @@ function performBulletParry(bullet, fromX, fromY, actorAngle) {
       ? getMidBossHoleAbsolutePosition(bullet.sourceHole)
       : getBossHoleAbsolutePosition(bullet.sourceHole);
     angle = Math.atan2(holePos.y - bullet.y, holePos.x - bullet.x);
-  } else if ((bullet.owner === 'fixedEnemy' || bullet.owner === 'fixedEnemyDisguise') && fixedEnemy) {
-    // 固定敵の弾は、その固定敵本体へ打ち返す
-    angle = Math.atan2(fixedEnemy.y - bullet.y, fixedEnemy.x - bullet.x);
+  } else if ((bullet.owner === 'fixedEnemy' || bullet.owner === 'fixedEnemyDisguise') && fixedEnemies.length > 0) {
+    // 固定敵の弾は、最も近い固定敵本体へ打ち返す
+    const nearestFixedEnemy = fixedEnemies.reduce((closest, fx) => {
+      const d = Math.hypot(fx.x - bullet.x, fx.y - bullet.y);
+      return (!closest || d < closest.d) ? { fx, d } : closest;
+    }, null).fx;
+    angle = Math.atan2(nearestFixedEnemy.y - bullet.y, nearestFixedEnemy.x - bullet.x);
   } else {
     const nearest = findNearestEnemyTo(fromX, fromY);
     angle = nearest
@@ -4501,7 +4560,13 @@ function attemptDeflectPartnerBullet() {
 // スマホ用自動照準のターゲットを返す。定時報告が出ている間は、同僚の自律攻撃と同様にそちらを優先する
 function findAutoAimTarget() {
   if (scheduledReport) return { en: scheduledReport };
-  if (fixedEnemy) return { en: fixedEnemy };
+  if (fixedEnemies.length > 0) {
+    const nearest = fixedEnemies.reduce((closest, fx) => {
+      const d = Math.hypot(fx.x - player.x, fx.y - player.y);
+      return (!closest || d < closest.d) ? { en: fx, d } : closest;
+    }, null);
+    return { en: nearest.en };
+  }
   return findNearestEnemyToPlayer();
 }
 
@@ -4896,6 +4961,10 @@ function update() {
     if (gameOver || deathSequence) return;
   }
 
+  // 固定敵（IT用語モチーフ）の進行を処理する。ラスボス・中ボスの有無や、ゲーム内時間の進行状況に関わらず並行して進む
+  updateFixedEnemy(dt);
+  if (gameOver || deathSequence) return;
+
   // ラスボスの発生判定・進行を処理する。発生中は時間経過・通常の敵の出現を止め、
   // ラスボスとだけ戦う特別な状況にする
   checkBossEventTrigger();
@@ -4908,10 +4977,6 @@ function update() {
     updateMidBossEvent(dt);
     if (gameOver || deathSequence) return;
   }
-
-  // 固定敵（IT用語モチーフ）の進行を処理する。通常の敵・時間経過は止めず並行して進む
-  updateFixedEnemy(dt);
-  if (gameOver || deathSequence) return;
 
   // Scoreに応じて、ランク・役職スキルを継続的に自動更新する（週末の昇進判定は廃止）
   checkAndApplyRankUp();
@@ -4956,12 +5021,13 @@ function update() {
     if (gameOver || deathSequence) return;
   }
 
-  // 全滅したら少し間を置いて次のウェーブ（仕事）を出す。定時報告が出ている間は同時出現数を1体にする
+  // 全滅したら少し間を置いて次のウェーブ（仕事）を出す。
+  // 定時報告・「巨大案件」が出ている間は、同時出現数を1体にする
   if (enemies.length === 0) {
     if (waveCooldownMs > 0) {
       waveCooldownMs -= dt * 1000;
     } else {
-      spawnWave(scheduledReport ? 1 : maxEnemies);
+      spawnWave((scheduledReport || midBossEvent) ? 1 : maxEnemies);
     }
   }
   }
@@ -5599,21 +5665,24 @@ function update() {
       continue;
     }
     // 固定敵への命中判定。自機・同僚の通常弾、パリィで打ち返した弾（'deflected'）が有効打になる
-    if (fixedEnemy && (b.owner === 'player' || b.owner === 'deflected' || b.owner === 'partner') &&
-        Math.hypot(b.x - fixedEnemy.x, b.y - fixedEnemy.y) <= b.radius + fixedEnemy.radius) {
-      if (fixedEnemy.def.dodgeChance && Math.random() < fixedEnemy.def.dodgeChance) {
-        // キーロガー：一定確率で攻撃を回避する
-        showMessage('回避された！', 900, '#b0bec5');
+    if (fixedEnemies.length > 0 && (b.owner === 'player' || b.owner === 'deflected' || b.owner === 'partner')) {
+      const hitFixedEnemy = fixedEnemies.find(fx =>
+        Math.hypot(b.x - fx.x, b.y - fx.y) <= b.radius + fx.radius);
+      if (hitFixedEnemy) {
+        if (hitFixedEnemy.def.dodgeChance && Math.random() < hitFixedEnemy.def.dodgeChance) {
+          // キーロガー：一定確率で攻撃を回避する
+          showMessage('回避された！', 900, '#b0bec5');
+          bullets.splice(i, 1);
+          continue;
+        }
+        const damageBonus = 1 + skillLevel * 0.08;
+        const actualDmg = Math.max(1, Math.round((b.damage || 1) * damageBonus));
+        hitFixedEnemy.hp -= actualDmg;
+        spawnHitSpark(b.x, b.y, hitFixedEnemy.hp <= 0);
         bullets.splice(i, 1);
+        if (hitFixedEnemy.hp <= 0) defeatFixedEnemy(hitFixedEnemy);
         continue;
       }
-      const damageBonus = 1 + skillLevel * 0.08;
-      const actualDmg = Math.max(1, Math.round((b.damage || 1) * damageBonus));
-      fixedEnemy.hp -= actualDmg;
-      spawnHitSpark(b.x, b.y, fixedEnemy.hp <= 0);
-      bullets.splice(i, 1);
-      if (fixedEnemy.hp <= 0) defeatFixedEnemy();
-      continue;
     }
     // ラスボスへの命中判定。自機の通常弾・パリィで打ち返した弾（'deflected'）が発射口に当たると有効打になる。
     // 発射口以外に当たった弾はそのまま素通りする
@@ -7531,11 +7600,11 @@ function draw() {
   }
 
   // 固定敵（IT用語モチーフ）
-  if (fixedEnemy) {
-    const fxHpRatio = Math.max(0, fixedEnemy.hp / fixedEnemy.maxHp);
+  for (const fx of fixedEnemies) {
+    const fxHpRatio = Math.max(0, fx.hp / fx.maxHp);
     ctx.save();
     ctx.beginPath();
-    ctx.arc(fixedEnemy.x, fixedEnemy.y, fixedEnemy.radius, 0, Math.PI * 2);
+    ctx.arc(fx.x, fx.y, fx.radius, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(255, 82, 82, 0.22)';
     ctx.fill();
     ctx.strokeStyle = '#ff5252';
@@ -7544,21 +7613,21 @@ function draw() {
     ctx.font = '32px "Segoe UI Emoji", sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(fixedEnemy.def.icon, fixedEnemy.x, fixedEnemy.y - 5);
+    ctx.fillText(fx.def.icon, fx.x, fx.y - 5);
     ctx.font = 'bold 12px sans-serif';
     ctx.fillStyle = '#ffcdd2';
-    ctx.fillText(fixedEnemy.def.name, fixedEnemy.x, fixedEnemy.y + fixedEnemy.radius + 14);
+    ctx.fillText(fx.def.name, fx.x, fx.y + fx.radius + 14);
     const fxBarWidth = 74;
     ctx.fillStyle = '#424242';
-    ctx.fillRect(fixedEnemy.x - fxBarWidth / 2, fixedEnemy.y + fixedEnemy.radius + 22, fxBarWidth, 7);
+    ctx.fillRect(fx.x - fxBarWidth / 2, fx.y + fx.radius + 22, fxBarWidth, 7);
     ctx.fillStyle = fxHpRatio < 0.3 ? '#ef5350' : '#ff8a65';
-    ctx.fillRect(fixedEnemy.x - fxBarWidth / 2, fixedEnemy.y + fixedEnemy.radius + 22, fxBarWidth * fxHpRatio, 7);
+    ctx.fillRect(fx.x - fxBarWidth / 2, fx.y + fx.radius + 22, fxBarWidth * fxHpRatio, 7);
     ctx.restore();
 
-    if (fixedEnemy.decoy) {
+    if (fx.decoy) {
       ctx.save();
       ctx.beginPath();
-      ctx.arc(fixedEnemy.decoy.x, fixedEnemy.decoy.y, fixedEnemy.decoy.radius, 0, Math.PI * 2);
+      ctx.arc(fx.decoy.x, fx.decoy.y, fx.decoy.radius, 0, Math.PI * 2);
       ctx.fillStyle = 'rgba(255, 214, 0, 0.25)';
       ctx.fill();
       ctx.strokeStyle = '#ffd600';
@@ -7567,7 +7636,7 @@ function draw() {
       ctx.font = '22px "Segoe UI Emoji", sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(fixedEnemy.def.decoyIcon || '❓', fixedEnemy.decoy.x, fixedEnemy.decoy.y);
+      ctx.fillText(fx.def.decoyIcon || '❓', fx.decoy.x, fx.decoy.y);
       ctx.restore();
     }
   }
@@ -8102,6 +8171,17 @@ function draw() {
     ctx.fillStyle = '#e1bee7';
     ctx.font = 'bold 30px sans-serif';
     ctx.fillText(specialSkillSelectionTitle, canvas.width / 2, 70);
+    ctx.textAlign = 'left';
+
+    // 表示された3択が気に入らない場合、残り回数の範囲でリロール（選び直し）できる
+    const rerollBtnW = 190, rerollBtnH = 34;
+    const rerollAvailable = !selectionLocked && specialSkillRerollsRemaining > 0;
+    drawUiButton(canvas.width / 2 - rerollBtnW / 2, 82, rerollBtnW, rerollBtnH,
+      `リロール（残${specialSkillRerollsRemaining}回）`,
+      rerollAvailable ? rerollSpecialSkillChoices : () => {},
+      rerollAvailable
+        ? { fillStyle: 'rgba(103, 58, 183, 0.6)', strokeStyle: '#ce93d8', font: 'bold 14px sans-serif' }
+        : { fillStyle: 'rgba(60, 60, 60, 0.5)', strokeStyle: '#616161', textColor: '#9e9e9e', font: 'bold 14px sans-serif' });
 
     ctx.save();
     if (selectionLocked) ctx.globalAlpha = 0.5; // 誤選択防止の猶予中は、選べないことが分かるよう薄く表示する
@@ -8113,7 +8193,7 @@ function draw() {
     const cardPaddingBottom = 20;
     const cardGap = 14;
     ctx.font = descFont;
-    let cardY = 115;
+    let cardY = 128;
     specialSkillChoices.forEach((skill, index) => {
       const descLines = wrapTextToWidth(skill.description, cardWidth - 44);
       const cardHeight = Math.max(95, cardTextTop + descLines.length * descLineHeight + cardPaddingBottom);
