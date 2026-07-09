@@ -3347,43 +3347,80 @@ function adjustPartnerRelationship(amount) {
 }
 
 // シナリオデータ：シーンごとに開始ノードと、ノード間を選択肢でつなぐ分岐木を持つ
+// 文言が { male, female } の場合はその話し手（同僚ならその性別、自分なら自機の性別）に応じた方を、
+// 文字列ならそのまま返す（「（既読だけつけて…）」のような行動描写は性別を問わないため文字列のまま）
+function resolveGenderedAdventureText(value, gender) {
+  if (typeof value === 'string') return value;
+  return gender === 'female' ? value.female : value.male;
+}
+
 const partnerAdventureScenes = {
   cafe: {
     start: 'intro',
     nodes: {
       intro: {
-        text: '急にごめんね、休みの日にメッセージしちゃった。ちょっとだけ、話し相手になってくれる？',
+        text: {
+          male: '急にごめんな、休みの日にメッセージしちゃって。ちょっとだけ、話し相手になってくれよ。',
+          female: '急にごめんね、休みの日にメッセージしちゃった。ちょっとだけ、話し相手になってくれる？'
+        },
         choices: [
-          { label: '実はさ、最近ちょっと仕事のことで悩んでて…', next: 'consult',
+          { label: {
+              male: '実はさ、最近ちょっと仕事のことで悩んでてよ…',
+              female: '実はね、最近ちょっと仕事のことで悩んでて…'
+            }, next: 'consult',
             effects: () => adjustPartnerRelationship(15) },
-          { label: '全然いいよ！休みの日っていつも何してるの？', next: 'hobby',
+          { label: {
+              male: '全然いいぞ！休みの日っていつも何してるんだ？',
+              female: '全然いいよ！休みの日っていつも何してるの？'
+            }, next: 'hobby',
             effects: () => { adjustPartnerRelationship(10); grantSpecialSkillById('communication'); } },
           { label: '（既読だけつけて、少し考える）', next: 'silence',
             effects: () => {} }
         ]
       },
       consult: {
-        text: '大変だったね…。でも、一緒に頑張ろう！わたしもついてるから。',
+        text: {
+          male: '大変だったな…。でも、一緒に頑張ろうぜ！俺もついてるから。',
+          female: '大変だったね…。でも、一緒に頑張ろう！わたしもついてるから。'
+        },
         choices: [
-          { label: 'ありがとう、そう言ってもらえると救われるよ', next: null,
+          { label: {
+              male: 'ありがとな、そう言ってもらえると助かるよ',
+              female: 'ありがとう、そう言ってもらえると救われるよ'
+            }, next: null,
             effects: () => { adjustPartnerRelationship(10); specialSkillEffects.partnerDamageMultiplier *= 1.1; } },
           { label: '（照れくさくて、スタンプだけ送る）', next: null,
             effects: () => adjustPartnerRelationship(3) }
         ]
       },
       hobby: {
-        text: '休みの日は、実はこっそりカフェ巡りにハマっててさ。意外でしょ？',
+        text: {
+          male: '休みの日は、実はこっそりカフェ巡りにハマっててさ。意外だろ？',
+          female: '休みの日は、実はこっそりカフェ巡りにハマっててさ。意外でしょ？'
+        },
         choices: [
-          { label: '気になる！今度詳しく教えてよ', next: null,
+          { label: {
+              male: '気になるな！今度詳しく教えてくれよ',
+              female: '気になる！今度詳しく教えてよ'
+            }, next: null,
             effects: () => grantSpecialSkillById('learning-power') },
-          { label: '実は自分も、最近ハマってることがあってさ', next: null,
+          { label: {
+              male: '実は俺も、最近ハマってることがあってさ',
+              female: '実は自分も、最近ハマってることがあってさ'
+            }, next: null,
             effects: () => adjustPartnerRelationship(8) }
         ]
       },
       silence: {
-        text: '…既読スルーされちゃったかな。大丈夫？',
+        text: {
+          male: '…既読スルーされたか？大丈夫か？',
+          female: '…既読スルーされちゃったかな。大丈夫？'
+        },
         choices: [
-          { label: 'ごめん、返信遅くなった。実はさ…', next: null,
+          { label: {
+              male: '悪い、返信遅くなった。実はさ…',
+              female: 'ごめん、返信遅くなった。実はさ…'
+            }, next: null,
             effects: () => adjustPartnerRelationship(5) },
           { label: '（そのまま、既読無視を続ける）', next: null,
             effects: () => adjustPartnerRelationship(-5) }
@@ -3397,8 +3434,12 @@ const partnerAdventureScenes = {
 function startPartnerAdventure(onComplete) {
   const sceneKeys = Object.keys(partnerAdventureScenes);
   const scene = partnerAdventureScenes[sceneKeys[Math.floor(Math.random() * sceneKeys.length)]];
-  // history：スレッド形式で表示する、これまでの同僚・自分のメッセージ履歴
-  adventureState = { scene, nodeId: scene.start, onComplete, history: [{ speaker: 'partner', text: scene.nodes[scene.start].text }] };
+  // history：スレッド形式で表示する、これまでの同僚・自分のメッセージ履歴（性別に応じた言葉遣いに解決してから積む）
+  const partnerGender = partnerGenderById[selectedPartnerIcon];
+  adventureState = {
+    scene, nodeId: scene.start, onComplete,
+    history: [{ speaker: 'partner', text: resolveGenderedAdventureText(scene.nodes[scene.start].text, partnerGender) }]
+  };
 }
 
 // アドベンチャーパートの選択肢を選ぶ。次のノードがあれば進み、なければ終了してonCompleteへ
@@ -3407,13 +3448,17 @@ function chooseAdventureOption(choiceIndex) {
   const node = adventureState.scene.nodes[adventureState.nodeId];
   const choice = node.choices[choiceIndex];
   if (!choice) return;
-  // 選んだ選択肢を、自分の発言としてスレッドに積む
-  adventureState.history.push({ speaker: 'player', text: choice.label });
+  // 選んだ選択肢を、自分の発言（自機の性別に応じた言葉遣い）としてスレッドに積む
+  adventureState.history.push({ speaker: 'player', text: resolveGenderedAdventureText(choice.label, selectedGender) });
   if (choice.effects) choice.effects();
   if (choice.next) {
     adventureState.nodeId = choice.next;
-    // 次のノードの本文を、同僚の発言としてスレッドに積む
-    adventureState.history.push({ speaker: 'partner', text: adventureState.scene.nodes[choice.next].text });
+    // 次のノードの本文を、同僚の発言（同僚の性別に応じた言葉遣い）としてスレッドに積む
+    const partnerGender = partnerGenderById[selectedPartnerIcon];
+    adventureState.history.push({
+      speaker: 'partner',
+      text: resolveGenderedAdventureText(adventureState.scene.nodes[choice.next].text, partnerGender)
+    });
   } else {
     const onComplete = adventureState.onComplete;
     adventureState = null;
@@ -9248,8 +9293,9 @@ function draw() {
 
     node.choices.forEach((choice, i) => {
       const by = trayY + trayPadding + i * (choiceBtnH + choiceGap);
+      const choiceLabel = resolveGenderedAdventureText(choice.label, selectedGender);
       drawUiButton(trayX + trayPadding, by, trayW - trayPadding * 2, choiceBtnH,
-        `${i + 1}. ${choice.label}`, () => chooseAdventureOption(i),
+        `${i + 1}. ${choiceLabel}`, () => chooseAdventureOption(i),
         { fillStyle: 'rgba(103, 58, 183, 0.45)', strokeStyle: '#b39ddb', font: 'bold 17px sans-serif' });
     });
 
