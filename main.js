@@ -782,6 +782,7 @@ function triggerCaffeineCollapse() {
 
 // 倒れて休んだ分、さらにもう1日だけ日付を進める（この日は稼働日として扱わない）
 function skipCollapseRestDay() {
+  clearRemainingItemsAndBulletsForNewDay();
   currentDate.setDate(currentDate.getDate() + 1);
   dayNumber++;
   applyDailyBarrierRenewal();
@@ -2894,7 +2895,7 @@ const specialSkills = [
   { id: 'communication', name: 'コミュニケーション力', description: 'レベルごとに15%の確率で援護射撃が発生する。同僚との関係性が悪化する時の低下値を軽減（Lv1:当初の90% → Lv5:当初の50%）', maxLevel: 5 },
   {
     id: 'network-specialist', name: 'ネットワークスペシャリスト',
-    description: '弾が画面端でレベルごとに1回多く跳ね返る。画面端で1回目に反射した自弾は、自機がパリィで狩り直せ、同僚が自動でパリィする確率も2倍になる'
+    description: '弾が画面端でレベルごとに1回多く跳ね返る。画面端で反射した自弾（1回目以降すべて）は、自機がパリィ（オートパリィ含む）で狩り直せ、同僚が自動でパリィする確率も2倍になる'
   },
   { id: 'teamwork', name: 'チームワーク', description: '自分と同僚、お互いの弾が着弾しそうな時（敵からの弾を除く）、お互いパリィが発動しやすくなる（Lv5で発動率80%）', maxLevel: 5 },
   { id: 'meal-foresight', name: '食通', description: '昼食に登場する料理に、出現する順番の番号が表示されるようになる（習得は1回のみ）', maxLevel: 1 },
@@ -2997,7 +2998,7 @@ function recomputeSpecialSkillEffects() {
 
 const specialSkillSelectionLockDurationMs = 1000; // 表示直後の連続タップ／クリックによる誤選択を防ぐ猶予時間
 let specialSkillSelectionUnlockAt = 0; // この時刻（Date.now()基準）を過ぎるまで選択を受け付けない
-const specialSkillMaxRerolls = 3; // 表示された3択を選び直せる回数（1回の選択機会ごとにリセットされる）
+const specialSkillMaxRerolls = 3; // 1回のプレイ（ゲーム開始～終了）を通して選び直せる合計回数。選択のたびに回復はしない
 let specialSkillRerollsRemaining = specialSkillMaxRerolls;
 
 // 取得済みスキルも候補に含め、再取得するとレベルアップできる（ただしmaxLevelに達したスキルは除外する）
@@ -3021,7 +3022,7 @@ function openSpecialSkillSelection(title) {
   specialSkillSelectionTitle = title;
   specialSkillSelectionActive = true;
   specialSkillSelectionUnlockAt = Date.now() + specialSkillSelectionLockDurationMs;
-  specialSkillRerollsRemaining = specialSkillMaxRerolls;
+  // リロール回数はゲーム全体を通しての合計なので、選択画面を開くたびには回復させない
 }
 
 // 表示中の3択を、残り回数の範囲内で選び直す（リロール）
@@ -3223,7 +3224,17 @@ function applyDayEndRecovery() {
   eveningDrinkRecoveryPenalty = false;
 }
 
+// 翌日が始まるタイミングで、前日から画面上に残っていた弾やアイテムを消す
+function clearRemainingItemsAndBulletsForNewDay() {
+  bullets.length = 0;
+  chocolate = null;
+  energyDrink = null;
+  coffee = null;
+  heartWall = null;
+}
+
 function autoAdvanceDay() {
+  clearRemainingItemsAndBulletsForNewDay();
   currentDate.setDate(currentDate.getDate() + 1);
   applyDayEndRecovery();
   applyDailyBarrierRenewal();
@@ -3252,6 +3263,7 @@ function autoAdvanceDay() {
 
 // 週末（土日祝日）を飛ばして次の月曜から新しい週を始める
 function jumpToNextMondayAndResetWeek() {
+  clearRemainingItemsAndBulletsForNewDay();
   currentDate = nextMonday(currentDate);
   eveningDrinkRecoveryPenalty = false; // 休日を挟むため、このペナルティは持ち越さない
   applyDailyBarrierRenewal();
@@ -3934,7 +3946,7 @@ function performBulletParry(bullet, fromX, fromY, actorAngle) {
     const nearest = findNearestEnemyTo(fromX, fromY);
     if (nearest) {
       angle = Math.atan2(nearest.en.y - bullet.y, nearest.en.x - bullet.x);
-    } else if (bullet.owner === 'player' && bullet.bouncesUsed === 1 && (bossEvent || midBossEvent)) {
+    } else if (bullet.owner === 'player' && bullet.bouncesUsed >= 1 && (bossEvent || midBossEvent)) {
       // ネットワークスペシャリスト：通常の敵がいない場合、ラスボス・中ボスのランダムな発射口へ向かう
       const holes = (bossEvent ? bossEvent.holes : midBossEvent.holes).filter(h => !h.destroyed);
       if (holes.length > 0) {
@@ -4752,10 +4764,10 @@ function attemptDeflectPartnerBullet() {
   spawnSlashEffect(player.x, player.y, player.angle, player.radius); // 命中の有無に関わらず、振った動作自体を見せる
   // 範囲内の条件を満たす弾は、まとめて同時にパリィする（1発だけに限らない）
   const targets = bullets.filter(b => {
-    // ネットワークスペシャリスト：画面端で1回目に反射した自弾も、パリィで狩り直せる
-    const isOnceBouncedOwnBullet = b.owner === 'player' && b.bouncesUsed === 1;
+    // ネットワークスペシャリスト：画面端で反射した自弾（1回目以降すべて）も、パリィで狩り直せる
+    const isBouncedOwnBullet = b.owner === 'player' && b.bouncesUsed >= 1;
     if (b.owner !== 'partner' && b.owner !== 'boss' && b.owner !== 'midBoss' &&
-        b.owner !== 'fixedEnemy' && b.owner !== 'fixedEnemyDisguise' && !isOnceBouncedOwnBullet) return false;
+        b.owner !== 'fixedEnemy' && b.owner !== 'fixedEnemyDisguise' && !isBouncedOwnBullet) return false;
     const d = Math.hypot(b.x - player.x, b.y - player.y);
     return d <= deflectRange + b.radius;
   });
@@ -5777,14 +5789,26 @@ function update() {
       }
     }
     if (removed) continue;
+    // 特殊スキル「オートパリィ」：ネットワークスペシャリストで画面端から反射した自弾も、
+    // 近くまで来たら自動でパリィを試みる（1発につき1回だけ判定する）
+    if (b.owner === 'player' && (b.bouncesUsed || 0) >= 1 && !b.autoParryChecked &&
+        Math.hypot(b.x - player.x, b.y - player.y) <= deflectRange + b.radius) {
+      b.autoParryChecked = true;
+      if (Math.random() < specialSkillEffects.autoParryChance) {
+        performBulletParry(b, player.x, player.y, player.angle);
+        spawnSlashEffect(player.x, player.y, player.angle, player.radius);
+        showMessage('オートパリィ発動！', 1400, '#fff176');
+        continue;
+      }
+    }
     // 発射者と反対側の味方に当たった場合は、敵より先に誤射として処理する。
     if (b.owner === 'player' && partner.active &&
         Math.hypot(b.x - partner.x, b.y - partner.y) <= b.radius + partner.radius) {
       // 同僚も、被弾しそうな瞬間に一定確率でパリィし、自機と同じエフェクトで最寄りの敵へ打ち返す
       // 特殊スキル「チームワーク」：自分と同僚の誤射に限り、パリィ発動率がさらに高くなる
-      // ネットワークスペシャリスト：画面端で1回目に反射した自弾に限り、同僚のパリィ発動率が2倍になる
+      // ネットワークスペシャリスト：画面端で反射した自弾（1回目以降すべて）は、同僚のパリィ発動率が2倍になる
       const partnerBulletParryChance = Math.max(partnerParryChance, specialSkillEffects.teamworkParryChance);
-      const effectivePartnerParryChance = b.bouncesUsed === 1
+      const effectivePartnerParryChance = (b.bouncesUsed || 0) >= 1
         ? Math.min(1, partnerBulletParryChance * 2)
         : partnerBulletParryChance;
       if (Math.random() < effectivePartnerParryChance) {
@@ -6364,19 +6388,25 @@ function drawBackground() {
 
 // ラスボス出現中の画面演出（暗く赤みがかった夜のような雰囲気）と、仮の見た目を描く
 // 撃破演出：本体はその場に留まったまま、画像の縁から中央に向かって消滅していく（0〜dissolveDurationMs）。
-// 消滅しきったら、その場に自機のアイコンが現れ（フェードイン）、少し留まってからフェードアウトする
-const bossDefeatDissolveDurationMs = 5000;
-const bossDefeatIconFadeInMs = 500;
-const bossDefeatIconHoldMs = 1500;
+// 撃破演出：細かく振動しながら透明になり、ゆっくり画面外へ消えていく（bossDefeatExitDurationMsで完了）。
+// 消え終わったら、その場に自機のアイコンが点滅しながらフェードインで現れ、点滅が止まって実体化した後、フェードアウトで消える
+const bossDefeatExitDurationMs = 5000;
+const bossDefeatIconFlickerMs = 900; // 点滅しながらフェードインする時間
+const bossDefeatIconHoldMs = 1500; // 点滅が終わり、実体化した状態で留まる時間
+const bossImageOverscanScale = 1.25; // 上端が画面内に見えないよう、画像全体を少し拡大して表示する
 function drawBossEvent() {
   if (!bossEvent) return;
   const geo = getBossGeometry();
 
-  // 撃破後の退場演出中：本体は動かず、その場で縁から中央に向かって消滅していく
+  // 撃破後の退場演出中：細かく振動しながら透明になり、ゆっくり画面上へ消えていく
   const retreating = bossFinalSequence && bossFinalSequence.phase === 'retreat';
   const retreatMs = retreating ? bossFinalSequence.phaseTimerMs : 0;
-  const dissolveProgress = retreating ? Math.min(1, retreatMs / bossDefeatDissolveDurationMs) : 0;
-  const bodyAlpha = 1 - dissolveProgress;
+  const exitProgress = retreating ? Math.min(1, retreatMs / bossDefeatExitDurationMs) : 0;
+  // 透明化は退場の進み具合の150%の速さで進める
+  const exitFadeProgress = Math.min(1, exitProgress * 1.5);
+  const bodyAlpha = 1 - exitFadeProgress;
+  const exitOffsetY = -exitProgress * (bossHeight + 400);
+  const exitShakeX = retreating ? Math.sin(gameClockMs / 17.5) * 5 * (1 - exitProgress * 0.3) : 0;
 
   // 画面全体を、赤黒く沈んだ夜のような色合いに染める
   ctx.save();
@@ -6390,27 +6420,28 @@ function drawBossEvent() {
 
   if (bodyAlpha > 0) {
     // ラスボス本体：last_boss.png を、目・口のあたりが見えるように下寄りを切り出して表示する。
-    // 撃破後は、縁から中央に向かって縮んでいく矩形でクリップし、その場で消滅していくように見せる
+    // 撃破後は、細かく振動しながら透明になり、ゆっくり画面上へ動いていく
     ctx.save();
-    if (retreating) {
-      const insetW = geo.width * dissolveProgress * 0.5;
-      const insetH = geo.height * dissolveProgress * 0.5;
-      ctx.beginPath();
-      ctx.rect(geo.x + insetW, geo.y + insetH, Math.max(0, geo.width - insetW * 2), Math.max(0, geo.height - insetH * 2));
-      ctx.clip();
-    }
-    const bodyX = geo.x;
-    const bodyY = geo.y;
+    ctx.globalAlpha = bodyAlpha;
+    const bodyX = geo.x + exitShakeX;
+    const bodyY = geo.y + exitOffsetY;
     // 背景の塗りつぶしは行わない：last_boss.pngの透明部分は、そのまま背景が透けて見えるようにする
     if (bossImage.complete && bossImage.naturalWidth > 0) {
       const scale = geo.width / bossImage.naturalWidth;
       const sourceHeight = Math.min(bossImage.naturalHeight, geo.height / scale);
       const sourceY = Math.max(0, bossImage.naturalHeight * 0.42);
       const clampedSourceHeight = Math.min(sourceHeight, bossImage.naturalHeight - sourceY);
+      // 上端が画面内に見えないよう、下端（顔まわり）の位置は変えずに全体を少し拡大して表示する
+      const baseDrawWidth = geo.width;
+      const baseDrawHeight = clampedSourceHeight * scale;
+      const drawWidth = baseDrawWidth * bossImageOverscanScale;
+      const drawHeight = baseDrawHeight * bossImageOverscanScale;
+      const drawX = bodyX + (baseDrawWidth - drawWidth) / 2;
+      const drawY = bodyY + baseDrawHeight - drawHeight;
       ctx.drawImage(
         bossImage,
         0, sourceY, bossImage.naturalWidth, clampedSourceHeight,
-        bodyX, bodyY, geo.width, clampedSourceHeight * scale
+        drawX, drawY, drawWidth, drawHeight
       );
     }
 
@@ -6484,17 +6515,23 @@ function drawBossEvent() {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
 
-  // 本体が消滅しきったら、その場に自機のアイコンが現れ、少し留まってからフェードアウトする
-  if (retreating && dissolveProgress >= 1) {
-    const iconMs = retreatMs - bossDefeatDissolveDurationMs;
-    const iconFadeOutMs = Math.max(200, bossFinalRetreatDurationMs - bossDefeatDissolveDurationMs - bossDefeatIconFadeInMs - bossDefeatIconHoldMs);
+  // 本体が消え終わったら、その場に自機のアイコンが点滅しながらフェードインで現れ、
+  // 点滅が終わって実体化した後、フェードアウトで消える
+  if (retreating && retreatMs >= bossDefeatExitDurationMs) {
+    const iconMs = retreatMs - bossDefeatExitDurationMs;
+    const iconTotalBudgetMs = bossFinalRetreatDurationMs - bossDefeatExitDurationMs;
+    const iconFadeOutMs = Math.max(200, iconTotalBudgetMs - bossDefeatIconFlickerMs - bossDefeatIconHoldMs);
     let iconAlpha = 0;
-    if (iconMs < bossDefeatIconFadeInMs) {
-      iconAlpha = Math.max(0, Math.min(1, iconMs / bossDefeatIconFadeInMs));
-    } else if (iconMs < bossDefeatIconFadeInMs + bossDefeatIconHoldMs) {
+    if (iconMs < bossDefeatIconFlickerMs) {
+      // 点滅しながらフェードインする
+      const fadeInProgress = iconMs / bossDefeatIconFlickerMs;
+      const flicker = Math.floor(iconMs / 70) % 2 === 0 ? 1 : 0.25;
+      iconAlpha = fadeInProgress * flicker;
+    } else if (iconMs < bossDefeatIconFlickerMs + bossDefeatIconHoldMs) {
+      // 点滅が終わり、実体化した状態で留まる
       iconAlpha = 1;
     } else {
-      const fadeOutT = iconMs - bossDefeatIconFadeInMs - bossDefeatIconHoldMs;
+      const fadeOutT = iconMs - bossDefeatIconFlickerMs - bossDefeatIconHoldMs;
       iconAlpha = Math.max(0, 1 - fadeOutT / iconFadeOutMs);
     }
     if (iconAlpha > 0) {
