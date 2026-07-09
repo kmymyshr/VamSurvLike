@@ -1866,8 +1866,7 @@ let selectedPlayerIcon = null; // 性別選択で選んだ画像（genderChoices
 
 // ===== 同僚のアイコン選択（imagesフォルダの画像を使用） =====
 const partnerIconChoices = [
-  'char_01', 'char_02', 'char_03', 'char_04', 'char_05', 'char_06',
-  'char_07', 'char_08', 'char_09', 'char_10', 'char_11', 'char_12'
+  'char_03', 'char_06', 'char_08', 'char_09', 'char_10', 'char_12'
 ];
 const partnerIconImageElements = {};
 partnerIconChoices.forEach(id => {
@@ -1879,9 +1878,8 @@ let selectedPartnerIcon = partnerIconChoices[0]; // nullの場合は「同僚な
 
 // 同僚アイコンごとの性別（一人称・三人称の言い回しの出し分けに使う）
 const partnerGenderById = {
-  char_01: 'male', char_02: 'female', char_03: 'male', char_04: 'female',
-  char_05: 'male', char_06: 'female', char_07: 'male', char_08: 'male',
-  char_09: 'female', char_10: 'male', char_11: 'male', char_12: 'female'
+  char_03: 'male', char_06: 'female', char_08: 'male',
+  char_09: 'female', char_10: 'male', char_12: 'female'
 };
 
 // ===== 前回と同じ自機・同僚で始めた時の再会シーン =====
@@ -7857,7 +7855,7 @@ function draw() {
     ctx.fillStyle = '#cfd8dc';
     ctx.font = '16px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('タップで選択（キー1〜9でも一部選択可）　0キーで同僚なし',
+    ctx.fillText('タップで選択（キー1〜6でも選択可）　0キーで同僚なし',
       canvas.width / 2, gridBottom + 30 + noneBtnH + 30);
     ctx.textAlign = 'left';
     return;
