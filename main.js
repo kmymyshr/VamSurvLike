@@ -8846,12 +8846,20 @@ function draw() {
   const dateStrX = canvas.width - 12 - dateStrWidth;
   ctx.fillText(dateStr, dateStrX, 28);
 
-  // プレイ中も3倍加速モードのON/OFFを切り替えられるボタン（右上の時刻表示のすぐ下に小さめに配置）
+  // プレイ中も3倍加速モードのON/OFFを切り替えられるボタン（右上の時刻表示と被らないよう、少し下に配置）
   const speedToggleBtnW = 110, speedToggleBtnH = 24;
-  drawUiButton(canvas.width - 12 - speedToggleBtnW, 36, speedToggleBtnW, speedToggleBtnH,
+  drawUiButton(canvas.width - 12 - speedToggleBtnW, 40, speedToggleBtnW, speedToggleBtnH,
     `3倍加速: ${gameTimeScale === 3 ? 'ON' : 'OFF'}`,
     () => { gameTimeScale = gameTimeScale === 3 ? 1 : 3; },
     gameTimeScale === 3
+      ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 12px sans-serif' }
+      : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 12px sans-serif' });
+  // プレイ中もスマホ用自動照準のON/OFFを切り替えられるボタン（3倍加速ボタンのすぐ下）
+  const mobileAimBtnW = 160, mobileAimBtnH = 24;
+  drawUiButton(canvas.width - 12 - mobileAimBtnW, 68, mobileAimBtnW, mobileAimBtnH,
+    `スマホ用自動照準: ${mobileAutoAimEnabled ? 'ON' : 'OFF'}`,
+    () => setMobileAutoAimEnabled(!mobileAutoAimEnabled),
+    mobileAutoAimEnabled
       ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 12px sans-serif' }
       : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 12px sans-serif' });
 
@@ -8881,7 +8889,7 @@ function draw() {
   if ((currentDate.getDay() === 0 || currentDate.getDay() === 6) &&
       !gameOver && !gameClear && !dayTransitionPhase && !weekendWorkChoice &&
       !restActivityChoice && !weekendWorkQuotaChoice && !acknowledgementNotice) {
-    drawUiButton(canvas.width - 160, 70, 148, 40, '帰宅する (H)', goHomeFromWeekendWork,
+    drawUiButton(canvas.width - 160, 100, 148, 40, '帰宅する (H)', goHomeFromWeekendWork,
       { fillStyle: 'rgba(84, 60, 30, 0.65)', strokeStyle: '#ffb74d', font: 'bold 15px sans-serif' });
   }
 
