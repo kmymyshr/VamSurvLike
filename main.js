@@ -2633,6 +2633,8 @@ function updatePartner(dt) {
       if (shouldAvoidShot) {
         partner.fireTimer = 200;
       } else {
+        // 第4段階「承認欲求」：狙って撃っただけで（当たらなくても）耐久力が少し回復してしまう
+        checkApprovalSeekingFireHeal(partner.x, partner.y, angle);
         bullets.push({
           x: partner.x + Math.cos(angle) * partner.radius,
           y: partner.y + Math.sin(angle) * partner.radius,
@@ -3998,7 +4000,7 @@ const bossStageDefs = [
   },
   {
     stage: 4, name: '承認欲求', nameEn: 'Need for Approval',
-    holeCount: 1, hitsPerHole: 50, layout: 'fixed', regen: true, burstDirections: 5
+    holeCount: 1, hitsPerHole: 50, layout: 'wander-fast', regen: true, burstDirections: 5, approvalSeeking: true
   },
   {
     stage: 5, name: '劣等感', nameEn: 'Inferiority Feelings',
@@ -4020,9 +4022,49 @@ const bossRegenPerSec = 3;
 const bossReviveDelayMs = 4000;
 // 段階ごとに、窓の下のガラス面へうっすらと表示する解説文（[見出し, 説明1, 説明2]）。無い段階は表示しない
 const bossStageGlassTexts = {
-  1: ['視野狭窄', '全体が見えず、一部だけに意識が固定される。', '全体をバランスよく攻撃する必要がある。'],
-  3: ['確証バイアス', '自分の考えに合う情報ばかり集め、反証を軽視する傾向。', 'パリィによる反撃のみ有効。']
+  1: { title: '視野狭窄', lines: ['全体が見えず、一部だけに意識が固定される。', '全体をバランスよく攻撃する必要がある。'] },
+  2: { title: 'シャドウ', lines: ['自分が認めたくない内面の暗い部分。', 'だが、それは強さなのでは。'] },
+  3: { title: '確証バイアス', lines: ['自分の考えに合う情報ばかり集め、反証を軽視する傾向。', 'パリィによる反撃のみ有効。'] },
+  4: {
+    title: '承認欲求',
+    lines: [
+      '他人から認められることで、自分の価値を確かめようとする性質。',
+      '人から注目され、返される言葉に喜びを感じる。',
+      'たとえそれが、本質的な理解ではなく、表面的な反応にすぎなくても。'
+    ]
+  }
 };
+// 第4段階（承認欲求）：狙われただけで（当たらなくても）耐久力が少し回復してしまう。
+// パリィで打ち返した弾を当ててしまった場合は、さらに大きく回復する
+const bossApprovalFireHealAmount = 2;
+const bossApprovalParryHealAmount = 8;
+const bossApprovalHealFlashDurationMs = 300;
+// 発射地点・角度から伸ばした直線が、指定した発射口の近くを通るかどうかを判定する
+// （実際に命中するかどうかは問わない。「狙われた」というだけで承認欲求は満たされてしまう）
+function isAngleAimedAtBossHole(fromX, fromY, angle, hole) {
+  const pos = getBossHoleAbsolutePosition(hole);
+  const dx = pos.x - fromX, dy = pos.y - fromY;
+  const dist = Math.hypot(dx, dy);
+  if (dist <= 1) return true;
+  const targetAngle = Math.atan2(dy, dx);
+  let diff = Math.abs(angle - targetAngle) % (Math.PI * 2);
+  if (diff > Math.PI) diff = Math.PI * 2 - diff;
+  const tolerance = Math.atan2(bossHoleRadius + 6, dist);
+  return diff <= tolerance;
+}
+// 第4段階「承認欲求」の間、自機・同僚が発射する（当たるかどうかに関わらず）たびに呼び出す。
+// 発射口を狙って撃っただけで、少しだけ耐久力が回復してしまう
+function checkApprovalSeekingFireHeal(fromX, fromY, angle) {
+  if (!bossEvent || bossEvent.stage !== 4) return;
+  for (const hole of bossEvent.holes) {
+    if (hole.destroyed || !hole.approvalSeeking) continue;
+    if (isAngleAimedAtBossHole(fromX, fromY, angle, hole)) {
+      hole.hitsTaken = Math.max(0, hole.hitsTaken - bossApprovalFireHealAmount);
+      hole.approvalHealFlashMs = bossApprovalHealFlashDurationMs;
+    }
+  }
+}
+
 // 本体が上下左右にゆっくり動き回る範囲と、目標地点を変える間隔
 const bossMoveRangeX = 50;
 const bossMoveRangeY = 26;
@@ -4116,6 +4158,7 @@ function generateBossHoles(stage) {
     if (def.parryOnly) hole.parryOnly = true;
     if (def.regen) hole.regen = true;
     if (def.burstDirections) hole.burstDirections = def.burstDirections;
+    if (def.approvalSeeking) hole.approvalSeeking = true;
     // 第2段階「シャドウ」：1つは自機、もう1つは同僚を模した半透明アイコンにする
     if (def.disguise) hole.disguiseRole = i === 0 ? 'player' : 'partner';
     holes.push(hole);
@@ -4193,6 +4236,7 @@ function updateBossEvent(dt) {
   // 発射口の点滅（被弾エフェクト）を減衰させ、段階に応じて穴自体を動かしたり回復させたりする
   for (const hole of bossEvent.holes) {
     if (hole.flashTimerMs > 0) hole.flashTimerMs = Math.max(0, hole.flashTimerMs - dt * 1000);
+    if (hole.approvalHealFlashMs > 0) hole.approvalHealFlashMs = Math.max(0, hole.approvalHealFlashMs - dt * 1000);
     if (hole.destroyed) {
       // 第1段階「視野狭窄」：個別に破壊されても、一定時間後に体力半分の状態で復活する
       if (hole.revive) {
@@ -5746,6 +5790,8 @@ function update() {
         if (fatigue < maxFatigue || coffeeStunImmunityTimerMs > 0) {
           lastFire = now;
           const shotAngle = player.angle;
+          // 第4段階「承認欲求」：狙って撃っただけで（当たらなくても）耐久力が少し回復してしまう
+          checkApprovalSeekingFireHeal(player.x, player.y, shotAngle);
 
           const speed = 6 * specialSkillEffects.bulletSpeedMultiplier;
           const damageBonus = 1 + skillLevel * 0.08;
@@ -6069,6 +6115,14 @@ function update() {
           // 第3段階「確証バイアス」：通常弾は完全にパリィされ、ランダムな方向へ跳ね返る。
           // 弾自体は消費せず、以後は敵の攻撃として扱う（打ち返せばダメージが通る）
           autoParryByBossHole(b);
+          continue;
+        }
+        if (hitHole.approvalSeeking && b.owner === 'deflected') {
+          // 第4段階「承認欲求」：パリィで打ち返した弾が命中すると、通常弾以上に大きく回復してしまう
+          hitHole.hitsTaken = Math.max(0, hitHole.hitsTaken - bossApprovalParryHealAmount);
+          hitHole.approvalHealFlashMs = bossApprovalHealFlashDurationMs;
+          spawnHitSpark(b.x, b.y, false);
+          bullets.splice(i, 1);
           continue;
         }
         registerBossHoleHit(hitHole, b.x, b.y);
@@ -6523,17 +6577,21 @@ function drawBossEvent() {
   ctx.restore();
 
   // 特定の段階限定：窓の下のガラス部分あたりに、うっすらと解説文を表示する（背景より前、ラスボスより後ろ）
-  const stageGlassTextLines = bossStageGlassTexts[bossEvent.stage];
-  if (stageGlassTextLines) {
+  const stageGlassText = bossStageGlassTexts[bossEvent.stage];
+  if (stageGlassText) {
     ctx.save();
     ctx.globalAlpha = 0.18;
     ctx.fillStyle = '#cccccc';
     ctx.textAlign = 'center';
+    const lineHeight = 18;
+    const totalHeight = 26 + (stageGlassText.lines.length - 1) * lineHeight;
+    const baseY = windowZoneBottomY - 6 - totalHeight;
     ctx.font = 'bold 20px sans-serif';
-    ctx.fillText(stageGlassTextLines[0], canvas.width / 2, windowZoneBottomY - 46);
+    ctx.fillText(stageGlassText.title, canvas.width / 2, baseY);
     ctx.font = '13px sans-serif';
-    ctx.fillText(stageGlassTextLines[1], canvas.width / 2, windowZoneBottomY - 24);
-    ctx.fillText(stageGlassTextLines[2], canvas.width / 2, windowZoneBottomY - 6);
+    stageGlassText.lines.forEach((line, i) => {
+      ctx.fillText(line, canvas.width / 2, baseY + 26 + i * lineHeight);
+    });
     ctx.restore();
     ctx.textAlign = 'left';
   }
@@ -6633,6 +6691,14 @@ function drawBossEvent() {
           ctx.shadowBlur = 0;
           ctx.beginPath();
           ctx.fillStyle = `rgba(255, 255, 255, ${hole.flashTimerMs / bossHoleFlashDurationMs})`;
+          ctx.arc(hx, hy, bossHoleRadius * 1.35, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        // 第4段階「承認欲求」：狙われて（または打ち返されて）回復した瞬間、緑色に点滅させる
+        if (hole.approvalHealFlashMs > 0) {
+          ctx.shadowBlur = 0;
+          ctx.beginPath();
+          ctx.fillStyle = `rgba(105, 240, 174, ${hole.approvalHealFlashMs / bossApprovalHealFlashDurationMs})`;
           ctx.arc(hx, hy, bossHoleRadius * 1.35, 0, Math.PI * 2);
           ctx.fill();
         }
