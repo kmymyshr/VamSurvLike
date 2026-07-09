@@ -110,10 +110,12 @@ function dreamMemoryUpgradeCost(currentLevel) {
 
 // ===== エンディングリスト（タイトル画面から確認できる、到達済みエンディングの一覧） =====
 const endingListDefs = [
-  { id: 'trueAlive', icon: '👁️', label: '目覚めエンド', hint: 'ラスボスを撃破し、同僚が生存している状態で終える' },
-  { id: 'truePartnerLost', icon: '🖤', label: '再び悪夢エンド', hint: 'ラスボスを撃破するが、同僚を失っている' },
+  { id: 'true1', icon: '👁️', label: '目覚めエンド', hint: 'ラスボスを撃破し、同僚が生存している状態で終える' },
+  { id: 'true2', icon: '🖤', label: '再び悪夢エンド', hint: 'ラスボスを撃破するが、同僚を失っている' },
   { id: 'true', icon: '🌟', label: 'TRUE END', hint: 'ランク7に到達し、特殊な選択を全て正しく行い、同僚を失わずに完走する' },
-  { id: 'normal', icon: '🏁', label: 'NORMAL END', hint: '月末を迎えて一区切りをつける' },
+  { id: 'normal1', icon: '🌤️', label: 'NORMAL END（良好）', hint: '月末を迎え、同僚との関係性が良好な状態で一区切りをつける' },
+  { id: 'normal2', icon: '🏁', label: 'NORMAL END（普通）', hint: '月末を迎え、同僚との関係性が普通の状態で一区切りをつける' },
+  { id: 'normal3', icon: '🌧️', label: 'NORMAL END（悪い）', hint: '月末を迎え、同僚との関係性が悪い状態で一区切りをつける' },
   { id: 'bad-san', icon: '🌀', label: 'END（心）', hint: 'SANが0になる' },
   { id: 'bad-lifespan', icon: '⚰️', label: 'END（寿命）', hint: '寿命が0になる' },
   { id: 'bad-partner-shot', icon: '💔', label: 'END（同僚）', hint: '同僚の誤射でとどめを刺される' }
@@ -454,7 +456,8 @@ function startSetupFadeOut(onComplete) {
 }
 
 // ===== エンディング =====
-// 'true' | 'normal' | 'bad-san' | 'bad-lifespan' | 'bad-partner-shot' のいずれか。gameOver / gameClear になる瞬間に確定する
+// 'true' | 'normal1' | 'normal2' | 'normal3' | 'true1' | 'true2' | 'bad-san' | 'bad-lifespan' | 'bad-partner-shot' のいずれか。
+// gameOver / gameClear になる瞬間に確定する
 let endingType = null;
 // 週末ごとの特殊イベントで正しい選択をし続けているか（詳細な内容は別途実装予定。誤った選択で false になる）
 let allSpecialEventChoicesCorrect = true;
@@ -1730,7 +1733,7 @@ function endWorkday() {
   // ランクはScoreに応じて毎フレーム自動更新されるため、ここでの判定は不要
   if (isLastDayOfMonth(currentDate)) {
     gameClear = true;
-    endingType = isTrueEndEligible() ? 'true' : 'normal';
+    endingType = isTrueEndEligible() ? 'true' : getNormalEndingByRelationship();
     sendScore(score);
     return;
   }
@@ -3349,19 +3352,98 @@ function adjustPartnerRelationship(amount) {
   partner.relationship = Math.max(0, Math.min(partnerRelationshipMax, partner.relationship + scaledAmount));
 }
 
+// 関係性の値を「良好／普通／悪い」の3段階に分類する（再会シーンの5段階のうち、tier1・2=良好／tier3=普通／tier4・5=悪い、と同じ閾値）
+function getRelationshipCategory(relationship) {
+  if (relationship >= 60) return 'good';
+  if (relationship >= 40) return 'normal';
+  return 'bad';
+}
+
+// ===== アドベンチャーパートの分岐状態（エンディング分岐は、好感度とアドベンチャーの選択肢だけで決まる） =====
+let adventureRunCount = 0; // 「同僚と遊ぶ」を選んだ回数（ADV1・ADV2・ADV3・それ以降）
+let adv1Choice = null; // ADV1で選んだ方 'A' | 'B'
+let adv2Choice = null; // ADV2で選んだ方 'C' | 'D'（Aルート）または 'E' | 'F'（Bルート）
+let relCategoryAtAdv1 = null; // ADV1突入時点の関係性カテゴリ
+let relCategoryAtAdv2 = null; // ADV2突入時点の関係性カテゴリ
+let relCategoryAtAdv3 = null; // ADV3突入時点の関係性カテゴリ
+let dreamRouteCompleted = false; // ADV3で「夢の話をする」を選び、夢ルートを完走したか
+
+function recordAdv1Choice(choice) { adv1Choice = choice; }
+function recordAdv2Choice(choice) { adv2Choice = choice; }
+function markDreamRouteCompleted() { dreamRouteCompleted = true; }
+
+// 夢フラグ＝前世の関係性が良好・同じ組み合わせで2周目以降・ADV1〜3突入時すべて関係性良好、の全てを満たす場合のみ成立する
+function isDreamFlagEligible() {
+  const lastRun = dreamMemorySave.lastRun;
+  const prelifeGood = !!(lastRun && getRelationshipCategory(lastRun.relationship) === 'good');
+  return prelifeGood && shouldShowReunionScene() &&
+    relCategoryAtAdv1 === 'good' && relCategoryAtAdv2 === 'good' && relCategoryAtAdv3 === 'good';
+}
+
+// 「通常2択」を選んだ後（またはADV4以降、選択肢なしで直接）現在の関係性で好感度ルート（⑨⑩⑪）へ振り分ける
+function routeToRelationshipEnding() {
+  const category = getRelationshipCategory(partner.relationship);
+  const node = category === 'good' ? 'endGood' : category === 'normal' ? 'endNormal' : 'endBad';
+  return { scene: 'endRoutes', node };
+}
+
+// 月末クリア時、TRUE END（ランク7の特殊選択）条件を満たさない場合の、関係性によるノーマルエンドの振り分け
+function getNormalEndingByRelationship() {
+  if (!partner.active) return 'normal2';
+  const category = getRelationshipCategory(partner.relationship);
+  return category === 'good' ? 'normal1' : category === 'normal' ? 'normal2' : 'normal3';
+}
+
 // シナリオデータ（partnerAdventureScenes）・言葉遣いの解決関数（resolveGenderedAdventureText）は
 // adventureScenes.js に分離。index.html でこのファイルより先に読み込まれるグローバル変数として参照する。
 
-// 「同僚と遊ぶ」アドベンチャーパートを開始する。終了後にonCompleteを呼んで元のゲームへ戻す
+// 「同僚と遊ぶ」アドベンチャーパートを開始する。終了後にonCompleteを呼んで元のゲームへ戻す。
+// ADV1〜3は、これまでの選択（adv1Choice/adv2Choice）と、突入時点の関係性で入るシナリオが決まる。
+// ADV4以降は選択肢を出さず、現在の関係性でそのまま好感度ルート（⑨⑩⑪）へ直行する
 function startPartnerAdventure(onComplete) {
-  const sceneKeys = Object.keys(partnerAdventureScenes);
-  const scene = partnerAdventureScenes[sceneKeys[Math.floor(Math.random() * sceneKeys.length)]];
+  adventureRunCount++;
+  const category = getRelationshipCategory(partner.relationship);
+  let sceneKey, nodeId;
+  if (adventureRunCount === 1) {
+    relCategoryAtAdv1 = category;
+    sceneKey = 'adv1';
+  } else if (adventureRunCount === 2) {
+    relCategoryAtAdv2 = category;
+    sceneKey = adv1Choice === 'A' ? 'adv2A' : 'adv2B';
+  } else if (adventureRunCount === 3) {
+    relCategoryAtAdv3 = category;
+    if (adv1Choice === 'A' && adv2Choice === 'C') {
+      sceneKey = isDreamFlagEligible() ? 'adv3Dream' : 'adv3AC';
+    } else if (adv1Choice === 'A' && adv2Choice === 'D') {
+      sceneKey = 'adv3AD';
+    } else if (adv1Choice === 'B' && adv2Choice === 'E') {
+      sceneKey = 'adv3BE';
+    } else {
+      sceneKey = 'adv3BF';
+    }
+  } else {
+    // ADV4以降：選択肢なしの一本道。現在の関係性でルートを直接決める
+    const routed = routeToRelationshipEnding();
+    sceneKey = routed.scene;
+    nodeId = routed.node;
+  }
+  const scene = partnerAdventureScenes[sceneKey];
+  if (nodeId === undefined) nodeId = scene.start;
   // history：スレッド形式で表示する、これまでの同僚・自分のメッセージ履歴（性別に応じた言葉遣いに解決してから積む）
   const partnerGender = partnerGenderById[selectedPartnerIcon];
   adventureState = {
-    scene, nodeId: scene.start, onComplete,
-    history: [{ speaker: 'partner', text: resolveGenderedAdventureText(scene.nodes[scene.start].text, partnerGender) }]
+    scene, nodeId, onComplete,
+    history: [{ speaker: 'partner', text: resolveGenderedAdventureText(scene.nodes[nodeId].text, partnerGender) }]
   };
+}
+
+// choice.next を実際の遷移先 { scene, nodeId } に解決する。
+// next は 文字列（同じシーン内のノードid）／関数（動的に上記のいずれかを返す）／{ scene, node } のいずれかを取り得る
+function resolveAdventureNextTarget(nextValue) {
+  const resolved = typeof nextValue === 'function' ? nextValue() : nextValue;
+  if (!resolved) return null;
+  if (typeof resolved === 'string') return { scene: adventureState.scene, nodeId: resolved };
+  return { scene: partnerAdventureScenes[resolved.scene], nodeId: resolved.node };
 }
 
 // アドベンチャーパートの選択肢を選ぶ。次のノードがあれば進み、なければ終了してonCompleteへ
@@ -3373,13 +3455,15 @@ function chooseAdventureOption(choiceIndex) {
   // 選んだ選択肢を、自分の発言（自機の性別に応じた言葉遣い）としてスレッドに積む
   adventureState.history.push({ speaker: 'player', text: resolveGenderedAdventureText(choice.label, selectedGender) });
   if (choice.effects) choice.effects();
-  if (choice.next) {
-    adventureState.nodeId = choice.next;
+  const target = choice.next ? resolveAdventureNextTarget(choice.next) : null;
+  if (target) {
+    adventureState.scene = target.scene;
+    adventureState.nodeId = target.nodeId;
     // 次のノードの本文を、同僚の発言（同僚の性別に応じた言葉遣い）としてスレッドに積む
     const partnerGender = partnerGenderById[selectedPartnerIcon];
     adventureState.history.push({
       speaker: 'partner',
-      text: resolveGenderedAdventureText(adventureState.scene.nodes[choice.next].text, partnerGender)
+      text: resolveGenderedAdventureText(target.scene.nodes[target.nodeId].text, partnerGender)
     });
   } else {
     const onComplete = adventureState.onComplete;
@@ -4797,12 +4881,15 @@ function finishBossTrueEnd() {
   const earnedDreamMemoryPoints = Math.floor(score / dreamMemoryScoreDivisor);
   dreamMemorySave.points += earnedDreamMemoryPoints;
   dreamMemorySave.trueEndCleared = true;
-  dreamMemorySave.endingsCleared[bossFinalSequence.partnerAlive ? 'trueAlive' : 'truePartnerLost'] = true;
+  // 前世記憶ルート（夢ルート）を完走していたかどうかに関わらず、ラスボス撃破自体は真エンド1/2に到達する。
+  // 夢ルートを踏んでいたかは、別途 dreamRouteCompleted で参照できる（演出の出し分け用）
+  const bossEndingId = bossFinalSequence.partnerAlive ? 'true1' : 'true2';
+  dreamMemorySave.endingsCleared[bossEndingId] = true;
   dreamMemorySave.lastRun = selectedPartnerIcon ? {
     playerGender: selectedGender,
     partnerIcon: selectedPartnerIcon,
     relationship: partner.relationship,
-    endingType: 'true'
+    endingType: bossEndingId
   } : null;
   saveDreamMemorySave();
   location.reload();
@@ -6570,13 +6657,33 @@ const endingConfig = {
       '最後まで正しい選択を積み重ねた者だけが辿り着く、本当の終わり。'
     ]
   },
-  normal: {
+  normal1: {
+    icon: '🌤️',
+    label: 'NORMAL END',
+    labelColor: '#ffe082',
+    bgColor: 'rgba(10, 20, 15, 0.88)',
+    description: [
+      '（仮）月末を迎え、良好な関係のまま、ひとまずの区切りがついた。',
+      'これもまた、一つの生き方だった。'
+    ]
+  },
+  normal2: {
     icon: '🏁',
     label: 'NORMAL END',
     labelColor: '#b0bec5',
     bgColor: 'rgba(10, 15, 20, 0.88)',
     description: [
       '（仮）月末を迎え、ひとまずの区切りがついた。',
+      'これもまた、一つの生き方だった。'
+    ]
+  },
+  normal3: {
+    icon: '🌧️',
+    label: 'NORMAL END',
+    labelColor: '#90a4ae',
+    bgColor: 'rgba(15, 12, 18, 0.88)',
+    description: [
+      '（仮）月末を迎え、ぎこちない関係のまま、ひとまずの区切りがついた。',
       'これもまた、一つの生き方だった。'
     ]
   },
@@ -6612,7 +6719,7 @@ const endingConfig = {
 };
 
 function drawEndingScreen() {
-  const cfg = endingConfig[endingType] || endingConfig.normal;
+  const cfg = endingConfig[endingType] || endingConfig.normal2;
   ctx.fillStyle = cfg.bgColor;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
