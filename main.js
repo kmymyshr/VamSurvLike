@@ -4767,7 +4767,9 @@ function attemptDeflectPartnerBullet() {
   showMessage(targets.length > 1 ? `パリィ成功！（${targets.length}発同時）` : 'パリィ成功！', 1400, '#fff176');
 }
 // スマホ用自動照準のターゲットを返す。定時報告が出ている間は、同僚の自律攻撃と同様にそちらを優先する
-function findAutoAimTarget() {
+// allowPartner: 完全オート・自動攻撃モードではない（自分の意思で撃っている）時にtrue。
+// この場合だけ、同僚も狙い先の候補に含める（同僚しか近くにいない場面などで、あえてその方向へ撃てるようにする）
+function findAutoAimTarget(allowPartner = false) {
   if (scheduledReport) return { en: scheduledReport };
   if (fixedEnemies.length > 0) {
     const nearest = fixedEnemies.reduce((closest, fx) => {
@@ -4779,7 +4781,15 @@ function findAutoAimTarget() {
   // ラスボスの出現中は、生きている発射口も通常の敵と同様にオート照準の対象にする
   const bossHolePos = findNearestLivingBossHole(player.x, player.y);
   if (bossHolePos) return { en: bossHolePos };
-  return findNearestEnemyToPlayer();
+  const nearestEnemyTarget = findNearestEnemyToPlayer();
+  if (!allowPartner || !partner.active) return nearestEnemyTarget;
+  // オートでなく自分で操作して撃っている時は、同僚がいる方向にも狙いを向けられるようにする
+  const partnerDist = Math.hypot(partner.x - player.x, partner.y - player.y);
+  if (!nearestEnemyTarget ||
+      partnerDist < Math.hypot(nearestEnemyTarget.en.x - player.x, nearestEnemyTarget.en.y - player.y)) {
+    return { en: partner };
+  }
+  return nearestEnemyTarget;
 }
 
 // ===== 完全オートモードの移動AI =====
@@ -5014,17 +5024,20 @@ function update() {
     lastUpdate = Date.now();
     return;
   }
-  const now = gameClockMs + ((Date.now() - lastUpdate) * gameTimeScale);
+  const nowReal = Date.now();
+  // rawDt：実際の経過時間（3倍加速モードの影響を受けない）。演出・カットシーン・UI画面の進行に使う
+  const rawDt = (nowReal - lastUpdate) / 1000;
+  const now = gameClockMs + ((nowReal - lastUpdate) * gameTimeScale);
   const dt = (now - gameClockMs) / 1000;
-    lastUpdate = Date.now();
+    lastUpdate = nowReal;
   if (isPaused || wakeUpConfirmActive) {
     return;
   }
   gameClockMs = now;
 
-  // セットアップ画面の切り替え演出：暗転しきったら次の画面へ進む
+  // セットアップ画面の切り替え演出：暗転しきったら次の画面へ進む（3倍加速の影響を受けない）
   if (setupFadePhase === 'out') {
-    setupFadeTimer -= dt * 1000;
+    setupFadeTimer -= rawDt * 1000;
     if (setupFadeTimer <= 0) {
       setupFadePhase = null;
       const onComplete = setupFadeOnComplete;
@@ -5034,9 +5047,9 @@ function update() {
     return;
   }
 
-  // 力尽きた演出中は、画面を停止したまま演出用のタイマーだけを進める
+  // 力尽きた演出中は、画面を停止したまま演出用のタイマーだけを進める（3倍加速の影響を受けない）
   if (deathSequence) {
-    deathSequence.timer += dt * 1000;
+    deathSequence.timer += rawDt * 1000;
     if (deathSequence.timer >= deathSequence.duration) {
       gameOver = true;
       endingType = deathSequence.deathEndingType;
@@ -5046,16 +5059,16 @@ function update() {
     return;
   }
 
-  // ラスボス撃破後の演出中は、この処理だけを進め、他の一切（自機・同僚・時間経過など）を停止する
+  // ラスボス撃破後の演出中は、この処理だけを進め、他の一切（自機・同僚・時間経過など）を停止する（3倍加速の影響を受けない）
   if (bossFinalSequence) {
-    updateBossFinalSequence(dt);
+    updateBossFinalSequence(rawDt);
     return;
   }
 
-  // アイコン選択後のひとことメッセージ演出：1文字ずつ表示→フェードアウト→次の画面へ
+  // アイコン選択後のひとことメッセージ演出：1文字ずつ表示→フェードアウト→次の画面へ（3倍加速の影響を受けない）
   if (iconGreetingPhase) {
     if (iconGreetingPhase === 'typing') {
-      iconGreetingTimer += dt * 1000;
+      iconGreetingTimer += rawDt * 1000;
       iconGreetingRevealedCount = getTypewriterRevealedCount(iconGreetingTimer, iconGreetingText);
       if (iconGreetingRevealedCount >= iconGreetingText.length) {
         iconGreetingPhase = 'hold';
@@ -5063,7 +5076,7 @@ function update() {
       }
       return;
     }
-    iconGreetingTimer -= dt * 1000;
+    iconGreetingTimer -= rawDt * 1000;
     if (iconGreetingPhase === 'hold' && iconGreetingTimer <= 0) {
       iconGreetingPhase = 'fadeout';
       iconGreetingTimer = iconGreetingFadeMs;
@@ -5076,10 +5089,10 @@ function update() {
     return;
   }
 
-  // 前回と同じ自機・同僚で始めた時の再会シーン：アイコンが暗くなりきったら自動でセリフへ進む
+  // 前回と同じ自機・同僚で始めた時の再会シーン：アイコンが暗くなりきったら自動でセリフへ進む（3倍加速の影響を受けない）
   if (reunionSceneActive) {
     if (reunionScenePhase === 'dim') {
-      reunionSceneDimTimer -= dt * 1000;
+      reunionSceneDimTimer -= rawDt * 1000;
       if (reunionSceneDimTimer <= 0) {
         reunionSceneDimTimer = 0;
         reunionScenePhase = 'line';
@@ -5087,7 +5100,7 @@ function update() {
         reunionSceneLineTypeTimerMs = 0;
       }
     } else if (reunionScenePhase === 'line' && reunionSceneLineRevealedCount < reunionSceneLine.length) {
-      reunionSceneLineTypeTimerMs += dt * 1000;
+      reunionSceneLineTypeTimerMs += rawDt * 1000;
       reunionSceneLineRevealedCount = getTypewriterRevealedCount(reunionSceneLineTypeTimerMs, reunionSceneLine);
     }
     return;
@@ -5153,13 +5166,13 @@ function update() {
     }
   }
 
-  // 一日の終わりの画面演出中は、フェードの進行だけを行い、他の処理はすべて止める
+  // 一日の終わりの画面演出中は、フェードの進行だけを行い、他の処理はすべて止める（3倍加速の影響を受けない）
   if (dayTransitionPhase) {
     if (dayTransitionPhase === 'waiting') {
       // クリック／タップされるまで、暗転したまま入力待ちにする
       return;
     }
-    dayTransitionTimer -= dt * 1000;
+    dayTransitionTimer -= rawDt * 1000;
     if (dayTransitionPhase === 'out' && dayTransitionTimer <= 0) {
       // 画面が暗転しきったら、残っている仕事（敵）を配置し直してから日付を進め、入力待ちにする
       repositionRemainingEnemies();
@@ -5578,8 +5591,10 @@ function update() {
     }
 
     // 攻撃モードに関係なく、自分は常にマウスカーソルの方向を向く。
-    // スマホ用の自動照準・完全オートモードが有効な間は、代わりに定時報告（出ていれば優先）か最も近い敵の方向を向く
-    const autoAimTarget = (mobileAutoAimEnabled || fullAutoModeEnabled) ? findAutoAimTarget() : null;
+    // スマホ用の自動照準・完全オートモードが有効な間は、代わりに定時報告（出ていれば優先）か最も近い敵の方向を向く。
+    // ただし、オート攻撃・完全オートモードでない（自分で操作して撃っている）場合は、同僚の方向も狙い先の候補に含める
+    const allowPartnerAim = !autoFireEnabled && !fullAutoModeEnabled;
+    const autoAimTarget = (mobileAutoAimEnabled || fullAutoModeEnabled) ? findAutoAimTarget(allowPartnerAim) : null;
     if (autoAimTarget) {
       player.angle = Math.atan2(autoAimTarget.en.y - player.y, autoAimTarget.en.x - player.x);
     } else {
@@ -6386,8 +6401,7 @@ function drawBossEvent() {
     }
     const bodyX = geo.x;
     const bodyY = geo.y;
-    ctx.fillStyle = 'rgba(6, 2, 10, 0.9)';
-    ctx.fillRect(bodyX, bodyY, geo.width, geo.height);
+    // 背景の塗りつぶしは行わない：last_boss.pngの透明部分は、そのまま背景が透けて見えるようにする
     if (bossImage.complete && bossImage.naturalWidth > 0) {
       const scale = geo.width / bossImage.naturalWidth;
       const sourceHeight = Math.min(bossImage.naturalHeight, geo.height / scale);
