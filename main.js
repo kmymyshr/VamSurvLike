@@ -105,6 +105,13 @@ const dreamMemoryUpgradeDefs = [
     describeLevel: () => '自分・同僚ともSAN・寿命が0にならず、脳疲労も常に0のまま、攻撃力が50倍になる（テスト用）',
     maxLevel: 1,
     costOverride: 1
+  },
+  {
+    id: 'betaMode', label: 'β版設定',
+    describeLevel: () => '「無敵（テスト用）」と全く同じ効果（SAN・寿命が0にならず、脳疲労も常に0のまま、攻撃力が50倍）に加えて、' +
+      '中ボス・ラスボス戦（イベント戦は除く）では1発ごとに相手の耐久力の最大値の20%ぶんダメージを与え、最低5発で撃破できる',
+    maxLevel: 1,
+    costOverride: 1
   }
 ];
 // 現在のレベルから次のレベルへ上げるのに必要な夢の記憶ポイント数（レベルが上がるごとに1ずつ増える。Lv0→1は1、Lv1→2は2…）
@@ -179,6 +186,19 @@ function saveDreamMemorySave() {
   }
 }
 let dreamMemorySave = loadDreamMemorySave();
+
+// 「無敵（テスト用）」「β版設定」は共に、SAN・寿命が0にならず脳疲労も常に0のまま、攻撃力が50倍になる免疫効果を持つ。
+// どちらか一方でも購入済みならこの効果が働く
+function isTestInvincibleUpgradeActive() {
+  return dreamMemorySave.upgrades.invincibleTest >= 1 || dreamMemorySave.upgrades.betaMode >= 1;
+}
+// 「β版設定」限定の追加効果：中ボス・ラスボス戦（ノーマルルート終了時の負けイベント戦闘は発射口が
+// 破壊不能のため対象外）で、1発ごとに相手の耐久力の最大値の20%ぶんダメージを与える
+// （＝耐久力がどれだけ高くても、最低5発で撃破できる）
+const betaModeBossDamageRatio = 0.2;
+function isBetaModeBossDamageActive() {
+  return dreamMemorySave.upgrades.betaMode >= 1;
+}
 
 // 周回プレイの引き継ぎ：エンディング・ゲームオーバーを問わず、今回終了時点の役職（ランク）・役職スキル・Scoreを
 // 次回開始時にそのまま復元できるよう保存しておく（applyDreamMemoryUpgradesForNewGameで復元する）
@@ -1976,8 +1996,8 @@ function checkVitalsGameOver(deathEndingType = null) {
     }
     return;
   }
-  // 「無敵（テスト用）」：SAN・寿命が0にならないようにする
-  if (dreamMemorySave.upgrades.invincibleTest >= 1) {
+  // 「無敵（テスト用）」「β版設定」：SAN・寿命が0にならないようにする
+  if (isTestInvincibleUpgradeActive()) {
     san = Math.max(san, 1);
     lifespan = Math.max(lifespan, 1);
     return;
@@ -2830,8 +2850,8 @@ function updatePartner(dt) {
       const angle = Math.atan2(target.y - partner.y, target.x - partner.x) +
         scatterDegrees * Math.PI / 180;
       const bulletSpeed = 6;
-      // 「無敵（テスト用）」：同僚の攻撃力も自機と同様に50倍になる
-      const partnerInvincibleDamageMultiplier = dreamMemorySave.upgrades.invincibleTest >= 1 ? 50 : 1;
+      // 「無敵（テスト用）」「β版設定」：同僚の攻撃力も自機と同様に50倍になる
+      const partnerInvincibleDamageMultiplier = isTestInvincibleUpgradeActive() ? 50 : 1;
       const damage = Math.max(1, Math.round(
         baseBulletDamage * specialSkillEffects.partnerDamageMultiplier * (1 + skillLevel * 0.08) *
         partnerInvincibleDamageMultiplier
@@ -2905,10 +2925,10 @@ function updatePartner(dt) {
     partner.lowSanTimerMs = 0;
   }
 
-  // 「無敵（テスト用）」：同僚にも同様の効果を適用する（SAN・寿命が0にならず、脳疲労も常に0のまま）。
+  // 「無敵（テスト用）」「β版設定」：同僚にも同様の効果を適用する（SAN・寿命が0にならず、脳疲労も常に0のまま）。
   // ただし、ノーマルルート終了時の負けイベント戦闘中はこの無敵を無効化する
   const normalEndBattleActive = normalEndSequence && normalEndSequence.phase === 'battle';
-  if (dreamMemorySave.upgrades.invincibleTest >= 1 && !normalEndBattleActive) {
+  if (isTestInvincibleUpgradeActive() && !normalEndBattleActive) {
     partner.san = Math.max(partner.san, 1);
     partner.lifespan = Math.max(partner.lifespan, 1);
     partner.fatigue = 0;
@@ -4815,7 +4835,10 @@ function registerBossHoleHit(hole, hitX, hitY) {
   }
   // 第4段階「承認欲求」：他の段階より防御力が弱く大きなダメージが入り、
   // さらに、この着弾は「狙われただけで回復した分」も込みで耐久力を減らす
-  hole.hitsTaken += hole.approvalSeeking ? bossApprovalDamageMultiplier + bossApprovalFireHealAmount : 1;
+  const normalHitIncrement = hole.approvalSeeking ? bossApprovalDamageMultiplier + bossApprovalFireHealAmount : 1;
+  // 「β版設定」：1発ごとに耐久力の最大値の20%ぶんダメージを与え、最低5発で撃破できるようにする
+  const betaHitIncrement = isBetaModeBossDamageActive() ? hole.maxHits * betaModeBossDamageRatio : 0;
+  hole.hitsTaken += Math.max(normalHitIncrement, betaHitIncrement);
   hole.msSinceHit = 0; // 承認欲求：被弾した瞬間、回復までの猶予をリセットする
   hole.flashTimerMs = bossHoleFlashDurationMs;
   bossEvent.totalHitsLanded++;
@@ -5561,7 +5584,9 @@ function findHitMidBossHole(x, y) {
 }
 
 function registerMidBossHoleHit(hole, hitX, hitY) {
-  hole.hitsTaken++;
+  // 「β版設定」：1発ごとに耐久力の最大値の20%ぶんダメージを与え、最低5発で撃破できるようにする
+  const betaHitIncrement = isBetaModeBossDamageActive() ? midBossEvent.hitsPerHole * betaModeBossDamageRatio : 0;
+  hole.hitsTaken += Math.max(1, betaHitIncrement);
   hole.flashTimerMs = midBossHoleFlashDurationMs;
   spawnHitSpark(hitX, hitY, hole.hitsTaken >= midBossEvent.hitsPerHole);
   if (hole.hitsTaken < midBossEvent.hitsPerHole) return;
@@ -6669,8 +6694,8 @@ function update() {
 
           const speed = 6 * specialSkillEffects.bulletSpeedMultiplier;
           const damageBonus = 1 + skillLevel * 0.08;
-          // 「無敵（テスト用）」：攻撃力が50倍になる
-          const invincibleDamageMultiplier = dreamMemorySave.upgrades.invincibleTest >= 1 ? 50 : 1;
+          // 「無敵（テスト用）」「β版設定」：攻撃力が50倍になる
+          const invincibleDamageMultiplier = isTestInvincibleUpgradeActive() ? 50 : 1;
           const damage = Math.max(1, Math.round(
             baseBulletDamage * conditionRatio * damageBonus * specialSkillEffects.damageMultiplier * invincibleDamageMultiplier
           ));
@@ -7082,8 +7107,8 @@ function update() {
 
   // 疲労値が0～最大値の範囲を超えないようにする
   fatigue = Math.max(0, Math.min(maxFatigue, fatigue));
-  // 「無敵（テスト用）」：脳疲労を常に0のままにする
-  if (dreamMemorySave.upgrades.invincibleTest >= 1) fatigue = 0;
+  // 「無敵（テスト用）」「β版設定」：脳疲労を常に0のままにする
+  if (isTestInvincibleUpgradeActive()) fatigue = 0;
 
   // 「祈る」「根性」発動直後の5秒間は、この間に受けたダメージ分を打ち消してSAN・寿命を維持する
   if (prayerGuardTimerMs > 0) {
@@ -7152,7 +7177,7 @@ function update() {
       const contactConditionRatio = 1 - Math.max(0, Math.min(1, fatigue / maxFatigue));
       const contactDamage = Math.max(1, Math.round(
         baseBulletDamage * contactConditionRatio * (1 + skillLevel * 0.08) *
-        (dreamMemorySave.upgrades.invincibleTest >= 1 ? 50 : 1)
+        (isTestInvincibleUpgradeActive() ? 50 : 1)
       ));
       en.hp = (en.hp || 1) - contactDamage;
       if (en.hp <= 0) defeated = true;
@@ -8474,6 +8499,7 @@ function getPlayerActiveEffectsList() {
   if (fixedEnemyRecoveryDisabledTimerMs > 0) list.push(`疲労回復停止 ${(fixedEnemyRecoveryDisabledTimerMs / 1000).toFixed(1)}s`);
   if (fixedEnemyVisionObscuredTimerMs > 0) list.push(`視界不良 ${(fixedEnemyVisionObscuredTimerMs / 1000).toFixed(1)}s`);
   if (dreamMemorySave.upgrades.invincibleTest >= 1) list.push('無敵（テスト用）常時有効');
+  if (dreamMemorySave.upgrades.betaMode >= 1) list.push('β版設定 常時有効（中ボス・ラスボスに最低5発で撃破）');
   if (fullAutoModeEnabled) list.push('フルオートモード ON');
   else if (autoFireEnabled) list.push('自動攻撃モード ON');
   if (list.length === 0) list.push('（なし）');
