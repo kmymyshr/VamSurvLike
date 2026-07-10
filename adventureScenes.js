@@ -374,7 +374,7 @@ Object.assign(partnerAdventureScenes, { dreamRoute: buildLinearScene('dream', [
   '二人は並んで立つ。\n' +
   '前回は、失った。\n' +
   '今回は、迎え撃つ。\n' +
-  '主人公「行くよ」\n' +
+  '？？？「行くよ」\n' +
   '同僚「はい」\n' +
   '窓の向こうで、黒い影が動いた。'
 ], () => markDreamRouteCompleted(), null) });
