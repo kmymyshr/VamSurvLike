@@ -1894,6 +1894,28 @@ function endWorkday() {
     sendScore(score);
     return;
   }
+  // アドベンチャーパートは週末ではなく、実際に一日を戦い切った日数（カフェイン摂取で倒れてスキップした
+  // 日は含まない）が一定数に達するたびに、その日の終業時に発生する
+  daysFoughtSinceLastAdventure++;
+  if (daysFoughtSinceLastAdventure >= adventurePartDayInterval) {
+    daysFoughtSinceLastAdventure = 0;
+    if (partner.active) {
+      // アドベンチャーパートに入る前に、一度画面を暗転させ、これまでの統計情報を確認してから切り替える
+      startSetupFadeOut(() => {
+        showAdventureStatsSummary(() => {
+          startPartnerAdventure(() => {
+            if (adventureRunCount === 3 && !dreamRouteCompleted) {
+              startNormalEndBattleSequence();
+            } else {
+              startDayTransition(autoAdvanceDay);
+            }
+          });
+        });
+      });
+      return;
+    }
+    // 同僚がいない（不在・離脱済み）場合は、アドベンチャーパートを挟まずそのまま翌日へ進む
+  }
   // 週の最終稼働日なら週次ノルマを判定し、それ以外は自動的に翌日へ進む
   if (isWeekEndDay(currentDate)) {
     resolveWeekEnd();
@@ -3595,6 +3617,11 @@ function getRelationshipCategory(relationship) {
   return 'bad';
 }
 
+// アドベンチャーパートは週末ではなく、実際に一日を戦い切った日数（カフェイン摂取で倒れてスキップした日は含まない）が
+// この日数に達するたびに、その日の終業時に発生する
+const adventurePartDayInterval = 5;
+let daysFoughtSinceLastAdventure = 0;
+
 // ===== アドベンチャーパートの分岐状態（エンディング分岐は、好感度とアドベンチャーの選択肢だけで決まる） =====
 let adventureRunCount = 0; // 「同僚と遊ぶ」を選んだ回数（ADV1・ADV2・ADV3・それ以降）
 let adv1Choice = null; // ADV1で選んだ方 'A' | 'B'
@@ -3770,26 +3797,15 @@ function chooseAdventureOption(choiceIndex) {
   }
 }
 
-// 休日は必ず「同僚と遊ぶ」（アドベンチャーパート）に入る（休息・勉強の選択肢は廃止した）
+// 休日の過ごし方（アドベンチャーパートは週末ではなく、実際に働いた日数に応じてendWorkday側で発生する）
 function applyRestActivity() {
   // 万一、既にアドベンチャーパート中／その暗転演出・統計情報画面中に二重に呼ばれても、二重に開始しないようにする
   if (adventureState || setupFadePhase || adventureStatsSummaryActive) return;
   if (partner.active) {
-    // アドベンチャーパート自体がこの日の出来事なので、通常のランダムイベントは発生させず週明けへ進む。
-    // ただし、ADV3をノーマルルート（夢ルートではない）で終えた場合は、これが最終日として
-    // 特別な「負けイベント」戦闘（第？？？？戦）を経てノーマルエンドへ直行する
-    // アドベンチャーパートに入る前に、一度画面を暗転させ、これまでの統計情報を確認してから切り替える
-    startSetupFadeOut(() => {
-      showAdventureStatsSummary(() => {
-        startPartnerAdventure(() => {
-          if (adventureRunCount === 3 && !dreamRouteCompleted) {
-            startNormalEndBattleSequence();
-          } else {
-            startDayTransition(jumpToNextMondayAndResetWeek);
-          }
-        });
-      });
-    });
+    // アドベンチャーパートはここでは発生させず、同僚と休日を過ごして関係性が少し良くなる、という扱いにする
+    adjustPartnerRelationship(partnerRelationshipDailyRecovery);
+    showAcknowledgementNotice('同僚と一緒に休日を過ごし、関係が少し良くなった。', '#ffcc80', '',
+      () => finishRestDayAndAdvanceToMonday());
   } else if (partnerLossReason === 'lifespan') {
     // 寿命が尽きての離脱はもう戻らない。会いに行った虚しさで自機のSANが大きく削れる
     san = Math.max(0, Math.floor(san * partnerLossGriefSanRatio));
