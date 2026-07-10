@@ -5750,9 +5750,6 @@ const midBossHoleFlashDurationMs = 220;
 // それをシャッフルしてから①～⑦の番号順に割り当てる（マスの位置自体は固定間隔なので重ならない）
 const midBossHoleGridCols = 4;
 const midBossHoleGridRows = 2;
-const midBossHoleWanderIntervalMinMs = 1400; // ラスボスの発射口よりゆっくり動き回る
-const midBossHoleWanderIntervalMaxMs = 2400;
-const midBossHoleWanderEaseFactor = 0.6;
 const midBossPhaseTextFadeMs = 600; // フェーズ内容文のフェードイン・フェードアウトにかかる時間
 const midBossFireIntervalMs = 1300;
 const midBossBulletSpeed = 4.0;
@@ -5784,8 +5781,8 @@ function getMidBossGeometry() {
   return { x, y: topY, width, height: midBossHeight };
 }
 
-// フェーズ（発射口）はそれぞれ独立に、案件本体の上をゆっくりランダムに動き回る。
-// 配置は均等なマス目をシャッフルしてから番号順に割り当てるため、重複せず毎回ランダムな配置になる
+// フェーズ（発射口）は、均等なマス目をシャッフルしてから番号順に割り当てた位置に固定配置する
+// （重複せず、どのマスに何番が来るかは毎回ランダムになるが、出現後に位置が動くことはない）
 function generateMidBossHoles() {
   const slots = [];
   for (let row = 0; row < midBossHoleGridRows; row++) {
@@ -5802,8 +5799,6 @@ function generateMidBossHoles() {
     const { relX, relY } = shuffledSlots[i];
     holes.push({
       phaseIndex: i, relX, relY,
-      wanderTargetRelX: relX, wanderTargetRelY: relY,
-      wanderTimerMs: midBossHoleWanderIntervalMinMs + Math.random() * (midBossHoleWanderIntervalMaxMs - midBossHoleWanderIntervalMinMs),
       hitsTaken: 0, destroyed: false, flashTimerMs: 0,
       // 発射口ごとにランダムな初期位相を持たせ、全ての穴が同時に発射しないようにする
       fireTimerMs: Math.random() * midBossFireIntervalMs
@@ -5853,7 +5848,7 @@ function updateMidBossEvent(dt) {
     return;
   }
 
-  // 本体が窓の範囲を自由に動き回る
+  // 本体が窓の範囲を自由に動き回る（以前より少しゆっくり移動する）
   midBossEvent.moveTimerMs -= dt * 1000;
   if (midBossEvent.moveTimerMs <= 0) {
     const width = canvas.width * midBossWidthRatio;
@@ -5863,39 +5858,16 @@ function updateMidBossEvent(dt) {
     const maxY = Math.max(minY, windowZoneBottomY - midBossHeight);
     midBossEvent.roamTargetX = minX + Math.random() * (maxX - minX);
     midBossEvent.roamTargetY = minY + Math.random() * (maxY - minY);
-    midBossEvent.moveTimerMs = 1500 + Math.random() * 1800;
+    midBossEvent.moveTimerMs = 2200 + Math.random() * 2200;
   }
-  const moveEase = Math.min(1, dt * bossMoveEaseFactor * 0.6); // 動き回る範囲が広いので、少しゆっくり移動させる
+  const moveEase = Math.min(1, dt * bossMoveEaseFactor * 0.4); // 動き回る範囲が広い上に、以前よりゆっくり移動させる
   midBossEvent.roamX += (midBossEvent.roamTargetX - midBossEvent.roamX) * moveEase;
   midBossEvent.roamY += (midBossEvent.roamTargetY - midBossEvent.roamY) * moveEase;
 
-  // フェーズ（発射口）ごとの点滅減衰、ゆっくりランダムな徘徊、独立したタイミングでの発射
-  const wanderEase = Math.min(1, dt * midBossHoleWanderEaseFactor);
+  // フェーズ（発射口）ごとの点滅減衰・独立したタイミングでの発射（配置は固定なので徘徊はしない）
   for (const hole of midBossEvent.holes) {
     if (hole.flashTimerMs > 0) hole.flashTimerMs = Math.max(0, hole.flashTimerMs - dt * 1000);
     if (hole.destroyed) continue;
-    hole.wanderTimerMs -= dt * 1000;
-    if (hole.wanderTimerMs <= 0) {
-      if (hole.phaseIndex === midBossEvent.currentPhaseIndex) {
-        // 今対応すべき発射口は、他の発射口が密集している場所から離れる方向を優先して次の目標を選ぶ（狙いやすくするため）
-        const others = midBossEvent.holes.filter(h => h !== hole && !h.destroyed);
-        if (others.length > 0) {
-          const avgRelX = others.reduce((sum, h) => sum + h.relX, 0) / others.length;
-          const avgRelY = others.reduce((sum, h) => sum + h.relY, 0) / others.length;
-          hole.wanderTargetRelX = Math.max(0.1, Math.min(0.9, (1 - avgRelX) + (Math.random() - 0.5) * 0.25));
-          hole.wanderTargetRelY = Math.max(0.25, Math.min(0.75, (1 - avgRelY) + (Math.random() - 0.5) * 0.25));
-        } else {
-          hole.wanderTargetRelX = 0.1 + Math.random() * 0.8;
-          hole.wanderTargetRelY = 0.25 + Math.random() * 0.5;
-        }
-      } else {
-        hole.wanderTargetRelX = 0.1 + Math.random() * 0.8;
-        hole.wanderTargetRelY = 0.25 + Math.random() * 0.5;
-      }
-      hole.wanderTimerMs = midBossHoleWanderIntervalMinMs + Math.random() * (midBossHoleWanderIntervalMaxMs - midBossHoleWanderIntervalMinMs);
-    }
-    hole.relX += (hole.wanderTargetRelX - hole.relX) * wanderEase;
-    hole.relY += (hole.wanderTargetRelY - hole.relY) * wanderEase;
 
     // 発射口ごとに独立したタイミングでランダムに発射する（全ての穴が同時に撃たないようにする）
     hole.fireTimerMs -= dt * 1000;
@@ -10077,14 +10049,16 @@ function draw() {
       ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
-      // 弾の中心に「援」の文字を入れ、援護弾だとひと目でわかるようにする
-      ctx.save();
-      ctx.fillStyle = '#4a148c';
-      ctx.font = `bold ${b.radius}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('援', b.x, b.y + 1);
-      ctx.restore();
+      // 弾の中心に「パリィ！」の文字を点滅させながら入れ、パリィで迎え撃てることをひと目で伝える
+      if (Math.floor(gameClockMs / 200) % 2 === 0) {
+        ctx.save();
+        ctx.fillStyle = '#4a148c';
+        ctx.font = `bold ${Math.round(b.radius * 0.6)}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('パリィ！', b.x, b.y + 1);
+        ctx.restore();
+      }
       continue;
     }
     ctx.save();
