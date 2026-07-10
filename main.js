@@ -5414,11 +5414,8 @@ function pickWakeUpLineForHour(hour) {
 // 真エンド（同僚生存）限定：ENDの後、現実の日時を表示する画面 →（クリックで）クリアメッセージ画面 → タイトルへ
 const bossClearMessageFadeMs = 1200;
 const bossClearMessageLines = [
-  'クリアおめでとうございます。',
-  '最後までプレイありがとうございました。'
-];
-const bossEndTextDelayMs = 600; // クリアメッセージが表示されてから、画面下のENDが現れ始めるまでの間
-const bossEndTextFadeMs = 800;
+  'クリアおめでとうございます。'
+  ];
 // 同僚が生存していない場合の代替エンド（画面は黒くなり、1行だけ表示してENDへ）
 const bossAltEndCues = [
   { start: 0, fadeMs: 1500 }, // 1行目
@@ -8748,22 +8745,6 @@ function drawClearMessageScreen(seq) {
     ctx.fillText(line, canvas.width / 2, canvas.height / 2 - 20 + i * 44);
   });
   ctx.restore();
-
-  // クリアメッセージが表示しきってから、画面いちばん下にENDをフェードインさせる
-  if (seq.phase === 'clearMessageShown' || seq.phase === 'clearMessageFadeOut') {
-    const endAlpha = seq.phase === 'clearMessageFadeOut'
-      ? alpha // 画面全体と一緒にフェードアウトする
-      : Math.max(0, Math.min(1, (seq.phaseTimerMs - bossEndTextDelayMs) / bossEndTextFadeMs));
-    if (endAlpha > 0) {
-      ctx.save();
-      ctx.globalAlpha = endAlpha;
-      ctx.textAlign = 'center';
-      ctx.font = 'bold 36px sans-serif';
-      ctx.fillStyle = '#222222';
-      ctx.fillText('END', canvas.width / 2, canvas.height - 60);
-      ctx.restore();
-    }
-  }
 
   if (seq.phase === 'clearMessageShown') {
     ctx.save();
