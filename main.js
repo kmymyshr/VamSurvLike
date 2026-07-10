@@ -3203,7 +3203,6 @@ function getDefaultSpecialSkillEffects() {
     scoreGainMultiplier: 1,
     idleRecoveryMultiplier: 1,
     contactScorePenaltyMultiplier: 1,
-    supportFireChance: 0,
     autoParryChance: 0,
     bulletScatterChance: 0,
     enemyApproachSpeedMultiplier: 1,
@@ -3212,15 +3211,16 @@ function getDefaultSpecialSkillEffects() {
     partnerSanDamageMultiplier: 1,
     partnerLifespanDrainMultiplier: 1,
     friendlyFireDamageMultiplier: 1,
-    relationshipDamageMultiplier: 1,
     teamworkParryChance: 0,
-    mealOrderVisible: false
+    mealOrderVisible: false,
+    // コミュニケーション能力：同僚の弾をパリィした時／同僚が自機の弾をパリィした時に、レベルごとに追加で上がる関係性の量
+    communicationParryRelationshipBonus: 0
   };
 }
 const specialSkillEffects = getDefaultSpecialSkillEffects();
 
 const specialSkills = [
-  { id: 'dual-shot', name: 'マルチタスク', description: 'レベルごとに同時発射する弾が1発増える。追加の弾は正面から±20度以内のランダムな方向へ飛ぶ', maxLevel: 5 },
+  { id: 'dual-shot', name: 'マルチタスク', description: 'レベルごとに同時発射する弾が1発増える。追加の弾は正面から±20度以内のランダムな方向へ飛ぶ', maxLevel: 1 },
   { id: 'speed-up', name: 'フットワーク', description: '移動速度が上がる（Lv1:1.1倍 → Lv5:2.0倍）', maxLevel: 5 },
   { id: 'fatigue-save', name: '脳疲労耐性', description: '時間経過による脳疲労の蓄積を軽減する（Lv1:-35% → Lv5:-50%）', maxLevel: 5 },
   { id: 'rapid-fire', name: '処理速度A', description: '発射間隔を短縮する（Lv1:当初の75% → Lv5:当初の30%）', maxLevel: 5 },
@@ -3228,11 +3228,11 @@ const specialSkills = [
   { id: 'short-sleeper', name: 'パワーナップ', description: '行動不能（stun）時間を半分にする', maxLevel: 1 },
   { id: 'learning-power', name: '理解力', description: 'EXP獲得量を上げる（Lv1:当初の130% → Lv5:当初の200%）', maxLevel: 5 },
   { id: 'business-manner', name: 'ビジネスマナー', description: '印象が良く、敵接触時のスコア減点を軽減（Lv1:-30% → Lv5:-50%）。同僚の寿命減少-10%', maxLevel: 5 },
-  { id: 'communication', name: 'コミュニケーション力', description: 'レベルごとに15%の確率で援護射撃が発生する。同僚との関係性が悪化する時の低下値を軽減（Lv1:当初の90% → Lv5:当初の50%）', maxLevel: 5 },
+  { id: 'communication', name: 'コミュニケーション能力', description: '同僚の弾をパリィした時、または同僚が自機の弾をパリィした時、関係性がレベルごとにさらに+2上がる', maxLevel: 5 },
   {
     id: 'network-specialist', name: 'ネットワークスペシャリスト',
     description: '弾が画面端でレベルごとに1回多く跳ね返る。画面端で反射した自弾（1回目以降すべて）は、自機がパリィ（オートパリィ含む）で狩り直せ、同僚が自動でパリィする確率も2倍になる',
-    maxLevel: 5
+    maxLevel: 3
   },
   { id: 'teamwork', name: 'チームワーク', description: '自分と同僚、お互いの弾が着弾しそうな時（敵からの弾を除く）、お互いパリィが発動しやすくなる（Lv5で発動率80%）', maxLevel: 5 },
   { id: 'meal-foresight', name: '食通', description: '昼食に登場する料理に、出現する順番の番号が表示されるようになる（習得は1回のみ）', maxLevel: 1 },
@@ -3296,13 +3296,10 @@ function applySkillEffectForLevel(skillId, level) {
       specialSkillEffects.partnerLifespanDrainMultiplier *= 0.9;
       break;
     }
-    case 'communication': {
-      // コミュニケーション力：援護射撃はレベルに比例して増加。関係性の低下値はLv1=当初の90% → Lv5=当初の50%（線形補間）
-      specialSkillEffects.supportFireChance += 0.15 * level;
-      const ratio = 0.9 + (0.5 - 0.9) * (Math.min(level, 5) - 1) / 4;
-      specialSkillEffects.relationshipDamageMultiplier *= ratio;
+    case 'communication':
+      // コミュニケーション能力：同僚の弾をパリィした時／同僚が自機の弾をパリィした時、関係性がレベルごとに+2多く上がる
+      specialSkillEffects.communicationParryRelationshipBonus = 2 * level;
       break;
-    }
     case 'network-specialist':
       specialSkillEffects.bulletBounceCount = level;
       break;
@@ -3651,9 +3648,7 @@ function grantSpecialSkillById(id) {
 function adjustPartnerRelationship(amount) {
   // 「固い絆」：関係性が低下するイベントを一切無効化する（上昇は今まで通り発生する）
   if (amount < 0 && dreamMemorySave.upgrades.unbreakableBond >= 1) return;
-  // 特殊スキル「コミュニケーション力」：関係性が悪化する原因（誤射など）による低下値を軽減する
-  const scaledAmount = amount < 0 ? amount * specialSkillEffects.relationshipDamageMultiplier : amount;
-  partner.relationship = Math.max(0, Math.min(partnerRelationshipMax, partner.relationship + scaledAmount));
+  partner.relationship = Math.max(0, Math.min(partnerRelationshipMax, partner.relationship + amount));
 }
 
 // 関係性の値を「良好／普通／悪い」の3段階に分類する（再会シーンの5段階のうち、tier1・2=良好／tier3=普通／tier4・5=悪い、と同じ閾値）
@@ -4453,9 +4448,15 @@ function performBulletParry(bullet, fromX, fromY, actorAngle, isAuto = false) {
       angle = actorAngle;
     }
   }
-  // 同僚が撃った弾をパリィではじき返した時は、信頼関係が2上がる（手動・オートパリィとも共通）
+  // 同僚が撃った弾をパリィではじき返した時は、信頼関係が2上がる（手動・オートパリィとも共通）。
+  // 「コミュニケーション能力」：レベルごとに、この上昇量へさらに+2を上乗せする
   if (bullet.owner === 'partner') {
-    adjustPartnerRelationship(2);
+    adjustPartnerRelationship(2 + specialSkillEffects.communicationParryRelationshipBonus);
+  } else if (bullet.owner === 'player' && fromX === partner.x && fromY === partner.y) {
+    // 「コミュニケーション能力」：同僚が自機の弾をパリィした時も、レベルごとに関係性が+2上がる
+    if (specialSkillEffects.communicationParryRelationshipBonus > 0) {
+      adjustPartnerRelationship(specialSkillEffects.communicationParryRelationshipBonus);
+    }
   }
   bullet.vx = Math.cos(angle) * speed;
   bullet.vy = Math.sin(angle) * speed;
@@ -7112,24 +7113,6 @@ function update() {
               y: player.y + Math.sin(bulletAngle) * player.radius,
               vx: Math.cos(bulletAngle) * speed,
               vy: Math.sin(bulletAngle) * speed,
-              radius: 4,
-              damage,
-              bounces: specialSkillEffects.bulletBounceCount,
-              owner: 'player'
-            });
-          }
-          // コミュニケーション力：一定確率で、最寄りの敵へ援護射撃が飛ぶ
-          if (enemies.length > 0 && Math.random() < specialSkillEffects.supportFireChance) {
-            const nearestEnemy = enemies.reduce((closest, candidate) => {
-              const d = Math.hypot(candidate.x - player.x, candidate.y - player.y);
-              return (!closest || d < closest.d) ? { en: candidate, d } : closest;
-            }, null).en;
-            const supportAngle = Math.atan2(nearestEnemy.y - player.y, nearestEnemy.x - player.x);
-            bullets.push({
-              x: player.x + Math.cos(supportAngle) * player.radius,
-              y: player.y + Math.sin(supportAngle) * player.radius,
-              vx: Math.cos(supportAngle) * speed,
-              vy: Math.sin(supportAngle) * speed,
               radius: 4,
               damage,
               bounces: specialSkillEffects.bulletBounceCount,
