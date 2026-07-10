@@ -8496,16 +8496,26 @@ function draw() {
 
   if (startScreen) {
     drawSetupBackground();
+    // after_normalEND使用時は、タイトル画面の文字をすべて明朝体系フォントにし、彩度・明度を少し落とした配色にする
+    const useMinchoTitle = shouldShowAfterNormalEndTitleBackground();
+    const titleFontFamily = useMinchoTitle
+      ? '"Yu Mincho", "Hiragino Mincho ProN", "MS PMincho", serif'
+      : '"Comic Sans MS", "Chalkboard SE", "Marker Felt", cursive, sans-serif';
+    const uiFontFamily = useMinchoTitle
+      ? '"Yu Mincho", "Hiragino Mincho ProN", "MS PMincho", serif'
+      : 'sans-serif';
+    const titleStrokeColor = useMinchoTitle ? '#a9828c' : '#ff8fab';
+    const titleFillColor = useMinchoTitle ? '#d9d3c6' : '#fffaf0';
     ctx.save();
-    ctx.font = 'bold 38px "Comic Sans MS", "Chalkboard SE", "Marker Felt", cursive, sans-serif';
+    ctx.font = `bold 38px ${titleFontFamily}`;
     ctx.textAlign = 'center';
     ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
     ctx.shadowBlur = 6;
     ctx.shadowOffsetY = 3;
     ctx.lineWidth = 6;
-    ctx.strokeStyle = '#ff8fab';
+    ctx.strokeStyle = titleStrokeColor;
     ctx.strokeText('ここで寝たらただのサラリーマン', canvas.width / 2, canvas.height / 2 - 154);
-    ctx.fillStyle = '#fffaf0';
+    ctx.fillStyle = titleFillColor;
     ctx.fillText('ここで寝たらただのサラリーマン', canvas.width / 2, canvas.height / 2 - 154);
     ctx.restore();
 
@@ -8514,7 +8524,7 @@ function draw() {
     const hasPlayedBefore = Object.values(dreamMemorySave.endingsCleared).some(v => v);
     if (hasPlayedBefore) {
       ctx.save();
-      ctx.font = 'bold 38px "Comic Sans MS", "Chalkboard SE", "Marker Felt", cursive, sans-serif';
+      ctx.font = `bold 38px ${titleFontFamily}`;
       ctx.textAlign = 'left';
       const titlePrefix = 'ここで寝たらただの';
       const titleTarget = 'サラリーマン';
@@ -8527,7 +8537,7 @@ function draw() {
       const targetCenterX = targetLeftX + targetWidth / 2;
 
       // ペンで打ち消したような、細めで色を弱めた赤の取り消し線（毎フレーム同じ形になる固定の乱数を使う）
-      ctx.strokeStyle = 'rgba(213, 0, 0, 0.55)';
+      ctx.strokeStyle = useMinchoTitle ? 'rgba(150, 100, 100, 0.5)' : 'rgba(213, 0, 0, 0.55)';
       ctx.lineWidth = 4;
       ctx.lineCap = 'round';
       const scribbleLineCount = 4;
@@ -8549,7 +8559,7 @@ function draw() {
       ctx.translate(targetCenterX, titleY - 30);
       ctx.rotate(-0.05);
       const homeGuardFontSize = 28;
-      ctx.font = `bold ${homeGuardFontSize}px "Comic Sans MS", "Chalkboard SE", "Marker Felt", cursive, sans-serif`;
+      ctx.font = `bold ${homeGuardFontSize}px ${titleFontFamily}`;
       const homeGuardChars = Array.from('自宅警備員');
       const homeGuardLetterSpacing = homeGuardFontSize * 0.5;
       const homeGuardCharWidths = homeGuardChars.map(c => ctx.measureText(c).width);
@@ -8558,7 +8568,7 @@ function draw() {
       ctx.textAlign = 'center';
       ctx.lineWidth = 3;
       ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+      ctx.fillStyle = useMinchoTitle ? 'rgba(205, 200, 190, 0.5)' : 'rgba(255, 255, 255, 0.55)';
       let homeGuardX = -homeGuardTotalWidth / 2;
       homeGuardChars.forEach((c, i) => {
         const charCenterX = homeGuardX + homeGuardCharWidths[i] / 2;
@@ -8577,15 +8587,15 @@ function draw() {
     }
 
     ctx.save();
-    ctx.font = 'bold 24px "Comic Sans MS", "Chalkboard SE", "Marker Felt", cursive, sans-serif';
+    ctx.font = `bold 24px ${titleFontFamily}`;
     ctx.textAlign = 'center';
     ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
     ctx.shadowBlur = 4;
     ctx.shadowOffsetY = 2;
     ctx.lineWidth = 4;
-    ctx.strokeStyle = '#ff8fab';
+    ctx.strokeStyle = titleStrokeColor;
     ctx.strokeText('Workin’ FunDead', canvas.width / 2, canvas.height / 2 - 118);
-    ctx.fillStyle = '#fffaf0';
+    ctx.fillStyle = titleFillColor;
     ctx.fillText('Workin’ FunDead', canvas.width / 2, canvas.height / 2 - 118);
     ctx.restore();
     ctx.textAlign = 'left';
@@ -8594,8 +8604,8 @@ function draw() {
     if (dreamMemorySave.trueEndCleared) {
       ctx.save();
       ctx.textAlign = 'center';
-      ctx.fillStyle = '#ffd54f';
-      ctx.font = 'bold 16px sans-serif';
+      ctx.fillStyle = useMinchoTitle ? '#b8a06a' : '#ffd54f';
+      ctx.font = `bold 16px ${uiFontFamily}`;
       ctx.fillText('クリア済', canvas.width / 2, canvas.height / 2 - 96);
       ctx.textAlign = 'left';
       ctx.restore();
@@ -8604,18 +8614,19 @@ function draw() {
     const btnW = 340, btnH = 54;
     const btnX = canvas.width / 2 - btnW / 2;
     drawUiButton(btnX, canvas.height / 2 - 60, btnW, btnH, '開始する (1 / Enter)',
-      () => selectMode());
+      () => selectMode(),
+      useMinchoTitle ? { font: `bold 20px ${uiFontFamily}`, textColor: '#ded8cd' } : {});
     drawUiButton(btnX, canvas.height / 2 + 4, btnW, btnH, `3倍加速モード: ${threeXModeEnabled ? 'ON' : 'OFF'} (2)`,
       () => { threeXModeEnabled = !threeXModeEnabled; },
       threeXModeEnabled
-        ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7' }
-        : { fillStyle: 'rgba(103, 58, 183, 0.55)', strokeStyle: '#ce93d8' });
+        ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: `bold 20px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' }
+        : { fillStyle: 'rgba(103, 58, 183, 0.55)', strokeStyle: '#ce93d8', font: `bold 20px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' });
     drawUiButton(btnX, canvas.height / 2 + 68, btnW, 40,
       `夢の記憶ポイントで強化 (P: ${dreamMemorySave.points})`, () => { dreamMemoryShopActive = true; },
-      { fillStyle: 'rgba(74, 20, 140, 0.55)', strokeStyle: '#ce93d8', font: 'bold 15px sans-serif' });
+      { fillStyle: 'rgba(74, 20, 140, 0.55)', strokeStyle: '#ce93d8', font: `bold 15px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' });
     drawUiButton(btnX, canvas.height / 2 + 112, btnW, 34,
       'エンディングリスト', () => { endingListActive = true; },
-      { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#ffd54f', font: 'bold 14px sans-serif' });
+      { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#ffd54f', font: `bold 14px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' });
 
     // 前回プレイした自機・同僚の組み合わせが記録されている時だけ、選択画面を省略するボタンを出す
     const hasLastRunCombo = !!(dreamMemorySave.lastRun && dreamMemorySave.lastRun.partnerIcon);
@@ -8623,7 +8634,7 @@ function draw() {
     if (hasLastRunCombo) {
       drawUiButton(btnX, nextButtonY, btnW, 40,
         '夢と同じ設定で進める', startWithLastRunSettings,
-        { fillStyle: 'rgba(20, 70, 90, 0.55)', strokeStyle: '#80deea', font: 'bold 15px sans-serif' });
+        { fillStyle: 'rgba(20, 70, 90, 0.55)', strokeStyle: '#80deea', font: `bold 15px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' });
       nextButtonY += 46;
     }
     // スマホ用：自動で最寄りの敵に向く設定のON/OFF切り替え（端末に保存される）
@@ -8631,12 +8642,12 @@ function draw() {
       `スマホ用 自動照準: ${mobileAutoAimEnabled ? 'ON' : 'OFF'}`,
       () => setMobileAutoAimEnabled(!mobileAutoAimEnabled),
       mobileAutoAimEnabled
-        ? { fillStyle: 'rgba(56, 142, 60, 0.55)', strokeStyle: '#a5d6a7', font: 'bold 15px sans-serif' }
-        : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 15px sans-serif' });
+        ? { fillStyle: 'rgba(56, 142, 60, 0.55)', strokeStyle: '#a5d6a7', font: `bold 15px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' }
+        : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: `bold 15px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' });
     const helpTextY = nextButtonY + 62;
 
-    ctx.fillStyle = '#cfd8dc';
-    ctx.font = '16px sans-serif';
+    ctx.fillStyle = useMinchoTitle ? '#9aa39f' : '#cfd8dc';
+    ctx.font = `16px ${uiFontFamily}`;
     ctx.textAlign = 'center';
     ctx.fillText('P = 一時停止 / 再開　F = 自動攻撃切替　Space = パリィ（同僚弾をはじき返す）', canvas.width / 2, helpTextY);
     ctx.fillText('WASD・十字ボタン = 移動　マウス・ドラッグ / 連射ボタン = 照準・攻撃', canvas.width / 2, helpTextY + 26);
