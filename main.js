@@ -3869,12 +3869,10 @@ document.addEventListener("keydown", (event) => {
     goHomeFromWeekendWork();
     return;
   }
-  // スタート画面では、開始するか3倍加速モードのON/OFFを切り替える（夢の記憶ポイントの強化画面を開いている間は無効）
+  // スタート画面では、1 / Enterキーで開始する（夢の記憶ポイントの強化画面を開いている間は無効）
   if (startScreen && !dreamMemoryShopActive) {
     if (event.key === '1' || event.key === 'Enter') {
       selectMode();
-    } else if (event.key === '2') {
-      threeXModeEnabled = !threeXModeEnabled;
     }
     return;
   }
@@ -4908,6 +4906,7 @@ const normalEndPartnerAutoParryCap = 0.5; // 同僚のオートパリィ確率�
 const normalEndPartnerLoseDelayMinMs = 12000; // 同僚が力尽きるまでの時間（幅を持たせた保険。実際は被弾で先に力尽きることが多い）
 const normalEndPartnerLoseDelayMaxMs = 18000;
 const normalEndFadeOutDurationMs = 1200;
+const normalEndScreenFadeOutDurationMs = 3000; // クリック後、文字も含め画面全体が白くフェードインしてタイトルへ戻るまでの時間
 let normalEndSequence = null; // null、または { phase, phaseTimerMs, battleTimerMs, partnerLoseAtMs, partnerLost }
 
 // 「同僚と遊ぶ」ADV3をノーマルルートで終えた直後に呼ばれる。この日が最終日として扱われる
@@ -4949,7 +4948,7 @@ function updateNormalEndSequence(rawDt) {
   } else if (normalEndSequence.phase === 'fadeOut' && normalEndSequence.phaseTimerMs >= normalEndFadeOutDurationMs) {
     normalEndSequence.phase = 'endScreen';
     normalEndSequence.phaseTimerMs = 0;
-  } else if (normalEndSequence.phase === 'endScreenFadeOut' && normalEndSequence.phaseTimerMs >= 800) {
+  } else if (normalEndSequence.phase === 'endScreenFadeOut' && normalEndSequence.phaseTimerMs >= normalEndScreenFadeOutDurationMs) {
     finishNormalEndSequence();
   }
 }
@@ -5032,23 +5031,37 @@ function drawNormalEndFreezeScene() {
   }
 }
 
-// fadeOut（暗転を維持）・endScreen（テキストがフェードイン）・endScreenFadeOut（テキストがフェードアウト）
+// fadeOut（暗転を維持）・endScreen（背景画像＋テキストがフェードイン）・endScreenFadeOut（クリック後、全体が白へフェードイン）
 function drawNormalEndEndingScreen() {
   ctx.fillStyle = 'black';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   if (normalEndSequence.phase === 'endScreen' || normalEndSequence.phase === 'endScreenFadeOut') {
-    const alpha = normalEndSequence.phase === 'endScreen'
-      ? Math.min(1, normalEndSequence.phaseTimerMs / 1000)
-      : Math.max(0, 1 - normalEndSequence.phaseTimerMs / 800);
+    const bgFadeInAlpha = Math.min(1, normalEndSequence.phaseTimerMs / 1000);
+    const contentAlpha = normalEndSequence.phase === 'endScreen'
+      ? bgFadeInAlpha
+      : 1;
+    ctx.save();
+    ctx.globalAlpha = normalEndSequence.phase === 'endScreen' ? bgFadeInAlpha : 1;
+    if (afterEndImage && afterEndImage.complete && afterEndImage.naturalWidth > 0) {
+      ctx.drawImage(afterEndImage, 0, 0, canvas.width, canvas.height);
+    }
+    ctx.restore();
     const pronoun = getPartnerPronoun(selectedPartnerIcon);
     ctx.save();
-    ctx.globalAlpha = alpha;
+    ctx.globalAlpha = contentAlpha;
     ctx.fillStyle = 'white';
     ctx.font = 'bold 20px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(`${pronoun}を助けないと…`, canvas.width / 2, canvas.height / 2);
     ctx.restore();
     ctx.textAlign = 'left';
+
+    // クリック後：背景・文字を含む画面全体が、3秒かけて白へフェードインしていく
+    if (normalEndSequence.phase === 'endScreenFadeOut') {
+      const whiteAlpha = Math.min(1, normalEndSequence.phaseTimerMs / normalEndScreenFadeOutDurationMs);
+      ctx.fillStyle = `rgba(255, 255, 255, ${whiteAlpha})`;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
   }
 }
 
@@ -7073,6 +7086,12 @@ const afterNormalEndBackgroundImage = (() => {
   img.src = 'images/background/after_normalEND.png';
   return img;
 })();
+// ノーマルエンド確定後の「{partner}を助けないと…」画面の背景に使う画像
+const afterEndImage = (() => {
+  const img = new Image();
+  img.src = 'images/background/after_END.png';
+  return img;
+})();
 
 // タイトル画面の背景を、直前のプレイ内容に応じて切り替えるべきかどうかを判定する
 function shouldShowAfterNormalEndTitleBackground() {
@@ -8265,6 +8284,15 @@ function draw() {
     ctx.textAlign = 'center';
     ctx.fillText('数字キー 1〜2 / タップで選択', canvas.width / 2, cardY + cardH + 50);
     ctx.textAlign = 'left';
+
+    // 前回プレイした自機・同僚の組み合わせが記録されている時だけ、選択を省略して進めるボタンを出す
+    const hasLastRunCombo = !!(dreamMemorySave.lastRun && dreamMemorySave.lastRun.partnerIcon);
+    if (hasLastRunCombo) {
+      const resumeBtnW = 260, resumeBtnH = 40;
+      drawUiButton(canvas.width / 2 - resumeBtnW / 2, cardY + cardH + 74, resumeBtnW, resumeBtnH,
+        '夢と同じ設定で進める', startWithLastRunSettings,
+        { fillStyle: 'rgba(20, 70, 90, 0.55)', strokeStyle: '#80deea', font: 'bold 15px sans-serif' });
+    }
     return;
   }
 
@@ -8611,40 +8639,24 @@ function draw() {
       ctx.restore();
     }
 
-    const btnW = 340, btnH = 54;
-    const btnX = canvas.width / 2 - btnW / 2;
-    drawUiButton(btnX, canvas.height / 2 - 60, btnW, btnH, '開始する (1 / Enter)',
+    // 開始する（左下）・強化（右下）は同サイズ、エンディングリストは中央下（操作説明と被らない位置）に配置する
+    const cornerBtnW = 170, cornerBtnH = 54;
+    const bottomMargin = 26;
+    const bottomY = canvas.height - cornerBtnH - bottomMargin;
+    drawUiButton(20, bottomY, cornerBtnW, cornerBtnH, '開始する (1 / Enter)',
       () => selectMode(),
-      useMinchoTitle ? { font: `bold 20px ${uiFontFamily}`, textColor: '#ded8cd' } : {});
-    drawUiButton(btnX, canvas.height / 2 + 4, btnW, btnH, `3倍加速モード: ${threeXModeEnabled ? 'ON' : 'OFF'} (2)`,
-      () => { threeXModeEnabled = !threeXModeEnabled; },
-      threeXModeEnabled
-        ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: `bold 20px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' }
-        : { fillStyle: 'rgba(103, 58, 183, 0.55)', strokeStyle: '#ce93d8', font: `bold 20px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' });
-    drawUiButton(btnX, canvas.height / 2 + 68, btnW, 40,
-      `夢の記憶ポイントで強化 (P: ${dreamMemorySave.points})`, () => { dreamMemoryShopActive = true; },
-      { fillStyle: 'rgba(74, 20, 140, 0.55)', strokeStyle: '#ce93d8', font: `bold 15px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' });
-    drawUiButton(btnX, canvas.height / 2 + 112, btnW, 34,
+      { font: `bold 18px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' });
+    drawUiButton(canvas.width - cornerBtnW - 20, bottomY, cornerBtnW, cornerBtnH,
+      `強化 (P: ${dreamMemorySave.points})`, () => { dreamMemoryShopActive = true; },
+      { fillStyle: 'rgba(74, 20, 140, 0.55)', strokeStyle: '#ce93d8', font: `bold 18px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' });
+
+    const endingListBtnW = 220, endingListBtnH = 40;
+    drawUiButton(canvas.width / 2 - endingListBtnW / 2, bottomY + (cornerBtnH - endingListBtnH) / 2,
+      endingListBtnW, endingListBtnH,
       'エンディングリスト', () => { endingListActive = true; },
       { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#ffd54f', font: `bold 14px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' });
 
-    // 前回プレイした自機・同僚の組み合わせが記録されている時だけ、選択画面を省略するボタンを出す
-    const hasLastRunCombo = !!(dreamMemorySave.lastRun && dreamMemorySave.lastRun.partnerIcon);
-    let nextButtonY = canvas.height / 2 + 154;
-    if (hasLastRunCombo) {
-      drawUiButton(btnX, nextButtonY, btnW, 40,
-        '夢と同じ設定で進める', startWithLastRunSettings,
-        { fillStyle: 'rgba(20, 70, 90, 0.55)', strokeStyle: '#80deea', font: `bold 15px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' });
-      nextButtonY += 46;
-    }
-    // スマホ用：自動で最寄りの敵に向く設定のON/OFF切り替え（端末に保存される）
-    drawUiButton(btnX, nextButtonY, btnW, 40,
-      `スマホ用 自動照準: ${mobileAutoAimEnabled ? 'ON' : 'OFF'}`,
-      () => setMobileAutoAimEnabled(!mobileAutoAimEnabled),
-      mobileAutoAimEnabled
-        ? { fillStyle: 'rgba(56, 142, 60, 0.55)', strokeStyle: '#a5d6a7', font: `bold 15px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' }
-        : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: `bold 15px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' });
-    const helpTextY = nextButtonY + 62;
+    const helpTextY = bottomY - 60;
 
     ctx.fillStyle = useMinchoTitle ? '#9aa39f' : '#cfd8dc';
     ctx.font = `16px ${uiFontFamily}`;
