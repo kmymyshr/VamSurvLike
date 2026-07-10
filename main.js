@@ -7102,8 +7102,22 @@ function drawSetupBackground(allowAfterNormalEnd = true) {
     const t = Date.now() / 1000;
     // 周期の異なる2つの波を掛け合わせ、周期的すぎない「不規則にゆっくり」な明滅にする
     const dim = Math.max(0, Math.sin(t * 0.11) * 0.5 + 0.5) * Math.max(0, Math.sin(t * 0.047 + 1.7) * 0.5 + 0.5);
-    ctx.fillStyle = `rgba(0, 0, 0, ${dim * 0.4})`;
+    ctx.fillStyle = `rgba(0, 0, 0, ${dim * 0.22})`;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // 数秒に一度、一瞬だけ明るくなるフラッシュ（暗滅とは別の周期でランダムに発生させる）
+    const flashCycleMs = 6300;
+    const flashCycleIndex = Math.floor(Date.now() / flashCycleMs);
+    const flashCyclePos = Date.now() % flashCycleMs;
+    const flashWindowMs = 220;
+    const flashRoll = titleGlitchPseudoRandom(flashCycleIndex * 89 + 17);
+    if (flashRoll < 0.35 && flashCyclePos < flashWindowMs) {
+      // 立ち上がりは一瞬、消えるところは少しなだらかに
+      const flashT = flashCyclePos / flashWindowMs;
+      const flashAlpha = flashT < 0.2 ? flashT / 0.2 : 1 - (flashT - 0.2) / 0.8;
+      ctx.fillStyle = `rgba(255, 255, 255, ${Math.max(0, flashAlpha) * 0.35})`;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
 
     // 数秒に一度、短い間だけ小さく振動する
     const shakeCycleMs = 4200;
@@ -7111,7 +7125,7 @@ function drawSetupBackground(allowAfterNormalEnd = true) {
     const cyclePos = Date.now() % shakeCycleMs;
     const shakeWindowMs = 380;
     const shakeRoll = titleGlitchPseudoRandom(cycleIndex * 31 + 5);
-    if (shakeRoll < 0.4 && cyclePos < shakeWindowMs) {
+    if (shakeRoll < 0.7 && cyclePos < shakeWindowMs) {
       const shakeProgress = 1 - cyclePos / shakeWindowMs;
       const mag = 3 * shakeProgress;
       const shakeX = (titleGlitchPseudoRandom(cycleIndex * 53 + Math.floor(cyclePos / 40)) - 0.5) * mag;
