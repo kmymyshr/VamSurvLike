@@ -7127,7 +7127,7 @@ function drawSetupBackground(allowAfterNormalEnd = true) {
     const shakeRoll = titleGlitchPseudoRandom(cycleIndex * 31 + 5);
     if (shakeRoll < 0.7 && cyclePos < shakeWindowMs) {
       const shakeProgress = 1 - cyclePos / shakeWindowMs;
-      const mag = 3 * shakeProgress;
+      const mag = 7 * shakeProgress;
       const shakeX = (titleGlitchPseudoRandom(cycleIndex * 53 + Math.floor(cyclePos / 40)) - 0.5) * mag;
       const shakeY = (titleGlitchPseudoRandom(cycleIndex * 71 + Math.floor(cyclePos / 40)) - 0.5) * mag;
       canvas.style.transform = `translate(${shakeX}px, ${shakeY}px)`;
