@@ -114,7 +114,7 @@ Object.assign(partnerAdventureScenes, { adv1: buildAdvScene('adv1', [
 Object.assign(partnerAdventureScenes, { adv2A: buildAdvScene('adv2A', [
   '配置換えから二週間ほど経った。\n' +
   '同僚「この二週間で、だいぶ連携しやすくなりましたね」\n' +
-  '？？？「そうだな。資料で遭難する回数も減った」\n' +
+  '？？？「そうだね。資料で遭難する回数も減った」\n' +
   '同僚「資料で遭難する前提なんですか」\n' +
   '？？？「この部署、たまに森みたいだから」\n' +
   '同僚は笑う。\n' +
