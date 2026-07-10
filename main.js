@@ -4021,9 +4021,17 @@ const touchMoveVector = { x: 0, y: 0 }; // 十字キーの入力方向（-1〜1�
 canvas.addEventListener('pointermove', (event) => {
   if (event.pointerType === 'mouse') updateMousePosition(event);
 });
+// マウスの左ボタンを押した地点がアイテムの上なら、発射は行わずその場でアイテムだけを取得する
+// （setPointerCaptureより前に判定するため、この場合はboolean変数でclickイベント側に伝える）
+let itemConsumedByPointerDown = false;
 canvas.addEventListener('pointerdown', (event) => {
   if (event.pointerType !== 'mouse' || event.button !== 0) return;
   updateMousePosition(event);
+  if (isInCoreGameplayForClickActions() && tryCollectItemAtPoint(getCanvasPoint(event))) {
+    itemConsumedByPointerDown = true;
+    canvas.setPointerCapture(event.pointerId);
+    return;
+  }
   mouseFireHeld = true;
   canvas.setPointerCapture(event.pointerId);
 });
@@ -5693,6 +5701,15 @@ function computeFullAutoMoveVector(dt) {
   return { x: 0, y: 0 };
 }
 
+// タイトル・各種選択画面・演出中でない、実際にプレイ中の画面かどうか
+// （アイテムのクリック取得・クリックによるオート攻撃切替を有効にする条件）
+function isInCoreGameplayForClickActions() {
+  return !startScreen && setupStep === null && !dreamMemoryShopActive &&
+    !endingListActive && !specialSkillSelectionActive && !adventureState && !reunionSceneActive &&
+    !bossFinalSequence && !normalEndSequence && !isPaused && !wakeUpConfirmActive &&
+    !gameOver && !gameClear && dayTransitionPhase === null;
+}
+
 // クリック／タップした地点が、着地済みのアイテムの上であればそれを取得する（自機のみ。同僚は従来通り自動）
 const itemClickHitTolerance = 6;
 function tryCollectItemAtPoint(p) {
@@ -5789,13 +5806,15 @@ canvas.addEventListener('click', (event) => {
   }
   if (clickedUiButton) return;
 
+  // マウスでの通常攻撃（押している間発射）のpointerdownで、既にアイテムを取得済みならここでは何もしない
+  // （同じ一回のクリックで、取得と発射／オート攻撃切替が二重に発生しないようにする）
+  if (itemConsumedByPointerDown) {
+    itemConsumedByPointerDown = false;
+    return;
+  }
   // ゲーム本編の画面（タイトル・各種選択画面・演出中でない）でのクリック／タップ：
   // アイテムに当たればそれを取得し、何もなければオート攻撃のON/OFFを切り替える
-  const inCoreGameplay = !startScreen && setupStep === null && !dreamMemoryShopActive &&
-    !endingListActive && !specialSkillSelectionActive && !adventureState && !reunionSceneActive &&
-    !bossFinalSequence && !normalEndSequence && !isPaused && !wakeUpConfirmActive &&
-    !gameOver && !gameClear && dayTransitionPhase === null;
-  if (inCoreGameplay) {
+  if (isInCoreGameplayForClickActions()) {
     if (tryCollectItemAtPoint(p)) return;
     autoFireEnabled = !autoFireEnabled;
   }
