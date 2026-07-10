@@ -425,6 +425,18 @@ let startScreen = true;
 let setupStep = null;
 let dreamMemoryShopActive = false; // タイトル画面から開く、夢の記憶ポイントでの強化画面
 let endingListActive = false; // タイトル画面から開く、到達済みエンディング一覧画面
+let titleResetConfirmActive = false; // タイトル画面左上の「リセット」ボタンを押した後の確認ダイアログ表示中かどうか
+
+// タイトル画面の「リセット」：夢の記憶ポイント・引き継ぎ役職／Score・エンディング記録など、
+// 永続化されている状態をすべて消し、まっさらな状態からやり直す
+function resetAllProgressAndReload() {
+  try {
+    localStorage.removeItem(dreamMemoryStorageKey);
+  } catch (e) {
+    // localStorageが使えない環境では、消去できなくても致命的ではないため無視する
+  }
+  location.reload();
+}
 
 // ===== アイコン選択後のひとことメッセージ演出（表示→フェードアウトして次の画面へ） =====
 const playerIconGreetingLines = [
@@ -3944,8 +3956,8 @@ document.addEventListener("keydown", (event) => {
     goHomeFromWeekendWork();
     return;
   }
-  // スタート画面では、1 / Enterキーで開始する（夢の記憶ポイントの強化画面を開いている間は無効）
-  if (startScreen && !dreamMemoryShopActive) {
+  // スタート画面では、1 / Enterキーで開始する（夢の記憶ポイントの強化画面・リセット確認中は無効）
+  if (startScreen && !dreamMemoryShopActive && !titleResetConfirmActive) {
     if (event.key === '1' || event.key === 'Enter') {
       selectMode();
     }
@@ -8598,6 +8610,9 @@ function draw() {
 
   if (startScreen) {
     drawSetupBackground();
+    // 左上に小さく、全ての引き継ぎ状態をリセットするボタンを配置する
+    drawUiButton(10, 10, 74, 24, 'リセット', () => { titleResetConfirmActive = true; },
+      { fillStyle: 'rgba(60, 20, 20, 0.55)', strokeStyle: '#ef9a9a', font: 'bold 12px sans-serif' });
     // after_normalEND使用時は、タイトル画面の文字をすべて明朝体系フォントにし、彩度・明度を少し落とした配色にする
     const useMinchoTitle = shouldShowAfterNormalEndTitleBackground();
     const titleFontFamily = useMinchoTitle
@@ -8738,6 +8753,31 @@ function draw() {
     ctx.fillText('P = 一時停止 / 再開　F = 自動攻撃切替　Space = パリィ（同僚弾をはじき返す）', canvas.width / 2, helpTextY);
     ctx.fillText('WASD・十字ボタン = 移動　マウス・ドラッグ / 連射ボタン = 照準・攻撃', canvas.width / 2, helpTextY + 26);
     ctx.textAlign = 'left';
+
+    // リセット確認ダイアログ：「やり直しますか？」→はい/いいえ
+    // （背後にあるタイトル画面の各ボタンは、この画面が出ている間クリックできないようにする）
+    if (titleResetConfirmActive) {
+      uiButtons.length = 0;
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = 'white';
+      ctx.font = 'bold 26px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('やり直しますか？', canvas.width / 2, canvas.height / 2 - 80);
+      ctx.font = '14px sans-serif';
+      ctx.fillStyle = '#ef9a9a';
+      ctx.fillText('（引き継いだ役職・Score・夢の記憶ポイントなど、全ての記録が消えます）', canvas.width / 2, canvas.height / 2 - 48);
+      ctx.textAlign = 'left';
+
+      const confirmBtnW = 200, confirmBtnH = 48;
+      const confirmBtnX = canvas.width / 2 - confirmBtnW / 2;
+      drawUiButton(confirmBtnX, canvas.height / 2 - 4, confirmBtnW, confirmBtnH, 'はい',
+        () => resetAllProgressAndReload(),
+        { fillStyle: 'rgba(84, 30, 30, 0.7)', strokeStyle: '#ef9a9a' });
+      drawUiButton(confirmBtnX, canvas.height / 2 + 56, confirmBtnW, confirmBtnH, 'いいえ',
+        () => { titleResetConfirmActive = false; },
+        { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
+    }
     return;
   }
 
