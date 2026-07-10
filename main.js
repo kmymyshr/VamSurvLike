@@ -7,7 +7,7 @@ distortionCanvas.width = canvas.width;
 distortionCanvas.height = canvas.height;
 const distortionCtx = distortionCanvas.getContext('2d');
 
-// 力尽きた演出（寿命切れ／SAN切れ）で使うポートレート画像と、SAN切れ用の歪み合成に使うオフスクリーンCanvas
+// 力尽きた演出（寿命切れ／SAN切れ）中、自機の姿を専用の画像に切り替えるために使う
 function loadImage(src) {
   const img = new Image();
   img.src = src;
@@ -21,11 +21,6 @@ const san0IconImages = {
   male: loadImage('images/self/SAN0/01_SAN0.png'),
   female: loadImage('images/self/SAN0/02_SAN0.png')
 };
-const deathPortraitSize = 260;
-const deathPortraitCanvas = document.createElement('canvas');
-deathPortraitCanvas.width = deathPortraitSize;
-deathPortraitCanvas.height = deathPortraitSize;
-const deathPortraitCtx = deathPortraitCanvas.getContext('2d');
 
 console.log('main.js loaded');
 
@@ -2005,19 +2000,19 @@ const sanDistortionThreshold = 30;
 const sanLowDistortionAmplitude = 2;
 
 // ===== 力尽きた瞬間の演出（BADENDへ移る前の一時停止） =====
-// 'san'：ポートレートが歪みながら消滅してBADENDへ／'lifespan'：ポートレートが徐々に真っ白になってBADENDへ
-let deathSequence = null; // { visualType, timer, duration, deathEndingType }
-const sanDeathSequenceDurationMs = 5000;
-const lifespanDeathSequenceDurationMs = 5000;
+// イベント戦で同僚が力尽きる時（freeze→shake→partnerVanish→fadeOut）と同じ流れを、自機にも適用する。
+// 通常のゲーム画面（背景・敵・同僚など）を静止させたまま表示し、専用の姿（SAN切れ／寿命切れ）に切り替わって
+// 点滅しながら消えていき、その後画面全体が黒くフェードアウトしてからBADENDへ進む
+let deathSequence = null; // null、または { visualType, phase, phaseTimerMs, deathEndingType }
+const deathSequenceFreezeDurationMs = 900; // 力尽きた瞬間、まず短く静止する時間
+const deathSequenceShakeDurationMs = 2200; // 振動・明滅しながら画面が暗くなっていく時間
+const deathSequenceVanishDurationMs = 1800; // 専用の姿に切り替わり、点滅しながら消えきるまでの時間
+const deathSequenceVanishBlinkIntervalMs = 150; // 点滅の間隔
+const deathSequenceFadeOutDurationMs = 1200; // 完全に消えた後、画面全体が黒くフェードアウトしきるまでの時間
 
 function startDeathSequence(visualType, deathEndingType) {
   if (gameOver || deathSequence) return;
-  deathSequence = {
-    visualType,
-    timer: 0,
-    duration: visualType === 'lifespan' ? lifespanDeathSequenceDurationMs : sanDeathSequenceDurationMs,
-    deathEndingType
-  };
+  deathSequence = { visualType, phase: 'freeze', phaseTimerMs: 0, deathEndingType };
 }
 
 // SAN・寿命のいずれかが尽きたら演出を経てゲームオーバーにする（二重発火防止にgameOver/deathSequenceで一度だけ発火）
@@ -6414,8 +6409,17 @@ function update() {
 
   // 力尽きた演出中は、画面を停止したまま演出用のタイマーだけを進める（3倍加速の影響を受けない）
   if (deathSequence) {
-    deathSequence.timer += rawDt * 1000;
-    if (deathSequence.timer >= deathSequence.duration) {
+    deathSequence.phaseTimerMs += rawDt * 1000;
+    if (deathSequence.phase === 'freeze' && deathSequence.phaseTimerMs >= deathSequenceFreezeDurationMs) {
+      deathSequence.phase = 'shake';
+      deathSequence.phaseTimerMs = 0;
+    } else if (deathSequence.phase === 'shake' && deathSequence.phaseTimerMs >= deathSequenceShakeDurationMs) {
+      deathSequence.phase = 'vanish';
+      deathSequence.phaseTimerMs = 0;
+    } else if (deathSequence.phase === 'vanish' && deathSequence.phaseTimerMs >= deathSequenceVanishDurationMs) {
+      deathSequence.phase = 'fadeOut';
+      deathSequence.phaseTimerMs = 0;
+    } else if (deathSequence.phase === 'fadeOut' && deathSequence.phaseTimerMs >= deathSequenceFadeOutDurationMs) {
       gameOver = true;
       endingType = deathSequence.deathEndingType;
       sendScore(score);
@@ -8912,43 +8916,34 @@ function drawLifespanCrackEffect() {
   ctx.restore();
 }
 
-// 力尽きた演出（寿命切れ／SAN切れ）中の専用画面。
-// 寿命切れ：images/self/dead の画像が5秒ほどかけて真っ白になる。
-// SAN切れ：images/self/SAN0 の画像が5秒ほどかけて歪みながら消滅する。
-function drawDeathSequenceScene() {
-  const progress = Math.min(1, deathSequence.timer / deathSequence.duration);
-  ctx.fillStyle = 'black';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  const cx = canvas.width / 2;
-  const cy = canvas.height / 2 - 20;
-  const half = deathPortraitSize / 2;
-
-  if (deathSequence.visualType === 'lifespan') {
-    const img = deadIconImages[selectedPlayerIcon];
-    if (img && img.complete && img.naturalWidth > 0) {
-      ctx.drawImage(img, cx - half, cy - half, deathPortraitSize, deathPortraitSize);
-      ctx.fillStyle = `rgba(255, 255, 255, ${progress})`;
-      ctx.fillRect(cx - half, cy - half, deathPortraitSize, deathPortraitSize);
-    }
-  } else {
-    const img = san0IconImages[selectedPlayerIcon];
-    if (img && img.complete && img.naturalWidth > 0) {
-      // 画像をオフスクリーンに描き、フェードアウトさせながら横スライスを歪ませて消滅させる
-      deathPortraitCtx.clearRect(0, 0, deathPortraitCanvas.width, deathPortraitCanvas.height);
-      deathPortraitCtx.save();
-      deathPortraitCtx.globalAlpha = 1 - progress;
-      deathPortraitCtx.drawImage(img, 0, 0, deathPortraitSize, deathPortraitSize);
-      deathPortraitCtx.restore();
-
-      const amplitude = progress * 26;
-      const sliceHeight = 4;
-      for (let sy = 0; sy < deathPortraitSize; sy += sliceHeight) {
-        const offsetX = Math.sin(sy * 0.09 + gameClockMs / 140) * amplitude;
-        ctx.drawImage(deathPortraitCanvas, 0, sy, deathPortraitSize, sliceHeight,
-          cx - half + offsetX, cy - half + sy, deathPortraitSize, sliceHeight);
-      }
-    }
+// 力尽きた演出中、通常のゲーム画面（frozenのまま描かれる背景・敵・同僚など）の上に重ねる効果。
+// freeze：まだ何も起きない静かな静止／shake：振動・明滅しながら徐々に暗くなる／
+// vanish：自機の姿（既に専用画像に差し替え済み）が点滅しながら消えていく間、画面はshake終了時の暗さを維持する／
+// fadeOut：画面全体が黒くフェードアウトしきる
+function drawDeathSequenceOverlay() {
+  if (deathSequence.phase === 'freeze') {
+    canvas.style.transform = '';
+    return;
+  }
+  if (deathSequence.phase === 'shake') {
+    const p = Math.min(1, deathSequence.phaseTimerMs / deathSequenceShakeDurationMs);
+    const flashOn = Math.sin(gameClockMs / 40) > 0;
+    ctx.fillStyle = flashOn ? `rgba(180, 0, 0, ${0.2 + p * 0.3})` : `rgba(0, 0, 0, ${0.15 + p * 0.3})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const shakeX = (Math.random() - 0.5) * 10 * p;
+    const shakeY = (Math.random() - 0.5) * 10 * p;
+    canvas.style.transform = `translate(${shakeX}px, ${shakeY}px)`;
+    return;
+  }
+  canvas.style.transform = '';
+  if (deathSequence.phase === 'vanish') {
+    // shake終了時点の暗さ（黒・赤の明滅が収まりきった後の状態）を維持しておく
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  } else if (deathSequence.phase === 'fadeOut') {
+    const p = Math.min(1, deathSequence.phaseTimerMs / deathSequenceFadeOutDurationMs);
+    ctx.fillStyle = `rgba(0, 0, 0, ${0.45 + p * 0.55})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
 }
 
@@ -9087,12 +9082,6 @@ function draw() {
     } else {
       drawTrueEndTitleScreen();
     }
-    return;
-  }
-
-  // 力尽きた演出中は、通常のゲーム画面は描かず専用の演出画面のみを表示する
-  if (deathSequence) {
-    drawDeathSequenceScene();
     return;
   }
 
@@ -9677,7 +9666,14 @@ function draw() {
   ctx.shadowColor = 'rgba(0, 0, 0, 0.65)';
   ctx.shadowBlur = 4;
   ctx.shadowOffsetY = 1;
-  if (invincible) {
+  if (deathSequence && deathSequence.phase === 'vanish') {
+    // 専用の姿（SAN切れ／寿命切れ）へ切り替わり、点滅しながら透明になっていく
+    const vanishProgress = Math.min(1, deathSequence.phaseTimerMs / deathSequenceVanishDurationMs);
+    const blinkOn = Math.floor(deathSequence.phaseTimerMs / deathSequenceVanishBlinkIntervalMs) % 2 === 0;
+    ctx.globalAlpha = blinkOn ? (1 - vanishProgress) : 0;
+  } else if (deathSequence && deathSequence.phase === 'fadeOut') {
+    ctx.globalAlpha = 0;
+  } else if (invincible) {
     const blink = Math.floor(gameClockMs / 100) % 2 === 0;
     ctx.globalAlpha = blink ? 0.4 : 0.8;
   } else {
@@ -9729,8 +9725,11 @@ function draw() {
   }
   // 「ファイヤーウォール」の効果が残っている間、自機の周りにバリアを表示する
   drawBarrierShield(player.x, player.y, player.radius, playerBarrierCharges);
-  // 自分のアイコン（性別選択で選んだimages/self内の画像を使用）
-  const selfImg = genderImageElements[selectedPlayerIcon];
+  // 自分のアイコン（性別選択で選んだimages/self内の画像を使用）。
+  // ただし力尽きた演出の「vanish」「fadeOut」中は、SAN切れ／寿命切れ専用の姿に切り替える
+  const selfImg = (deathSequence && (deathSequence.phase === 'vanish' || deathSequence.phase === 'fadeOut'))
+    ? (deathSequence.visualType === 'lifespan' ? deadIconImages : san0IconImages)[selectedPlayerIcon]
+    : genderImageElements[selectedPlayerIcon];
   if (selfImg && selfImg.complete && selfImg.naturalWidth > 0) {
     const selfImgSize = player.radius * 4.8;
     ctx.drawImage(selfImg, player.x - selfImgSize / 2, player.y - selfImgSize / 2, selfImgSize, selfImgSize);
@@ -10954,6 +10953,13 @@ function draw() {
     const fadeAlpha = 1 - Math.max(0, Math.min(1, setupFadeTimer / setupFadeDurationMs));
     ctx.fillStyle = `rgba(0, 0, 0, ${fadeAlpha})`;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  // 自機が力尽きた演出中：通常のゲーム画面の上に暗転・明滅・フェードアウトを重ね、
+  // その間はどのボタンにも触れられないようにする
+  if (deathSequence) {
+    drawDeathSequenceOverlay();
+    uiButtons.length = 0;
   }
 }
 // ===== メインループ =====
