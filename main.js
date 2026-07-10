@@ -2686,6 +2686,13 @@ function damagePartnerSan(amount) {
   if (amount <= 0 || !partner.active) return;
   partner.san = Math.max(0, partner.san - amount * specialSkillEffects.partnerSanDamageMultiplier);
 }
+// 特殊スキル「激励A」「激励B」共通：発動できるのはゲーム内3時間に1回まで
+const encourageCooldownHours = 3;
+const encourageAFatigueReductionByLevel = { 1: 10, 2: 15, 3: 25 };
+const encourageBRecoveryByLevel = { 1: 5, 2: 10, 3: 20 };
+let encourageANextAvailableAtMs = 0; // gameClockMs基準。この時刻を過ぎるまで再発動しない
+let encourageBNextAvailableAtMs = 0;
+
 // 味方の弾はSANと寿命を直接削る。連続被弾は専用の短い無敵時間で抑える。
 // isHostileAction: 叱咤攻撃など、同僚がわざと自機を狙った場合はtrue。
 // この場合は謝罪ではなく怒りの発言なので、関係性が低くても常に表示する
@@ -2696,8 +2703,18 @@ function damagePlayerByFriendlyFire(lines = partnerHitPlayerLines, stressedLines
     friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
     return false;
   }
-  san = Math.max(0, san - playerFriendlyFireSanDamage *
-    specialSkillEffects.sanDamageMultiplier * specialSkillEffects.friendlyFireDamageMultiplier);
+  // 特殊スキル「激励A」：同僚からの被弾で脳疲労が減少する（ゲーム内3時間に1回まで）
+  const encourageALevel = specialSkillLevels.get('encourage-a') || 0;
+  const encourageAReady = encourageALevel > 0 && gameClockMs >= encourageANextAvailableAtMs;
+  if (encourageAReady) {
+    encourageANextAvailableAtMs = gameClockMs + encourageCooldownHours * hourMs;
+    fatigue = Math.max(0, fatigue - encourageAFatigueReductionByLevel[encourageALevel]);
+  }
+  // Lv3ではさらに、この被弾によるSAN低下がなくなる
+  if (!(encourageAReady && encourageALevel >= 3)) {
+    san = Math.max(0, san - playerFriendlyFireSanDamage *
+      specialSkillEffects.sanDamageMultiplier * specialSkillEffects.friendlyFireDamageMultiplier);
+  }
   lifespan = Math.max(0, lifespan - playerFriendlyFireLifespanDamage * specialSkillEffects.friendlyFireDamageMultiplier);
   friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
   friendlyFireHitFlashTimer = friendlyFireHitEffectDuration;
@@ -2718,11 +2735,28 @@ function damagePartnerByFriendlyFire() {
     partner.friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
     return false;
   }
-  partner.san = Math.max(0, partner.san - partnerFriendlyFireSanDamage *
-    specialSkillEffects.partnerSanDamageMultiplier * specialSkillEffects.friendlyFireDamageMultiplier);
+  // 特殊スキル「激励B」：自機からの被弾で同僚のSAN・寿命が回復し、脳疲労が0になる（ゲーム内3時間に1回まで）
+  const encourageBLevel = specialSkillLevels.get('encourage-b') || 0;
+  const encourageBReady = encourageBLevel > 0 && gameClockMs >= encourageBNextAvailableAtMs;
+  if (encourageBReady) {
+    encourageBNextAvailableAtMs = gameClockMs + encourageCooldownHours * hourMs;
+    const recovery = encourageBRecoveryByLevel[encourageBLevel];
+    partner.san = Math.min(maxSan, partner.san + recovery);
+    partner.lifespan = Math.min(maxLifespan, partner.lifespan + recovery);
+    partner.fatigue = 0;
+  }
+  // Lv3ではさらに、この被弾によるSAN低下がなくなる
+  if (!(encourageBReady && encourageBLevel >= 3)) {
+    partner.san = Math.max(0, partner.san - partnerFriendlyFireSanDamage *
+      specialSkillEffects.partnerSanDamageMultiplier * specialSkillEffects.friendlyFireDamageMultiplier);
+  }
   partner.lifespan = Math.max(0, partner.lifespan - partnerFriendlyFireLifespanDamage * specialSkillEffects.friendlyFireDamageMultiplier);
   partner.friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
-  showRandomPartnerSpeechBubble(partnerHitByPlayerLines, '#ff8a65', partnerHitByPlayerStressedLines);
+  if (encourageBReady) {
+    showRandomPartnerSpeechBubble(['頑張ります！！！'], '#69f0ae');
+  } else {
+    showRandomPartnerSpeechBubble(partnerHitByPlayerLines, '#ff8a65', partnerHitByPlayerStressedLines);
+  }
   adjustPartnerRelationship(-partnerRelationshipDamagePerHit);
   return true;
 }
@@ -3251,7 +3285,17 @@ const specialSkills = [
   { id: 'teamwork', name: 'チームワーク', description: '自分と同僚、お互いの弾が着弾しそうな時（敵からの弾を除く）、お互いパリィが発動しやすくなる（Lv5で発動率80%）', maxLevel: 5 },
   { id: 'meal-foresight', name: '食通', description: '昼食に登場する料理に、出現する順番の番号が表示されるようになる（習得は1回のみ）', maxLevel: 1 },
   { id: 'auto-parry', name: 'オートパリィ', description: '敵（ラスボス・中ボス・固定敵）からの弾を被弾しそうな時、レベルごとに10%の確率で自動的にパリィする（Lv5で50%）', maxLevel: 5 },
-  { id: 'persistence', name: '継続力', description: '自機の弾の飛距離が、レベルごとに1.2倍になる（Lv1:1.2倍 → Lv5:約2.49倍）', maxLevel: 5 }
+  { id: 'persistence', name: '継続力', description: '自機の弾の飛距離が、レベルごとに1.2倍になる（Lv1:1.2倍 → Lv5:約2.49倍）', maxLevel: 5 },
+  {
+    id: 'encourage-a', name: '激励A',
+    description: '同僚からの弾を被弾すると脳疲労が減少する（ゲーム内3時間に1回まで。Lv1:-10 → Lv2:-15 → Lv3:-25、Lv3ではさらに被弾してもSAN値が低下しなくなる）',
+    maxLevel: 3
+  },
+  {
+    id: 'encourage-b', name: '激励B',
+    description: '自機からの弾を同僚が被弾すると、同僚のSAN・寿命が回復し脳疲労が0になる（ゲーム内3時間に1回まで。Lv1:+5 → Lv2:+10 → Lv3:+20、Lv3ではさらに被弾してもSAN値が低下しなくなる）',
+    maxLevel: 3
+  }
 ];
 
 // 同時に習得できない組み合わせ（片方を取ると、もう片方は未取得の状態に戻り、再度選択肢に表示されるようになる）
@@ -4167,6 +4211,9 @@ function beginGameplay() {
   // 「自己犠牲」「献身」は1周回につき1回だけ発動できる特殊行動なので、新しい周回の開始時にリセットする
   selfSacrificeUsedThisRun = false;
   devotionUsedThisRun = false;
+  // 「激励A」「激励B」のクールダウンも、新しい周回の開始時にリセットする
+  encourageANextAvailableAtMs = 0;
+  encourageBNextAvailableAtMs = 0;
   // 前回と同じ自機・同僚で始めた場合、関係性は前回終了時の値+20から始まる
   // （分岐等に影響するのは100までだが、余裕を持たせて120まで許容する）
   if (shouldShowReunionScene()) {
