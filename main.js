@@ -971,6 +971,8 @@ let weeklyKills = 0; // 今週の撃破数
 let weeklyScoreGained = 0; // 今週のスコア獲得量（減点は含まない）
 let weekendWorkChoice = false; // 「休日出勤しますか」の選択待ち
 let weekendWorkQuotaChoice = false; // 休日出勤中にノルマ達成し、「家に帰りますか」の選択待ち
+let fixedEnemyOvertimeChoiceActive = false; // 18時に固定敵が残っている時の「残業しますか？」の選択待ち
+let fixedEnemyOvertimeConfirmed = false; // その日、「残業する」を選んだ後は、以降の時報で再度尋ねない
 const weekendWorkSanDrainPerSec = 0.5; // 休日出勤中、1秒あたり緩やかに減少するSAN
 const weekendWorkLifespanDrainPerSec = 0.15; // 休日出勤中、1秒あたり緩やかに減少する寿命
 // ノルマ未達成時のペナルティ・達成時のボーナスの割合
@@ -1003,13 +1005,25 @@ function resetPlayerAndPartnerPositionForNewDay() {
 }
 
 // ===== 時刻イベント（定時報告・昼食・クイズ） =====
+// 完全オートモード等のON/OFFトグルボタン（画面左下）が置かれている範囲。アイテム等はここには出現させない
+const toggleButtonExclusionZone = { x: 12, y: 278, w: 170, h: 26 * 3 + 6 * 2 };
+function isPointNearRect(point, rect, padding = 0) {
+  return point.x >= rect.x - padding && point.x <= rect.x + rect.w + padding &&
+    point.y >= rect.y - padding && point.y <= rect.y + rect.h + padding;
+}
 function getRandomEventPosition(radius = 24) {
   const margin = radius + 24;
-  return {
-    x: margin + Math.random() * (canvas.width - margin * 2),
-    // 窓の範囲を避け、プレイ領域の中央より下へ配置する
-    y: eventSpawnMinY + Math.random() * (canvas.height - eventSpawnMinY - margin)
-  };
+  let position;
+  let attempts = 0;
+  do {
+    position = {
+      x: margin + Math.random() * (canvas.width - margin * 2),
+      // 窓の範囲を避け、プレイ領域の中央より下へ配置する
+      y: eventSpawnMinY + Math.random() * (canvas.height - eventSpawnMinY - margin)
+    };
+    attempts++;
+  } while (attempts < 20 && isPointNearRect(position, toggleButtonExclusionZone, radius));
+  return position;
 }
 
 // 既に置かれている他のアイテム（チョコレート・栄養ドリンク・コーヒー・ファイヤーウォール）と
@@ -1415,10 +1429,15 @@ function spawnFixedEnemy() {
   showMessage(`${def.icon} ${def.name} が発生！`, 3000, '#ff8a80', '22px sans-serif');
 }
 
+// 脅威（固定敵）を排除しないまま日をまたぐと、残っている数だけScoreが目減りする（1体につき×0.8）
+const fixedEnemyCarryOverScorePenaltyMultiplier = 0.8;
 function clearFixedEnemiesAtDayEnd() {
   if (fixedEnemies.length === 0) return;
   const names = [...new Set(fixedEnemies.map(fx => fx.def.name))].join('・');
-  showMessage(`${names} を見逃してしまった…`, 2200, '#ff8a80');
+  const beforeScore = score;
+  score = Math.floor(score * Math.pow(fixedEnemyCarryOverScorePenaltyMultiplier, fixedEnemies.length));
+  const scoreLost = beforeScore - score;
+  showMessage(`${names} を見逃してしまった… Score -${scoreLost}`, 2400, '#ff8a80');
   fixedEnemies = [];
 }
 
@@ -1702,7 +1721,7 @@ const quizHours = [10, 15];
 const quizChancePerOpportunity = 0.3; // 従来比150%
 const maxWeeklyQuizCount = 2;
 const quizAnswerLockDurationMs = 1500; // 出現直後に誤って踏んで回答してしまわないための猶予時間
-const quizTimeLimitMs = 10000; // 出現から回答しないまま消えるまでの実時間（3倍加速の影響を受けない）
+const quizTimeLimitMs = 20000; // 出現から回答しないまま消えるまでの実時間（3倍加速の影響を受けない。従来の倍にしてある）
 let weeklyQuizCount = 0;
 let quizState = null;
 let quizAnswerUnlockAt = 0; // この時刻（Date.now()基準）を過ぎるまで選択肢に触れても回答にならない
@@ -1813,11 +1832,11 @@ function processTimedHourEvents(previousHour, newHour) {
     if (hour === lunchHour) startLunchEvent();
     if (hour === lunchExpirationHour) beginLunchExpiration();
     if (hour === scheduledReportHour) spawnScheduledReport();
-    // DAY7ごとの18時に「巨大案件」（中ボス）が発生する
+    // DAY7ごとの18時に「大規模プロジェクト」（中ボス）が発生する
     if (hour === dayEndHour && dayNumber % 7 === 0 && !midBossEvent) startMidBossEvent();
     const weekday = currentDate.getDay();
     const isWeekday = weekday >= 1 && weekday <= 5 && !isHoliday(currentDate);
-    // ボス系の敵（ラスボス・「巨大案件」）との戦闘中はクイズを出さない
+    // ボス系の敵（ラスボス・「大規模プロジェクト」）との戦闘中はクイズを出さない
     if (isWeekday && quizHours.includes(hour) && weeklyQuizCount < maxWeeklyQuizCount && !quizState &&
         !bossEvent && !midBossEvent && Math.random() < quizChancePerOpportunity) {
       startQuizEvent();
@@ -1830,6 +1849,9 @@ function resolveTimedSystemsAtDayEnd() {
   finishLunchAtDayEnd();
   quizState = null;
   clearFixedEnemiesAtDayEnd();
+  // 「残業しますか？」の確認は、次の日にまた最初から問い直す
+  fixedEnemyOvertimeChoiceActive = false;
+  fixedEnemyOvertimeConfirmed = false;
 }
 
 // 一日の終了処理（終業時刻・残業の限界時刻・定時報告を残業中に片付けた場合のいずれからも呼ばれる）
@@ -2956,6 +2978,20 @@ function handleWeekendWorkQuotaChoice(goHome) {
   }
 }
 
+// 18時に固定敵（脅威）が残っている時の「残業しますか？」の回答。
+// はい：24時まで残業して片付ける（すべて排除できたらその場で自動的に一日を終了する）
+// いいえ：その場で一日を終了する（残った固定敵は、日をまたぐ際にScoreが目減りするペナルティの対象になる）
+function handleFixedEnemyOvertimeChoice(workOvertime) {
+  fixedEnemyOvertimeChoiceActive = false;
+  if (workOvertime) {
+    fixedEnemyOvertimeConfirmed = true;
+    showMessage(`${dayEndHour}時：まだ脅威が残っている… 残業して片付けることにした（${maxOvertimeHour}時まで）`,
+      3800, '#ff8a65', '22px sans-serif');
+  } else {
+    endWorkday();
+  }
+}
+
 function sendScore(finalScore) {
   // 最終スコアをJavaサーバーへ送る（必要に応じてURLを変更する）
   fetch('http://localhost:8080/score', {
@@ -3254,7 +3290,7 @@ const rankSkillDefs = [
   { rank: 5, id: 'build-automation', name: 'ビルド自動化', description: '脳疲労の蓄積速度-20%' },
   {
     rank: 6, id: 'agile', name: 'アジャイル開発',
-    description: '敵の納期+20%。また「巨大案件」は、7つのどこに当てても今対応すべき番号への命中として扱われる'
+    description: '敵の納期+20%。また「大規模プロジェクト」は、7つのどこに当てても今対応すべき番号への命中として扱われる'
   },
   { rank: 6, id: 'devops', name: 'DevOps', description: '同僚の攻撃力+15%' },
   { rank: 6, id: 'cloud', name: 'クラウド', description: '最大SAN・最大寿命+10' },
@@ -3612,12 +3648,15 @@ function applyRestActivity() {
     // アドベンチャーパート自体がこの日の出来事なので、通常のランダムイベントは発生させず週明けへ進む。
     // ただし、ADV3をノーマルルート（夢ルートではない）で終えた場合は、これが最終日として
     // 特別な「負けイベント」戦闘（第？？？？戦）を経てノーマルエンドへ直行する
-    startPartnerAdventure(() => {
-      if (adventureRunCount === 3 && !dreamRouteCompleted) {
-        startNormalEndBattleSequence();
-      } else {
-        startDayTransition(jumpToNextMondayAndResetWeek);
-      }
+    // アドベンチャーパートに入る前に、一度画面を暗転させてから切り替える
+    startSetupFadeOut(() => {
+      startPartnerAdventure(() => {
+        if (adventureRunCount === 3 && !dreamRouteCompleted) {
+          startNormalEndBattleSequence();
+        } else {
+          startDayTransition(jumpToNextMondayAndResetWeek);
+        }
+      });
     });
   } else if (partnerLossReason === 'lifespan') {
     // 寿命が尽きての離脱はもう戻らない。会いに行った虚しさで自機のSANが大きく削れる
@@ -3950,6 +3989,15 @@ document.addEventListener("keydown", (event) => {
     }
     return;
   }
+  // 18時に固定敵（脅威）が残っている：残業するかどうかの選択
+  if (fixedEnemyOvertimeChoiceActive) {
+    if (event.key === 'y') {
+      handleFixedEnemyOvertimeChoice(true);
+    } else if (event.key === 'n') {
+      handleFixedEnemyOvertimeChoice(false);
+    }
+    return;
+  }
   // 休日出勤中（土日）は、Hキーでいつでも切り上げて帰宅できる
   if ((currentDate.getDay() === 0 || currentDate.getDay() === 6) &&
       dayTransitionPhase === null && event.key.toLowerCase() === 'h') {
@@ -4133,6 +4181,11 @@ function findNearestEnemyToPlayer() {
 // パリィで弾いた弾を、指定した地点から見て最も近い敵へ向け直し、ダメージを2倍にする共通処理
 const parryBulletSpeedMultiplier = 1.5; // パリィした弾は、パリィ前の速度の150%になる
 function performBulletParry(bullet, fromX, fromY, actorAngle, isAuto = false) {
+  // 援護弾は、通常のパリィ（打ち返し）ではなく専用の救済処理へ振り分ける
+  if (bullet.owner === 'support') {
+    triggerSupportBulletRescue(bullet);
+    return;
+  }
   const speed = (Math.hypot(bullet.vx, bullet.vy) || 6) * parryBulletSpeedMultiplier;
   let angle;
   if (bullet.stage3Reflected) {
@@ -5223,7 +5276,7 @@ function finishBossTrueEnd() {
   location.reload();
 }
 
-// ===== 中ボス「巨大案件」（DAY7ごと・18時に出現する）=====
+// ===== 中ボス「大規模プロジェクト」（DAY7ごと・18時に出現する）=====
 // ラスボスと似た動作（フェーズ・移動・退場演出）だが、通常攻撃でもフェーズを破壊できる
 const midBossWidthRatio = 0.4; // 画面幅に対する矩形の幅の割合
 const midBossHeight = 90;
@@ -5319,7 +5372,7 @@ function startMidBossEvent() {
     phaseTextAlpha: 0,
     phaseTextFadingOut: false
   };
-  showMessage('「巨大案件」が発生した！ 定時までに片付けられず、居残りが確定した……', 3800, '#ff8a65', '22px sans-serif');
+  showMessage('「大規模プロジェクト」が発生した！ 定時までに片付けられず、居残りが確定した……', 3800, '#ff8a65', '22px sans-serif');
 }
 
 function updateMidBossEvent(dt) {
@@ -5327,7 +5380,7 @@ function updateMidBossEvent(dt) {
     midBossEvent.descendProgress = Math.min(1, midBossEvent.descendProgress + dt / midBossDescendDurationSec);
     if (midBossEvent.descendProgress >= 1) {
       midBossEvent.phase = 'active';
-      showMessage('「巨大案件」出現！ フェーズを番号順に破壊して片付けろ！', 3000, '#ff8a65', '22px sans-serif');
+      showMessage('「大規模プロジェクト」出現！ フェーズを番号順に破壊して片付けろ！', 3000, '#ff8a65', '22px sans-serif');
     }
     return;
   }
@@ -5449,17 +5502,140 @@ function registerMidBossHoleHit(hole, hitX, hitY) {
   midBossEvent.currentPhaseIndex++;
   if (midBossEvent.currentPhaseIndex < midBossPhaseCount) return;
   score += midBossScoreReward;
-  showMessage(`「巨大案件」を片付けた！ Score +${midBossScoreReward}`, 2800, '#69f0ae', '22px sans-serif');
+  showMessage(`「大規模プロジェクト」を片付けた！ Score +${midBossScoreReward}`, 2800, '#69f0ae', '22px sans-serif');
   midBossEvent.phase = 'retreat';
   midBossEvent.retreatTimerMs = 0;
 }
 
-// 「巨大案件」を撃破し終えた後：24時を過ぎていれば、その場ですぐに一日を終了する
+// 「大規模プロジェクト」を撃破し終えた後：24時を過ぎていれば、その場ですぐに一日を終了する
 function finishMidBossEvent() {
   midBossEvent = null;
   if (currentHour >= dayEndHour && !gameOver && !deathSequence) {
     endWorkday();
   }
+}
+
+// ===== 援護弾（ボスが倒せない時の救済措置） =====
+// 「大規模プロジェクト」・ラスボス戦（ノーマルルート終了時の負けイベント戦闘は除く）中、
+// ゲーム内時間で3時間経過するごとに50%の確率で発生する。自機から最も遠い画面端から、
+// ゆっくり左右に振動しながら自機へ飛来する。パリィすると、雷のような一撃が今対応すべき部位へ飛び、一撃で破壊する
+const supportBulletCheckIntervalMs = hourMs * 3; // ゲーム内3時間ごとに判定する
+const supportBulletSpawnChance = 0.5;
+const supportBulletSpeed = 0.6; // ゆっくり飛来する
+const supportBulletWobbleStrength = 0.8; // 左右に振動する幅
+const supportBulletRadius = 10;
+const supportBulletMaxTravelMs = 20000; // これだけ飛び続けても自機に届かない・パリィされない場合は、諦めて消える
+let supportBulletCheckAccumMs = 0;
+
+// 援護弾を発生させられる状況（イベント戦は除く）かどうか
+function isRescueEligibleBattleActive() {
+  if (bossEvent && bossEvent.phase === 'active' && !(normalEndSequence && normalEndSequence.phase === 'battle')) return true;
+  if (midBossEvent && midBossEvent.phase === 'active') return true;
+  return false;
+}
+
+// 自機から最も遠い画面端を選び、そこから自機へ向けて援護弾を発生させる
+function spawnSupportBullet() {
+  const distTop = player.y, distBottom = canvas.height - player.y,
+    distLeft = player.x, distRight = canvas.width - player.x;
+  const maxDist = Math.max(distTop, distBottom, distLeft, distRight);
+  let x, y;
+  if (maxDist === distTop) { x = player.x; y = -30; }
+  else if (maxDist === distBottom) { x = player.x; y = canvas.height + 30; }
+  else if (maxDist === distLeft) { x = -30; y = player.y; }
+  else { x = canvas.width + 30; y = player.y; }
+  const angle = Math.atan2(player.y - y, player.x - x);
+  bullets.push({
+    x, y, vx: Math.cos(angle) * supportBulletSpeed, vy: Math.sin(angle) * supportBulletSpeed,
+    radius: supportBulletRadius, owner: 'support', damage: 0,
+    baseAngle: angle, wobbleSeed: Math.random() * Math.PI * 2, travelMs: 0,
+    sourceContext: bossEvent ? 'boss' : 'midBoss'
+  });
+  showMessage('……何かが、ゆっくりとこちらへ近づいてくる……パリィで迎え撃てるかもしれない', 3400, '#b39ddb', '20px sans-serif');
+}
+
+// 援護弾の発生判定・飛来中の振動する動きを処理する
+function updateSupportBulletSystem(dt) {
+  if (!isRescueEligibleBattleActive()) {
+    supportBulletCheckAccumMs = 0;
+    // 戦闘が終わった・イベント戦に切り替わった場合は、飛来中の援護弾も消しておく
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      if (bullets[i].owner === 'support') bullets.splice(i, 1);
+    }
+    return;
+  }
+  const existing = bullets.find(b => b.owner === 'support');
+  if (existing) {
+    existing.travelMs += dt * 1000;
+    if (existing.travelMs >= supportBulletMaxTravelMs) {
+      // 自機の移動で軌道が逸れ、いつまで経っても届かない場合は諦めて消える（無限に漂い続けるのを防ぐ）
+      const idx = bullets.indexOf(existing);
+      if (idx >= 0) bullets.splice(idx, 1);
+      return;
+    }
+    const forwardX = Math.cos(existing.baseAngle);
+    const forwardY = Math.sin(existing.baseAngle);
+    const perpX = -forwardY, perpY = forwardX;
+    const wobble = Math.sin(existing.travelMs / 300 + existing.wobbleSeed) * supportBulletWobbleStrength;
+    existing.vx = forwardX * supportBulletSpeed + perpX * wobble;
+    existing.vy = forwardY * supportBulletSpeed + perpY * wobble;
+    return; // 飛来中は次の出現判定を行わない
+  }
+  supportBulletCheckAccumMs += dt * 1000;
+  while (supportBulletCheckAccumMs >= supportBulletCheckIntervalMs) {
+    supportBulletCheckAccumMs -= supportBulletCheckIntervalMs;
+    if (Math.random() < supportBulletSpawnChance) {
+      spawnSupportBullet();
+      break;
+    }
+  }
+}
+
+// 現在パリィで狩れば一撃で破壊できる「今対応すべき部位」を返す（大規模プロジェクトは現在フェーズの発射口、
+// ラスボスは就職活動段階なら先頭の未破壊発射口、それ以外は最も被弾が進んでいる発射口）
+function getSupportBulletRescueTarget() {
+  if (midBossEvent && midBossEvent.phase === 'active') {
+    const hole = midBossEvent.holes[midBossEvent.currentPhaseIndex];
+    if (hole && !hole.destroyed) {
+      const pos = getMidBossHoleAbsolutePosition(hole);
+      return { kind: 'midBoss', hole, x: pos.x, y: pos.y };
+    }
+    return null;
+  }
+  if (bossEvent && bossEvent.phase === 'active') {
+    let hole = null;
+    if (bossEvent.stage === 7) {
+      hole = bossEvent.holes.find(h => !h.destroyed);
+    } else {
+      const alive = bossEvent.holes.filter(h => !h.destroyed && !h.indestructible);
+      hole = alive.reduce((best, h) => (!best || h.hitsTaken > best.hitsTaken) ? h : best, null);
+    }
+    if (hole) {
+      const pos = getBossHoleAbsolutePosition(hole);
+      return { kind: 'boss', hole, x: pos.x, y: pos.y };
+    }
+  }
+  return null;
+}
+
+// 援護弾をパリィした瞬間：雷のような一撃を今対応すべき部位へ飛ばし、一撃で破壊する
+function triggerSupportBulletRescue(bullet) {
+  const idx = bullets.indexOf(bullet);
+  if (idx >= 0) bullets.splice(idx, 1);
+  const target = getSupportBulletRescueTarget();
+  if (!target) {
+    showMessage('援護弾をパリィしたが、狙うべき相手が見当たらない……', 2000, '#b39ddb');
+    return;
+  }
+  spawnSynergyBeam(bullet.x, bullet.y, target.x, target.y);
+  if (target.kind === 'midBoss') {
+    target.hole.hitsTaken = midBossEvent.hitsPerHole;
+    registerMidBossHoleHit(target.hole, target.x, target.y);
+  } else {
+    target.hole.hitsTaken = target.hole.maxHits;
+    registerBossHoleHit(target.hole, target.x, target.y);
+  }
+  showMessage('援護弾パリィ成功！ 雷のような一撃が急所を撃ち抜いた！', 2600, '#fff176', '22px sans-serif');
 }
 
 function damagePlayerByMidBossBullet() {
@@ -5527,7 +5703,7 @@ function attemptDeflectPartnerBullet() {
     // ネットワークスペシャリスト：画面端で反射した自弾（1回目以降すべて）も、パリィで狩り直せる
     const isBouncedOwnBullet = b.owner === 'player' && b.bouncesUsed >= 1;
     if (b.owner !== 'partner' && b.owner !== 'boss' && b.owner !== 'midBoss' &&
-        b.owner !== 'fixedEnemy' && b.owner !== 'fixedEnemyDisguise' && !isBouncedOwnBullet) return false;
+        b.owner !== 'fixedEnemy' && b.owner !== 'fixedEnemyDisguise' && b.owner !== 'support' && !isBouncedOwnBullet) return false;
     const d = Math.hypot(b.x - player.x, b.y - player.y);
     return d <= deflectRange + b.radius;
   });
@@ -6014,8 +6190,8 @@ function update() {
     return;
   }
 
-  // 週末の休日出勤選択・休日出勤中の帰宅確認中は、ゲームの進行を止める
-  if (weekendWorkChoice || weekendWorkQuotaChoice) return;
+  // 週末の休日出勤選択・休日出勤中の帰宅確認中・固定敵の残業確認中は、ゲームの進行を止める
+  if (weekendWorkChoice || weekendWorkQuotaChoice || fixedEnemyOvertimeChoiceActive) return;
   // 「名状しがたきものの気配」の選択肢・再確認の表示中は、ゲームの進行を止める
   if (bossEncounterChoiceActive || bossEncounterConfirmActive) return;
 
@@ -6030,6 +6206,13 @@ function update() {
   // 固定敵（IT用語モチーフ）の進行を処理する。ラスボス・中ボスの有無や、ゲーム内時間の進行状況に関わらず並行して進む
   updateFixedEnemy(dt);
   if (gameOver || deathSequence) return;
+
+  // 残業を承諾して固定敵を片付けている間、すべて排除できたらその場で自動的に一日を終了する
+  if (fixedEnemyOvertimeConfirmed && currentHour >= dayEndHour && fixedEnemies.length === 0) {
+    fixedEnemyOvertimeConfirmed = false;
+    endWorkday();
+    return;
+  }
 
   // ラスボスの発生判定・進行を処理する。発生中は時間経過・通常の敵の出現を止め、
   // ラスボスとだけ戦う特別な状況にする
@@ -6056,7 +6239,7 @@ function update() {
       }
     }
   } else {
-  // 「巨大案件」（中ボス）の進行を処理する。通常の敵・時間経過は止めず並行して進む
+  // 「大規模プロジェクト」（中ボス）の進行を処理する。通常の敵・時間経過は止めず並行して進む
   if (midBossEvent) {
     updateMidBossEvent(dt);
     if (gameOver || deathSequence) return;
@@ -6072,14 +6255,24 @@ function update() {
     lastHourTime += passed * hourMs;
     currentHour += passed;
     processTimedHourEvents(previousHour, currentHour);
-    // 「巨大案件」や、ノーマルルート終了時の負けイベント戦闘中は、24時になっても時刻をそこで止める
+    // 「大規模プロジェクト」や、ノーマルルート終了時の負けイベント戦闘中は、24時になっても時刻をそこで止める
     if ((midBossEvent || (normalEndSequence && normalEndSequence.phase === 'battle')) && currentHour >= maxOvertimeHour) {
       currentHour = maxOvertimeHour;
       lastHourTime = gameClockMs;
       return;
     }
-    // 終業時刻になっても定時報告や「巨大案件」が残っていれば、24時まで残業として居残る
-    if (currentHour >= dayEndHour && (scheduledReport || midBossEvent) && currentHour < maxOvertimeHour) {
+    // 定時報告・「大規模プロジェクト」はないが、固定敵（脅威）が残っている場合は、残業するかどうかを一度だけ尋ねる
+    if (currentHour >= dayEndHour && !scheduledReport && !midBossEvent &&
+        fixedEnemies.length > 0 && !fixedEnemyOvertimeConfirmed && currentHour < maxOvertimeHour) {
+      currentHour = dayEndHour;
+      lastHourTime = gameClockMs;
+      fixedEnemyOvertimeChoiceActive = true;
+      return;
+    }
+    // 終業時刻になっても定時報告・「大規模プロジェクト」、または残業を承諾した固定敵が残っていれば、24時まで残業として居残る
+    if (currentHour >= dayEndHour &&
+        (scheduledReport || midBossEvent || (fixedEnemies.length > 0 && fixedEnemyOvertimeConfirmed)) &&
+        currentHour < maxOvertimeHour) {
       if (previousHour < dayEndHour) {
         showMessage(`${dayEndHour}時：定時報告が終わらず残業に…（${maxOvertimeHour}時まで）`,
           3800, '#ff8a65', '22px sans-serif');
@@ -6093,9 +6286,9 @@ function update() {
     }
   }
 
-  // 残業中（定時報告や「巨大案件」が残ったまま終業時刻を過ぎている間）は、SANが段階的に削れていく。
-  // 24時になっても「巨大案件」などの戦闘が続いていれば、同じペースでそのまま減り続ける
-  if ((scheduledReport || midBossEvent) && currentHour >= dayEndHour) {
+  // 残業中（定時報告や「大規模プロジェクト」、または残業を承諾した固定敵が残ったまま終業時刻を過ぎている間）は、SANが段階的に削れていく。
+  // 24時になっても「大規模プロジェクト」などの戦闘が続いていれば、同じペースでそのまま減り続ける
+  if ((scheduledReport || midBossEvent || (fixedEnemies.length > 0 && fixedEnemyOvertimeConfirmed)) && currentHour >= dayEndHour) {
     const sanStepMs = (3600 / overtimeSanDrainPerHour) * 1000; // ゲーム内10分ごとに1減少
     overtimeSanDrainAccumMs += dt * 1000;
     while (overtimeSanDrainAccumMs >= sanStepMs) {
@@ -6120,7 +6313,7 @@ function update() {
   }
 
   // 全滅したら少し間を置いて次のウェーブ（仕事）を出す。
-  // 「巨大案件」が出ている間は、通常の敵は一切出現しない。定時報告が出ている間は、同時出現数を1体にする
+  // 「大規模プロジェクト」が出ている間は、通常の敵は一切出現しない。定時報告が出ている間は、同時出現数を1体にする
   if (!midBossEvent && enemies.length === 0) {
     if (waveCooldownMs > 0) {
       waveCooldownMs -= dt * 1000;
@@ -6129,6 +6322,9 @@ function update() {
     }
   }
   }
+
+  // 援護弾（ボスが倒せない時の救済措置）の発生判定・飛来を処理する
+  updateSupportBulletSystem(dt);
 
   // 各敵の納期をカウントダウンし、0になった敵を爆発させる
   for (let i = enemies.length - 1; i >= 0; i--) {
@@ -6525,27 +6721,30 @@ function update() {
     b.x += b.vx;
     b.y += b.vy;
     // 画面端に達した弾は、跳ね返り回数が残っていれば反射し、なければ削除する
+    // （援護弾は、画面端の外側からゆっくり飛来してくる演出のため、この判定の対象外にする）
     let removed = false;
-    if (b.x < 0 || b.x > canvas.width) {
-      if (b.bounces > 0) {
-        b.bounces--;
-        b.bouncesUsed = (b.bouncesUsed || 0) + 1;
-        b.vx *= -1;
-        b.x = Math.max(0, Math.min(canvas.width, b.x));
-      } else {
-        bullets.splice(i, 1);
-        removed = true;
+    if (b.owner !== 'support') {
+      if (b.x < 0 || b.x > canvas.width) {
+        if (b.bounces > 0) {
+          b.bounces--;
+          b.bouncesUsed = (b.bouncesUsed || 0) + 1;
+          b.vx *= -1;
+          b.x = Math.max(0, Math.min(canvas.width, b.x));
+        } else {
+          bullets.splice(i, 1);
+          removed = true;
+        }
       }
-    }
-    if (!removed && (b.y < 0 || b.y > canvas.height)) {
-      if (b.bounces > 0) {
-        b.bounces--;
-        b.bouncesUsed = (b.bouncesUsed || 0) + 1;
-        b.vy *= -1;
-        b.y = Math.max(0, Math.min(canvas.height, b.y));
-      } else {
-        bullets.splice(i, 1);
-        removed = true;
+      if (!removed && (b.y < 0 || b.y > canvas.height)) {
+        if (b.bounces > 0) {
+          b.bounces--;
+          b.bouncesUsed = (b.bouncesUsed || 0) + 1;
+          b.vy *= -1;
+          b.y = Math.max(0, Math.min(canvas.height, b.y));
+        } else {
+          bullets.splice(i, 1);
+          removed = true;
+        }
       }
     }
     if (removed) continue;
@@ -6642,9 +6841,26 @@ function update() {
       bullets.splice(i, 1);
       if (gameOver || deathSequence) return;
       continue;
+    } else if (b.owner === 'support' &&
+        Math.hypot(b.x - player.x, b.y - player.y) <= b.radius + player.radius) {
+      // 援護弾：パリィできず被弾すると、通常のボス・中ボス弾と同様のダメージを受けて消える（救済の機会を逃した扱い）
+      if (Math.random() < specialSkillEffects.autoParryChance) {
+        performBulletParry(b, player.x, player.y, player.angle, true);
+        spawnSlashEffect(player.x, player.y, player.angle, player.radius);
+        showMessage('オートパリィ発動！', 1400, '#fff176');
+        continue;
+      }
+      if (b.sourceContext === 'midBoss') {
+        damagePlayerByMidBossBullet();
+      } else {
+        damagePlayerByBossBullet();
+      }
+      bullets.splice(i, 1);
+      if (gameOver || deathSequence) return;
+      continue;
     } else if (b.owner === 'midBoss' && partner.active &&
         Math.hypot(b.x - partner.x, b.y - partner.y) <= b.radius + partner.radius) {
-      // 同僚のオートパリィ（「巨大案件」の弾に対しても同じ確率で発動する）
+      // 同僚のオートパリィ（「大規模プロジェクト」の弾に対しても同じ確率で発動する）
       if (Math.random() < partnerParryChance) {
         performBulletParry(b, partner.x, partner.y, partner.angle, true);
         spawnSlashEffect(partner.x, partner.y, partner.angle, partner.radius);
@@ -6657,7 +6873,7 @@ function update() {
       continue;
     } else if (b.owner === 'midBoss' &&
         Math.hypot(b.x - player.x, b.y - player.y) <= b.radius + player.radius) {
-      // 特殊スキル「オートパリィ」：「巨大案件」の弾に対しても同様に自動でパリィする
+      // 特殊スキル「オートパリィ」：「大規模プロジェクト」の弾に対しても同様に自動でパリィする
       if (Math.random() < specialSkillEffects.autoParryChance) {
         performBulletParry(b, player.x, player.y, player.angle, true);
         spawnSlashEffect(player.x, player.y, player.angle, player.radius);
@@ -6740,7 +6956,7 @@ function update() {
         continue;
       }
     }
-    // 「巨大案件」への命中判定。こちらは通常の攻撃（自機・同僚の弾）でも発射口を破壊できる
+    // 「大規模プロジェクト」への命中判定。こちらは通常の攻撃（自機・同僚の弾）でも発射口を破壊できる
     if (midBossEvent && (b.owner === 'player' || b.owner === 'deflected' || b.owner === 'partner')) {
       const hitMidHole = findHitMidBossHole(b.x, b.y);
       if (hitMidHole) {
@@ -7759,7 +7975,7 @@ function drawClearMessageScreen(seq) {
   }
 }
 
-// 中ボス「巨大案件」の見た目を描く（正式な画像を用意するまでの仮の矩形）
+// 中ボス「大規模プロジェクト」の見た目を描く（正式な画像を用意するまでの仮の矩形）
 function drawMidBossEvent() {
   if (!midBossEvent) return;
   const geo = getMidBossGeometry();
@@ -7784,7 +8000,7 @@ function drawMidBossEvent() {
   ctx.fillStyle = '#ffe0b2';
   ctx.font = 'bold 16px sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('巨大案件', bodyX + geo.width / 2, bodyY + 22);
+  ctx.fillText('大規模プロジェクト', bodyX + geo.width / 2, bodyY + 22);
   ctx.textAlign = 'left';
 
   for (const hole of midBossEvent.holes) {
@@ -7854,7 +8070,7 @@ function drawMidBossEvent() {
     ctx.font = 'bold 13px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText(
-      `巨大案件：フェーズ ${Math.min(currentIndex + 1, midBossPhaseCount)}/${midBossPhaseCount}`,
+      `大規模プロジェクト：フェーズ ${Math.min(currentIndex + 1, midBossPhaseCount)}/${midBossPhaseCount}`,
       canvas.width / 2, geo.y + geo.height + 20
     );
     ctx.textAlign = 'left';
@@ -8984,6 +9200,12 @@ function draw() {
       ctx.fillStyle = '#ffd54f';
       ctx.shadowColor = '#fff176';
       ctx.shadowBlur = 10;
+    } else if (b.owner === 'support') {
+      // 援護弾：紫色にゆっくり明滅させ、ただの弾ではないことを伝える
+      const pulse = 0.5 + 0.5 * Math.sin(gameClockMs / 200);
+      ctx.fillStyle = '#ce93d8';
+      ctx.shadowColor = '#b39ddb';
+      ctx.shadowBlur = 10 + pulse * 8;
     } else {
       ctx.fillStyle = 'white';
     }
@@ -9521,7 +9743,7 @@ function draw() {
   ctx.fillText(dateStr, dateStrX, 28);
 
 
-  // 「巨大案件」で24時のまま時刻が止まっている間、鉛筆で取り消し線を何本も引いたような見た目にする
+  // 「大規模プロジェクト」で24時のまま時刻が止まっている間、鉛筆で取り消し線を何本も引いたような見た目にする
   if (midBossEvent && currentHour >= maxOvertimeHour) {
     ctx.save();
     ctx.strokeStyle = 'rgba(40, 40, 40, 0.8)';
@@ -9546,7 +9768,7 @@ function draw() {
   // 休日出勤中（土日）のみ表示する、切り上げて帰宅するためのボタン
   if ((currentDate.getDay() === 0 || currentDate.getDay() === 6) &&
       !gameOver && !gameClear && !dayTransitionPhase && !weekendWorkChoice &&
-      !weekendWorkQuotaChoice && !acknowledgementNotice) {
+      !weekendWorkQuotaChoice && !fixedEnemyOvertimeChoiceActive && !acknowledgementNotice) {
     drawUiButton(canvas.width - 160, 100, 148, 40, '帰宅する (H)', goHomeFromWeekendWork,
       { fillStyle: 'rgba(84, 60, 30, 0.65)', strokeStyle: '#ffb74d', font: 'bold 15px sans-serif' });
   }
@@ -9718,6 +9940,24 @@ function draw() {
       () => handleWeekendWorkQuotaChoice(true));
     drawUiButton(quotaBtnX, canvas.height / 2 + 54, quotaBtnW, quotaBtnH, 'いいえ・続ける (N)',
       () => handleWeekendWorkQuotaChoice(false), { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
+  }
+  // 18時に固定敵（脅威）が残っている：残業するかどうかの選択画面
+  if (fixedEnemyOvertimeChoiceActive && !gameOver && !gameClear) {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#ff8a65';
+    ctx.font = '28px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('まだ脅威が残っている！', canvas.width / 2, canvas.height / 2 - 80);
+    ctx.fillText('残業しますか？', canvas.width / 2, canvas.height / 2 - 44);
+    ctx.textAlign = 'left';
+
+    const fixedEnemyBtnW = 340, fixedEnemyBtnH = 50;
+    const fixedEnemyBtnX = canvas.width / 2 - fixedEnemyBtnW / 2;
+    drawUiButton(fixedEnemyBtnX, canvas.height / 2 - 4, fixedEnemyBtnW, fixedEnemyBtnH, 'はい (Y)',
+      () => handleFixedEnemyOvertimeChoice(true));
+    drawUiButton(fixedEnemyBtnX, canvas.height / 2 + 54, fixedEnemyBtnW, fixedEnemyBtnH, 'いいえ (N)',
+      () => handleFixedEnemyOvertimeChoice(false), { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
   }
   // ラスボス出現条件を満たした瞬間の選択肢：「名状しがたきものの気配がする……」
   if (bossEncounterChoiceActive && !gameOver && !gameClear) {
