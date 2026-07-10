@@ -5243,7 +5243,8 @@ const normalEndFadeOutDurationMs = 1200;
 const normalEndScreenFadeOutDurationMs = 3000; // クリック後、文字も含め画面全体が黒くフェードアウトしてタイトルへ戻るまでの時間
 const normalEndBgFadeInDurationMs = 2600; // 黒背景から、背景画像after_ENDがゆっくりフェードインしきるまでの時間
 const normalEndBgDimOverlayAlpha = 0.35; // 背景画像を通常より少し暗めに見せておくオーバーレイの濃さ
-const normalEndTextFadeDelayMs = 1000; // 背景画像のフェードイン開始から、文字が現れ始めるまでの間
+const normalEndTextFadeDelayAfterBgMs = 3000; // 背景画像が表示しきってから、文字が現れ始めるまでの間
+const normalEndTextFadeDelayMs = normalEndBgFadeInDurationMs + normalEndTextFadeDelayAfterBgMs; // 背景画像のフェードイン開始から、文字が現れ始めるまでの間
 const normalEndTextFadeInDurationMs = 2600; // 文字がゆっくりフェードインしきるまでの時間
 const normalEndTextFadeOutDurationMs = 2400; // クリック後、文字がゆっくりフェードアウトしきるまでの時間
 let normalEndSequence = null; // null、または { phase, phaseTimerMs, battleTimerMs, partnerLoseAtMs, partnerLost }
@@ -5376,10 +5377,12 @@ function drawNormalEndFreezeScene() {
   }
 }
 
-// partnerVanish（同僚消滅）中の画面：全ての動きが完全に止まり、同僚だけが点滅しながら消えていく
+// partnerVanish（同僚消滅）中の画面：戦闘中と同じ暗い部屋・ラスボスを表示したまま全ての動きが完全に止まり、
+// アイテム類は表示せず、同僚だけが点滅しながら消えていく
 function drawNormalEndPartnerVanishScene() {
   canvas.style.transform = '';
   drawBackground();
+  drawBossEvent();
   const selfImg = genderImageElements[selectedPlayerIcon];
   if (selfImg && selfImg.complete && selfImg.naturalWidth > 0) {
     const selfImgSize = player.radius * 4.8;
@@ -5409,7 +5412,7 @@ function drawNormalEndEndingScreen() {
     const isFadingIn = normalEndSequence.phase === 'endScreen';
     // 背景画像は黒からゆっくりフェードインし、フェードインが終わっても暗めのオーバーレイを重ねたままにする
     const bgFadeInAlpha = isFadingIn ? Math.min(1, normalEndSequence.phaseTimerMs / normalEndBgFadeInDurationMs) : 1;
-    // 文字は、背景のフェードイン開始から1秒待ってから、改めてゆっくりフェードインする。
+    // 文字は、背景画像after_ENDが表示しきってから3秒待ってから、改めてゆっくりフェードインする。
     // クリック後（endScreenFadeOut）は、画面が黒くなっていくのに合わせて、文字もゆっくりフェードアウトする
     const textElapsedMs = normalEndSequence.phaseTimerMs - normalEndTextFadeDelayMs;
     const contentAlpha = isFadingIn
@@ -7808,8 +7811,10 @@ function drawBossEvent() {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.restore();
 
-  // 通常のラスボス戦（ノーマルルート終了時の負けイベント戦闘は除く）は、さらに画面全体を暗くする
-  if (!(normalEndSequence && normalEndSequence.phase === 'battle')) {
+  // 通常のラスボス戦（ノーマルルート終了時の負けイベント戦闘・同僚消滅演出は除く）は、さらに画面全体を暗くする
+  const isNormalEndBattleSequence = normalEndSequence && (normalEndSequence.phase === 'battle' ||
+    normalEndSequence.phase === 'partnerLossSlowmo' || normalEndSequence.phase === 'partnerVanish');
+  if (!isNormalEndBattleSequence) {
     ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
