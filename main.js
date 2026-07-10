@@ -107,9 +107,9 @@ const dreamMemoryUpgradeDefs = [
     costOverride: 1
   }
 ];
-// 現在のレベルから次のレベルへ上げるのに必要な夢の記憶ポイント数（貯まりにくくなった分、一律1ポイントにしてある）
+// 現在のレベルから次のレベルへ上げるのに必要な夢の記憶ポイント数（レベルが上がるごとに1ずつ増える。Lv0→1は1、Lv1→2は2…）
 function dreamMemoryUpgradeCost(currentLevel) {
-  return 1;
+  return currentLevel + 1;
 }
 
 // ===== エンディングリスト（タイトル画面から確認できる、到達済みエンディングの一覧） =====
@@ -210,6 +210,18 @@ function purchaseDreamMemoryUpgrade(id) {
   if (dreamMemorySave.points < cost) return;
   dreamMemorySave.points -= cost;
   dreamMemorySave.upgrades[id] = level + 1;
+  saveDreamMemorySave();
+}
+
+// 「1つ戻す」：指定した強化を1レベル下げ、そのレベルに費やしたポイントを払い戻す
+function revertDreamMemoryUpgrade(id) {
+  const def = getDreamMemoryUpgradeDef(id);
+  if (!def) return;
+  const level = dreamMemorySave.upgrades[id];
+  if (level <= 0) return;
+  const refund = getDreamMemoryUpgradeCost(def, level - 1);
+  dreamMemorySave.points += refund;
+  dreamMemorySave.upgrades[id] = level - 1;
   saveDreamMemorySave();
 }
 
@@ -7096,9 +7108,9 @@ function shouldShowAfterNormalEndTitleBackground() {
   return !!lastRun.lostToBossBeforeAdv3;
 }
 
-// モード選択・性別選択・同僚選択・アイコン挨拶・再会シーンなどの背景を描く（画像＋読みやすくする暗いオーバーレイ）。
+// モード選択・性別選択・同僚選択・アイコン挨拶・再会シーン・強化画面などの背景を描く（画像＋読みやすくする暗いオーバーレイ）。
 // 条件を満たす場合は背景画像をafter_normalENDに差し替え、不規則な明滅・小さな振動を重ねる。
-// allowAfterNormalEnd=falseを渡した画面（強化画面・エンディングリストなど）は対象外にする
+// allowAfterNormalEnd=falseを渡した画面（エンディングリストなど）は対象外にする
 function drawSetupBackground(allowAfterNormalEnd = true) {
   const useAfterNormalEndBg = allowAfterNormalEnd && shouldShowAfterNormalEndTitleBackground();
   const bgImage = useAfterNormalEndBg ? afterNormalEndBackgroundImage : startScreenBackgroundImage;
@@ -7150,6 +7162,64 @@ function drawSetupBackground(allowAfterNormalEnd = true) {
     }
   } else {
     canvas.style.transform = '';
+  }
+}
+
+// after_normalEND使用時だけ、タイトル画面の主要ボタンにわずかな傾き・振動・フラッシュを重ねて描く。
+// 通常時（start_01.png使用時）はdrawUiButtonをそのまま呼ぶだけで、見た目は変わらない。
+// クリック判定（uiButtons）は元のx,y,w,hのまま登録されるため、傾き自体はごく小さく抑えてある
+function drawTitleGlitchButton(x, y, w, h, label, action, options, seedBase) {
+  if (!shouldShowAfterNormalEndTitleBackground()) {
+    drawUiButton(x, y, w, h, label, action, options);
+    return;
+  }
+  const t = Date.now();
+  // 傾き：数秒に一度、ランダムなタイミングでわずかに傾いてから戻る
+  const tiltCycleMs = 5000;
+  const tiltCycleIndex = Math.floor(t / tiltCycleMs);
+  const tiltCyclePos = t % tiltCycleMs;
+  const tiltWindowMs = 500;
+  const tiltRoll = titleGlitchPseudoRandom(seedBase * 13 + tiltCycleIndex * 7 + 1);
+  let tiltDeg = 0;
+  if (tiltRoll < 0.4 && tiltCyclePos < tiltWindowMs) {
+    const progress = 1 - tiltCyclePos / tiltWindowMs;
+    const maxTilt = (titleGlitchPseudoRandom(seedBase * 17 + tiltCycleIndex) - 0.5) * 12; // 最大でおよそ±6度
+    tiltDeg = maxTilt * progress;
+  }
+  // 振動：ボタンごとに周期・タイミングをずらして小刻みに揺れる
+  const shakeCycleMs = 4200;
+  const shakeCycleIndex = Math.floor(t / shakeCycleMs);
+  const shakeCyclePos = t % shakeCycleMs;
+  const shakeWindowMs = 380;
+  const shakeRoll = titleGlitchPseudoRandom(seedBase * 29 + shakeCycleIndex * 11 + 3);
+  let shakeX = 0, shakeY = 0;
+  if (shakeRoll < 0.6 && shakeCyclePos < shakeWindowMs) {
+    const progress = 1 - shakeCyclePos / shakeWindowMs;
+    const mag = 4 * progress;
+    shakeX = (titleGlitchPseudoRandom(seedBase * 41 + Math.floor(shakeCyclePos / 40)) - 0.5) * mag;
+    shakeY = (titleGlitchPseudoRandom(seedBase * 59 + Math.floor(shakeCyclePos / 40)) - 0.5) * mag;
+  }
+
+  ctx.save();
+  ctx.translate(x + w / 2 + shakeX, y + h / 2 + shakeY);
+  ctx.rotate(tiltDeg * Math.PI / 180);
+  ctx.translate(-(x + w / 2), -(y + h / 2));
+  drawUiButton(x, y, w, h, label, action, options);
+  ctx.restore();
+
+  // フラッシュ：数秒に一度、ボタンだけが一瞬明るく光る
+  const flashCycleMs = 6300;
+  const flashCycleIndex = Math.floor(t / flashCycleMs);
+  const flashCyclePos = t % flashCycleMs;
+  const flashWindowMs = 220;
+  const flashRoll = titleGlitchPseudoRandom(seedBase * 71 + flashCycleIndex * 89 + 17);
+  if (flashRoll < 0.3 && flashCyclePos < flashWindowMs) {
+    const flashT = flashCyclePos / flashWindowMs;
+    const flashAlpha = flashT < 0.2 ? flashT / 0.2 : 1 - (flashT - 0.2) / 0.8;
+    ctx.save();
+    ctx.fillStyle = `rgba(255, 255, 255, ${Math.max(0, flashAlpha) * 0.4})`;
+    ctx.fillRect(x, y, w, h);
+    ctx.restore();
   }
 }
 
@@ -8346,7 +8416,7 @@ function draw() {
   }
 
   if (dreamMemoryShopActive) {
-    drawSetupBackground(false);
+    drawSetupBackground();
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ffd54f';
     ctx.font = 'bold 24px sans-serif';
@@ -8416,7 +8486,16 @@ function draw() {
       const btnW = 100, btnH = 22;
       const btnX = cellX + cellWidth - btnW - 10;
       const btnY = cellY + cellHeight - btnH - 6;
+      const revertBtnW = 54;
+      const revertBtnX = btnX - revertBtnW - 6;
       const textMaxWidth = cellWidth - 20;
+
+      // 「1つ戻す」：このスキルを1レベル下げ、そのレベル分のポイントを払い戻す（レベル0の間は押せない）
+      if (level > 0) {
+        drawUiButton(revertBtnX, btnY, revertBtnW, btnH, '1つ戻す',
+          () => revertDreamMemoryUpgrade(def.id),
+          { fillStyle: 'rgba(84, 30, 30, 0.55)', strokeStyle: '#ef9a9a', font: 'bold 11px sans-serif' });
+      }
 
       ctx.fillStyle = maxed ? '#ffe082' : 'white';
       ctx.font = 'bold 13px sans-serif';
@@ -8638,18 +8717,18 @@ function draw() {
     const cornerBtnW = 170, cornerBtnH = 54;
     const bottomMargin = 26;
     const bottomY = canvas.height - cornerBtnH - bottomMargin;
-    drawUiButton(20, bottomY, cornerBtnW, cornerBtnH, '開始する (1 / Enter)',
+    drawTitleGlitchButton(20, bottomY, cornerBtnW, cornerBtnH, '開始する (1 / Enter)',
       () => selectMode(),
-      { font: `bold 18px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' });
-    drawUiButton(canvas.width - cornerBtnW - 20, bottomY, cornerBtnW, cornerBtnH,
+      { font: `bold 18px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' }, 101);
+    drawTitleGlitchButton(canvas.width - cornerBtnW - 20, bottomY, cornerBtnW, cornerBtnH,
       `強化 (P: ${dreamMemorySave.points})`, () => { dreamMemoryShopActive = true; },
-      { fillStyle: 'rgba(74, 20, 140, 0.55)', strokeStyle: '#ce93d8', font: `bold 18px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' });
+      { fillStyle: 'rgba(74, 20, 140, 0.55)', strokeStyle: '#ce93d8', font: `bold 18px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' }, 202);
 
     const endingListBtnW = 220, endingListBtnH = 40;
-    drawUiButton(canvas.width / 2 - endingListBtnW / 2, bottomY + (cornerBtnH - endingListBtnH) / 2,
+    drawTitleGlitchButton(canvas.width / 2 - endingListBtnW / 2, bottomY + (cornerBtnH - endingListBtnH) / 2,
       endingListBtnW, endingListBtnH,
       'エンディングリスト', () => { endingListActive = true; },
-      { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#ffd54f', font: `bold 14px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' });
+      { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#ffd54f', font: `bold 14px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' }, 303);
 
     const helpTextY = bottomY - 60;
 
