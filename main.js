@@ -8454,6 +8454,35 @@ function draw() {
 
   if (startScreen) {
     drawSetupBackground();
+
+    // after_normalENDの背景を使っている間だけ：不規則にゆっくり明度が落ちて戻ったり、
+    // 時々小さく画面が振動したりする、不穏な演出を重ねる
+    if (shouldShowAfterNormalEndTitleBackground()) {
+      const t = Date.now() / 1000;
+      // 周期の異なる2つの波を掛け合わせ、周期的すぎない「不規則にゆっくり」な明滅にする
+      const dim = Math.max(0, Math.sin(t * 0.11) * 0.5 + 0.5) * Math.max(0, Math.sin(t * 0.047 + 1.7) * 0.5 + 0.5);
+      ctx.fillStyle = `rgba(0, 0, 0, ${dim * 0.4})`;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // 数秒に一度、短い間だけ小さく振動する
+      const shakeCycleMs = 4200;
+      const cycleIndex = Math.floor(Date.now() / shakeCycleMs);
+      const cyclePos = Date.now() % shakeCycleMs;
+      const shakeWindowMs = 380;
+      const shakeRoll = titleGlitchPseudoRandom(cycleIndex * 31 + 5);
+      if (shakeRoll < 0.4 && cyclePos < shakeWindowMs) {
+        const shakeProgress = 1 - cyclePos / shakeWindowMs;
+        const mag = 3 * shakeProgress;
+        const shakeX = (titleGlitchPseudoRandom(cycleIndex * 53 + Math.floor(cyclePos / 40)) - 0.5) * mag;
+        const shakeY = (titleGlitchPseudoRandom(cycleIndex * 71 + Math.floor(cyclePos / 40)) - 0.5) * mag;
+        canvas.style.transform = `translate(${shakeX}px, ${shakeY}px)`;
+      } else {
+        canvas.style.transform = '';
+      }
+    } else {
+      canvas.style.transform = '';
+    }
+
     ctx.save();
     ctx.font = 'bold 38px "Comic Sans MS", "Chalkboard SE", "Marker Felt", cursive, sans-serif';
     ctx.textAlign = 'center';
