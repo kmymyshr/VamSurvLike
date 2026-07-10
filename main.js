@@ -1967,19 +1967,12 @@ function startDeathSequence(visualType, deathEndingType) {
 // どちらが尽きたかで演出とバッドエンドの種類を分ける
 function checkVitalsGameOver(deathEndingType = null) {
   if (gameOver || deathSequence) return;
-  // ノーマルルート終了時の負けイベント戦闘：同僚が健在の間、自機は何度でもSAN1・寿命1で復活する。
-  // 同僚離脱後に被弾したら、通常のゲームオーバーではなくノーマルエンドの共通演出へ進む
-  if (normalEndSequence && normalEndSequence.phase === 'battle') {
-    if (!normalEndSequence.partnerLost) {
-      san = Math.max(san, 1);
-      lifespan = Math.max(lifespan, 1);
-      return;
-    }
-    if (san <= 0 || lifespan <= 0) {
-      bossEvent = null;
-      normalEndSequence.phase = 'fadeOut';
-      normalEndSequence.phaseTimerMs = 0;
-    }
+  // ノーマルルート終了時の負けイベント戦闘・同僚消滅演出中：自機は何度でもSAN1・寿命1で復活する。
+  // このシーケンス自体のタイマーで同僚消滅→フェードアウトへ進むため、自機の生死では進行しない
+  if (normalEndSequence && (normalEndSequence.phase === 'battle' ||
+      normalEndSequence.phase === 'partnerLossSlowmo' || normalEndSequence.phase === 'partnerVanish')) {
+    san = Math.max(san, 1);
+    lifespan = Math.max(lifespan, 1);
     return;
   }
   // 「無敵（テスト用）」「β版設定」：SAN・寿命が0にならないようにする
@@ -2953,9 +2946,16 @@ function updatePartner(dt) {
     partnerEverLost = true;
     partnerLossReason = partner.lifespan <= 0 ? 'lifespan' : 'san';
     partnerLifespanAtLoss = partner.lifespan;
-    showMessage('同僚が力尽きてしまった…', 4000, '#ef9a9a', '24px sans-serif');
-    if (normalEndBattleActive) normalEndSequence.partnerLost = true;
-    damageSan(partnerLossSanPenalty);
+    if (normalEndBattleActive) {
+      // ノーマルルート終了時の負けイベント戦闘：通常の離脱メッセージ・SANダメージの代わりに、
+      // 全体が減速→静止→同僚が消える演出（partnerLossSlowmo）へ移行する
+      normalEndSequence.partnerLost = true;
+      normalEndSequence.phase = 'partnerLossSlowmo';
+      normalEndSequence.phaseTimerMs = 0;
+    } else {
+      showMessage('同僚が力尽きてしまった…', 4000, '#ef9a9a', '24px sans-serif');
+      damageSan(partnerLossSanPenalty);
+    }
   }
 }
 
@@ -3962,7 +3962,13 @@ function selectGender(genderId) {
   selectedGender = genderId;
   selectedPlayerIcon = genderId;
   startSetupFadeOut(() => {
-    const line = playerIconGreetingLines[Math.floor(Math.random() * playerIconGreetingLines.length)];
+    // 前回ノーマルエンドを迎えており、かつ前回と同じ自機を選んだ場合だけ、特別なあいさつ文にする
+    const lastRun = dreamMemorySave.lastRun;
+    const isRepeatingAfterNormalEnd = !!(lastRun && typeof lastRun.endingType === 'string' &&
+      lastRun.endingType.startsWith('normal') && lastRun.playerGender === genderId);
+    const line = isRepeatingAfterNormalEnd
+      ? '…繰り返し夢を見ている？'
+      : playerIconGreetingLines[Math.floor(Math.random() * playerIconGreetingLines.length)];
     startIconGreeting(genderId, line, () => { setupStep = 'partner-icon'; }, genderImageElements[genderId]);
   });
 }
@@ -5211,12 +5217,19 @@ const normalEndFireIntervalMs = 700;
 const normalEndPartnerAutoParryCap = 0.5; // 同僚のオートパリィ確率は、この戦闘中は最大でもこの値までしか出ない
 const normalEndPartnerLoseDelayMinMs = 12000; // 同僚が力尽きるまでの時間（幅を持たせた保険。実際は被弾で先に力尽きることが多い）
 const normalEndPartnerLoseDelayMaxMs = 18000;
+// 同僚のSAN・寿命が0になることが確定した瞬間から、全体の進行速度を10%に落として3秒ほど間を置き、
+// その後すべての動きを完全に止めて、同僚が点滅しながら消えていく演出を挟む
+const normalEndPartnerLossSlowmoRatio = 0.1;
+const normalEndPartnerLossSlowmoDurationMs = 3000;
+const normalEndPartnerVanishDurationMs = 1800; // 同僚が点滅しながら消えきるまでの時間
+const normalEndPartnerVanishBlinkIntervalMs = 150; // 点滅の間隔
 const normalEndFadeOutDurationMs = 1200;
-const normalEndScreenFadeOutDurationMs = 3000; // クリック後、文字も含め画面全体が白くフェードインしてタイトルへ戻るまでの時間
+const normalEndScreenFadeOutDurationMs = 3000; // クリック後、文字も含め画面全体が黒くフェードアウトしてタイトルへ戻るまでの時間
 const normalEndBgFadeInDurationMs = 2600; // 黒背景から、背景画像after_ENDがゆっくりフェードインしきるまでの時間
 const normalEndBgDimOverlayAlpha = 0.35; // 背景画像を通常より少し暗めに見せておくオーバーレイの濃さ
 const normalEndTextFadeDelayMs = 1000; // 背景画像のフェードイン開始から、文字が現れ始めるまでの間
-const normalEndTextFadeInDurationMs = 1600; // 文字がゆっくりフェードインしきるまでの時間
+const normalEndTextFadeInDurationMs = 2600; // 文字がゆっくりフェードインしきるまでの時間
+const normalEndTextFadeOutDurationMs = 2400; // クリック後、文字がゆっくりフェードアウトしきるまでの時間
 let normalEndSequence = null; // null、または { phase, phaseTimerMs, battleTimerMs, partnerLoseAtMs, partnerLost }
 
 // 「同僚と遊ぶ」ADV3をノーマルルートで終えた直後に呼ばれる。この日が最終日として扱われる
@@ -5255,6 +5268,11 @@ function updateNormalEndSequence(rawDt) {
       savedEnemies: [], offsetX: 0, offsetY: 0, moveTargetX: 0, moveTargetY: 0, moveTimerMs: 0,
       useAltImage: true, nameOverride: '？？？？'
     };
+  } else if (normalEndSequence.phase === 'partnerVanish' && normalEndSequence.phaseTimerMs >= normalEndPartnerVanishDurationMs) {
+    // 同僚が完全に消えきったら、ラスボスを消してエンディング演出（黒背景フェード）へ進む
+    bossEvent = null;
+    normalEndSequence.phase = 'fadeOut';
+    normalEndSequence.phaseTimerMs = 0;
   } else if (normalEndSequence.phase === 'fadeOut' && normalEndSequence.phaseTimerMs >= normalEndFadeOutDurationMs) {
     normalEndSequence.phase = 'endScreen';
     normalEndSequence.phaseTimerMs = 0;
@@ -5342,6 +5360,31 @@ function drawNormalEndFreezeScene() {
   }
 }
 
+// partnerVanish（同僚消滅）中の画面：全ての動きが完全に止まり、同僚だけが点滅しながら消えていく
+function drawNormalEndPartnerVanishScene() {
+  canvas.style.transform = '';
+  drawBackground();
+  const selfImg = genderImageElements[selectedPlayerIcon];
+  if (selfImg && selfImg.complete && selfImg.naturalWidth > 0) {
+    const selfImgSize = player.radius * 4.8;
+    ctx.drawImage(selfImg, player.x - selfImgSize / 2, player.y - selfImgSize / 2, selfImgSize, selfImgSize);
+  }
+  const progress = Math.min(1, normalEndSequence.phaseTimerMs / normalEndPartnerVanishDurationMs);
+  // 一定間隔で点滅させながら、消えるまでの残り時間に応じて徐々に透明にしていく
+  const blinkOn = Math.floor(normalEndSequence.phaseTimerMs / normalEndPartnerVanishBlinkIntervalMs) % 2 === 0;
+  const partnerAlpha = blinkOn ? (1 - progress) : 0;
+  if (partnerAlpha > 0) {
+    const partnerImg = partnerIconImageElements[selectedPartnerIcon];
+    if (partnerImg && partnerImg.complete && partnerImg.naturalWidth > 0) {
+      ctx.save();
+      ctx.globalAlpha = partnerAlpha;
+      const partnerImgSize = partner.radius * 4.8;
+      ctx.drawImage(partnerImg, partner.x - partnerImgSize / 2, partner.y - partnerImgSize / 2, partnerImgSize, partnerImgSize);
+      ctx.restore();
+    }
+  }
+}
+
 // fadeOut（暗転を維持）・endScreen（背景画像＋テキストがフェードイン）・endScreenFadeOut（クリック後、全体が白へフェードイン）
 function drawNormalEndEndingScreen() {
   ctx.fillStyle = 'black';
@@ -5350,9 +5393,12 @@ function drawNormalEndEndingScreen() {
     const isFadingIn = normalEndSequence.phase === 'endScreen';
     // 背景画像は黒からゆっくりフェードインし、フェードインが終わっても暗めのオーバーレイを重ねたままにする
     const bgFadeInAlpha = isFadingIn ? Math.min(1, normalEndSequence.phaseTimerMs / normalEndBgFadeInDurationMs) : 1;
-    // 文字は、背景のフェードイン開始から1秒待ってから、改めてゆっくりフェードインする
-    const textElapsedMs = isFadingIn ? normalEndSequence.phaseTimerMs - normalEndTextFadeDelayMs : normalEndTextFadeInDurationMs;
-    const contentAlpha = Math.max(0, Math.min(1, textElapsedMs / normalEndTextFadeInDurationMs));
+    // 文字は、背景のフェードイン開始から1秒待ってから、改めてゆっくりフェードインする。
+    // クリック後（endScreenFadeOut）は、画面が黒くなっていくのに合わせて、文字もゆっくりフェードアウトする
+    const textElapsedMs = normalEndSequence.phaseTimerMs - normalEndTextFadeDelayMs;
+    const contentAlpha = isFadingIn
+      ? Math.max(0, Math.min(1, textElapsedMs / normalEndTextFadeInDurationMs))
+      : Math.max(0, 1 - normalEndSequence.phaseTimerMs / normalEndTextFadeOutDurationMs);
     ctx.save();
     ctx.globalAlpha = bgFadeInAlpha;
     if (afterEndImage && afterEndImage.complete && afterEndImage.naturalWidth > 0) {
@@ -5371,10 +5417,10 @@ function drawNormalEndEndingScreen() {
     ctx.restore();
     ctx.textAlign = 'left';
 
-    // クリック後：背景・文字を含む画面全体が、3秒かけて白へフェードインしていく
+    // クリック後：背景・文字を含む画面全体が、3秒かけて黒くフェードアウトしていく
     if (normalEndSequence.phase === 'endScreenFadeOut') {
-      const whiteAlpha = Math.min(1, normalEndSequence.phaseTimerMs / normalEndScreenFadeOutDurationMs);
-      ctx.fillStyle = `rgba(255, 255, 255, ${whiteAlpha})`;
+      const blackAlpha = Math.min(1, normalEndSequence.phaseTimerMs / normalEndScreenFadeOutDurationMs);
+      ctx.fillStyle = `rgba(0, 0, 0, ${blackAlpha})`;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
   }
@@ -6185,7 +6231,12 @@ function update() {
   const nowReal = Date.now();
   // rawDt：実際の経過時間（3倍加速モードの影響を受けない）。演出・カットシーン・UI画面の進行に使う
   const rawDt = (nowReal - lastUpdate) / 1000;
-  const now = gameClockMs + ((nowReal - lastUpdate) * gameTimeScale);
+  // ノーマルルート終了時の負けイベント戦闘：同僚が消える直前のスローモーション演出中は、
+  // 全体の進行速度（dt）を10%に落とす（3倍加速モード中でもさらにその10%になる）
+  const effectiveTimeScale = (normalEndSequence && normalEndSequence.phase === 'partnerLossSlowmo')
+    ? gameTimeScale * normalEndPartnerLossSlowmoRatio
+    : gameTimeScale;
+  const now = gameClockMs + ((nowReal - lastUpdate) * effectiveTimeScale);
   const dt = (now - gameClockMs) / 1000;
     lastUpdate = nowReal;
   if (isPaused || wakeUpConfirmActive) {
@@ -6229,9 +6280,11 @@ function update() {
   }
 
   // ノーマルルート終了時の「負けイベント」戦闘演出。
-  // freeze/shake/fadeOut/endScreen中は他の一切を停止する。descend/battle中は、ラスボス（通常）を
-  // 降臨・行動させるため、この後の通常のbossEvent更新処理へそのまま進める
-  if (normalEndSequence && normalEndSequence.phase !== 'descend' && normalEndSequence.phase !== 'battle') {
+  // freeze/shake/partnerVanish/fadeOut/endScreen中は他の一切を停止する。descend/battle/partnerLossSlowmo中は、
+  // ラスボス（通常）を降臨・行動させるため、この後の通常のbossEvent更新処理へそのまま進める
+  // （partnerLossSlowmo中はdtが既に10%にスケールされているため、全体が10%速度で動き続ける）
+  if (normalEndSequence && normalEndSequence.phase !== 'descend' && normalEndSequence.phase !== 'battle' &&
+      normalEndSequence.phase !== 'partnerLossSlowmo') {
     updateNormalEndSequence(rawDt);
     return;
   }
@@ -6403,8 +6456,18 @@ function update() {
           normalEndSequence.battleTimerMs >= normalEndSequence.partnerLoseAtMs) {
         partner.active = false;
         partnerLossReason = 'san';
+        // 通常の離脱メッセージの代わりに、全体が減速→静止→同僚が消える演出（partnerLossSlowmo）へ移行する
         normalEndSequence.partnerLost = true;
-        showMessage(`${getPartnerPronoun(selectedPartnerIcon)}が力尽きて離脱した……`, 3000, '#ff8a80', '22px sans-serif');
+        normalEndSequence.phase = 'partnerLossSlowmo';
+        normalEndSequence.phaseTimerMs = 0;
+      }
+    } else if (normalEndSequence && normalEndSequence.phase === 'partnerLossSlowmo') {
+      // 同僚のSAN・寿命が0になることが確定してから3秒間は、全体の進行速度が10%のまま経過する
+      // （dt自体は既にupdate()側で10%にスケール済み。ここでは実時間で3秒measureする）
+      normalEndSequence.phaseTimerMs += rawDt * 1000;
+      if (normalEndSequence.phaseTimerMs >= normalEndPartnerLossSlowmoDurationMs) {
+        normalEndSequence.phase = 'partnerVanish';
+        normalEndSequence.phaseTimerMs = 0;
       }
     }
   } else {
@@ -8641,9 +8704,14 @@ function draw() {
     return;
   }
 
-  // ノーマルルート終了時の負けイベント戦闘：静止→暗転までは専用の画面、降臨後の戦闘は通常の描画に任せる
+  // ノーマルルート終了時の負けイベント戦闘：静止→暗転までは専用の画面、降臨後の戦闘（partnerLossSlowmoを含む）は
+  // 通常の描画に任せ、同僚が完全に消える演出（partnerVanish）は専用の画面に切り替える
   if (normalEndSequence && (normalEndSequence.phase === 'freeze' || normalEndSequence.phase === 'shake')) {
     drawNormalEndFreezeScene();
+    return;
+  }
+  if (normalEndSequence && normalEndSequence.phase === 'partnerVanish') {
+    drawNormalEndPartnerVanishScene();
     return;
   }
   if (normalEndSequence && (normalEndSequence.phase === 'fadeOut' || normalEndSequence.phase === 'endScreen' ||
