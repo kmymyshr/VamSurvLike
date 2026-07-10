@@ -495,16 +495,6 @@ function getFatigueRecoveryFloor() {
   return dayProgress * fatigueFloorAtDayEnd;
 }
 
-// 攻撃による脳疲労の増加を「1秒に1回」までにまとめる仕組み。
-// 連射系スキルで攻撃回数が増えても、1秒間攻撃し続けている間は増加が1回分にしかならないようにする。
-// マルチタスク系（同時複数発）で撃った場合は、そのぶん負荷を1.5倍にする。
-const fatigueTickIntervalMs = 1000;
-const fatigueMultitaskLoadMultiplier = 1.5;
-let fatigueTickChainActive = false; // 現在「連続攻撃中」の判定チェーンが進行しているか
-let fatigueTickTimerMs = 0; // 次の判定までの残り時間
-let fatigueTickWindowAttacked = false; // 直近の1秒枠内に攻撃があったか
-let fatigueTickWindowElevated = false; // 直近の1秒枠内にマルチタスク系の攻撃があったか
-
 // 脳疲労を増やし、上限に達したらstun（行動不能）を発生させる共通処理
 function applyFatigueGain(amount) {
   if (amount <= 0) return;
@@ -536,42 +526,23 @@ function applyFatigueGain(amount) {
   }
 }
 
-// 攻撃1回あたりの脳疲労増加の基準値（スキルレベル・時間帯による補正込み）
-function getBaseFiringFatigueAmount() {
-  const firingDrainMultiplier = Math.max(0.8, 1 - skillLevel * 0.05);
+// 現在、ゲーム内1時間あたりどれだけ脳疲労が蓄積するか（残業中かどうか・オート連射中かどうかで変わる）
+function getPassiveFatigueRatePerHour(isAutoFiring) {
+  const base = currentHour >= dayEndHour ? fatigueOvertimeBaseRatePerHour : fatiguePassiveBaseRatePerHour;
+  return base + (isAutoFiring ? fatigueAutoFireBonusRatePerHour : 0);
+}
+
+// 発射とは無関係に、時間経過だけで脳疲労が緩やかに蓄積する（毎フレーム呼び出す）。
+// 同僚は常に自律攻撃し続けているとみなし、オート連射中と同じ扱いにする
+function updatePassiveFatigueGain(dt) {
+  const isAutoFiring = autoFireEnabled || fullAutoModeEnabled;
   const energyDrinkMultiplier = energyDrinkBuffTimerMs > 0 ? energyDrinkFatigueGainMultiplier : 1;
-  return firingFatiguePerShot * firingDrainMultiplier *
-    specialSkillEffects.firingFatigueMultiplier * getTimeOfDayFatigueMultiplier() * energyDrinkMultiplier;
-}
-
-// 攻撃が発生したことを登録する。チェーンが止まっていれば即座に1回分を反映して新しいチェーンを開始し、
-// チェーン進行中ならこの枠の「攻撃あり」フラグだけを立てて、次の判定タイミングにまとめて反映する
-function registerFatigueAttack(elevated) {
-  if (!fatigueTickChainActive) {
-    applyFatigueGain(getBaseFiringFatigueAmount() * (elevated ? fatigueMultitaskLoadMultiplier : 1));
-    fatigueTickChainActive = true;
-    fatigueTickTimerMs = fatigueTickIntervalMs;
-    fatigueTickWindowAttacked = false;
-    fatigueTickWindowElevated = false;
-  } else {
-    fatigueTickWindowAttacked = true;
-    fatigueTickWindowElevated = fatigueTickWindowElevated || elevated;
-  }
-}
-
-// 毎フレーム呼び出し、チェーンの次の判定タイミングを進める。
-// 枠内に攻撃があれば1回分を反映して次の枠へ、なければチェーンを終了する
-function updateFatigueTickChain(dt) {
-  if (!fatigueTickChainActive) return;
-  fatigueTickTimerMs -= dt * 1000;
-  if (fatigueTickTimerMs > 0) return;
-  if (fatigueTickWindowAttacked) {
-    applyFatigueGain(getBaseFiringFatigueAmount() * (fatigueTickWindowElevated ? fatigueMultitaskLoadMultiplier : 1));
-    fatigueTickTimerMs = fatigueTickIntervalMs;
-    fatigueTickWindowAttacked = false;
-    fatigueTickWindowElevated = false;
-  } else {
-    fatigueTickChainActive = false;
+  const ratePerHour = getPassiveFatigueRatePerHour(isAutoFiring) *
+    specialSkillEffects.firingFatigueMultiplier * energyDrinkMultiplier;
+  applyFatigueGain((ratePerHour / 3600) * dt);
+  if (partner.active) {
+    const partnerRatePerHour = getPassiveFatigueRatePerHour(true);
+    partner.fatigue = Math.min(maxFatigue, partner.fatigue + (partnerRatePerHour / 3600) * dt);
   }
 }
 
@@ -592,22 +563,19 @@ let wakeUpConfirmActive = false; // 「目を覚ます」の誤タップ防止�
 let autoFireEnabled = false;
 let mouseFireHeld = false;
 const mousePosition = { x: player.x + 100, y: player.y };
-// 自動攻撃モードの間、脳疲労がstunに達しない範囲で連射を自動的に控える仕組み
-// （手動攻撃時は対象外。stun直前で一時停止し、半分程度まで下がったら再開する）
-const autoFireStunSafetyMargin = 15; // この値だけ余裕を残した時点で連射を控え始める
-let autoFireResting = false;
 
 // ===== 完全オートモード（移動・照準・攻撃をすべて自動化する） =====
 let fullAutoModeEnabled = false;
 let fullAutoQuizChoiceIndex = null; // クイズの選択肢をランダムに1つ選び、同じ問題の間は選び直さない
 
-// 1秒ごと、または1発ごとに変化する疲労関連の値
-const movingDrainPerSec = 6; // 移動時の1秒あたりの疲労量（現在は未使用）
-const firingFatiguePerShot = 10; // 1発撃つごとに増える疲労量（stunになりにくいよう軽減）
-const idleRecoveryPerSec = 12; // 待機時の1秒あたりの回復量
-// 朝から夜にかけて時間が経つほど、脳疲労がたまりやすくなる（デフォルトのデバフ）
-const timeOfDayFatigueMultiplierMax = 1.8; // 終業時刻ごろに到達する最大倍率（残業中はさらにやや伸びる）
-const stunRecoveryPerSec = 18; // 行動不能中は通常より早く疲労を回復する
+// ===== 脳疲労システム =====
+// 発射そのものでは変動せず、時間経過にともなって緩やかに蓄積する。回復はコーヒー・栄養ドリンク・
+// 食事・Stunによってのみ発生し、自動では回復しない
+const fatiguePassiveBaseRatePerHour = 6; // 通常時、ゲーム内1時間あたりの脳疲労蓄積量（10分に1）
+const fatigueOvertimeBaseRatePerHour = 9; // 残業中（終業時刻以降）は、ゲーム内1時間あたりこの量に変わる
+const fatigueAutoFireBonusRatePerHour = 12; // オート連射中は、上記に加えてゲーム内1時間あたりこの量が上乗せされる（5分に1）
+const fatigueParryGain = 1; // パリィが成功するたびに増える脳疲労
+const stunRecoveryPerSec = 18; // 行動不能中は脳疲労を回復する（自動回復が起きる唯一のケース）
 const fireRateMultiplier = 1.5; // 疲労が多いほど発射間隔を延ばす倍率
 let baseBulletDamage = 2 + dreamMemorySave.upgrades.bulletDamage; // 疲労がないときの基本攻撃力（夢の記憶ポイントの「初期攻撃力」で底上げされる、ゲーム開始時にapplyDreamMemoryUpgradesForNewGameで再計算）
 
@@ -681,7 +649,7 @@ const energyDrinkSanRecovery = 20; // SAN値を20回復する
 const energyDrinkFatigueReduction = 50; // 脳疲労を50下げる
 const energyDrinkLifespanCost = 5; // その代わり寿命を5消費する
 const energyDrinkBuffDurationMs = 15000; // この間、脳疲労が蓄積しにくくなる
-const energyDrinkFatigueGainMultiplier = 0.5; // 上記の間、攻撃による脳疲労増加をこの倍率に抑える
+const energyDrinkFatigueGainMultiplier = 0.5; // 上記の間、脳疲労の蓄積速度をこの倍率に抑える
 const energyDrinkMoveSpeedBuffMultiplier = 1.5; // 効果中の移動速度倍率
 const energyDrinkFireRateBuffMultiplier = 0.5; // 効果中の発射間隔倍率（半分＝連射速度アップ）
 const energyDrinkCrashDurationMs = 10000; // 効果が切れた後、反動状態が続く時間
@@ -868,9 +836,13 @@ const dayStartHour = 9;
 const dayEndHour = 18;
 // 定時報告が残っている場合、終業時刻を過ぎても最大この時刻まで残業として居残れる
 const maxOvertimeHour = 24;
-const overtimeSanDrainPerSec = 2; // 残業中、1秒あたり減少するSAN
+// 残業中、ゲーム内1時間あたり減少するSAN（10分ごとに1ずつ、なめらかにではなく段階的に減る）。
+// 24時になっても戦闘（中ボスなど）が続いている場合も、同じペースで段階的に減り続ける
+const overtimeSanDrainPerHour = 6;
 const overtimeLifespanDrainPerSec = 0.6; // 残業中、1秒あたり減少する寿命
 const partnerOvertimeDrainRatio = 1.5; // 残業中の同僚のSAN・寿命減少は、自機の減少値のこの倍率
+let overtimeSanDrainAccumMs = 0; // 自機のSAN段階的減少の蓄積タイマー（ゲーム内ミリ秒）
+let partnerOvertimeSanDrainAccumMs = 0; // 同僚分
 const overtimeFailureVitalRatio = 1 / 3; // 24時になっても片付けられなかった場合、SAN・寿命をこの割合まで減らす
 let dayStartTime = Date.now();
 let lastHourTime = dayStartTime;
@@ -2088,7 +2060,6 @@ const partnerChocolateSeekFatigueRatio = 0.6; // 脳疲労がこの割合を超�
 const partnerFollowOffsetX = -95;
 const partnerFollowOffsetY = 65;
 const partnerBaseFireRate = 700; // 自律攻撃の間隔（ミリ秒）
-const partnerFiringFatiguePerShot = 8;
 const partnerContactSanMultiplier = 3; // 接触時のSANダメージ = 敵の種類 × この倍率（プレイヤーよりやや軽め）
 const partnerInvincibleDuration = 1200;
 const partnerLossSanPenalty = 20; // 同僚が力尽きたとき、プレイヤーが受けるSANダメージ
@@ -2501,9 +2472,6 @@ function updatePartner(dt) {
   partner.friendlyFireInvincibleTimer = Math.max(0,
     partner.friendlyFireInvincibleTimer - dt * 1000);
 
-  // 疲労回復（プレイヤーの待機時回復と同じ割合を流用。時間帯の下限より下へは回復しない）
-  partner.fatigue = Math.max(getFatigueRecoveryFloor(), partner.fatigue - idleRecoveryPerSec * dt);
-
   // 追従する時間を減らし、画面内を広く自発的に徘徊する。
   partner.wanderTimer -= dt * 1000;
   if (partner.wanderTimer <= 0) {
@@ -2606,11 +2574,9 @@ function updatePartner(dt) {
   // 自律攻撃：最も近い敵へ向けて、既存の弾配列にそのまま追加する
   // 賢さ・性格・脳疲労に応じて、無駄撃ちを避けたり、狙いが不正確になったりする
   partner.fireTimer -= dt * 1000;
-  // 自分の脳疲労が100に達してしまうような攻撃はしない（休息中も同様に攻撃しない）
-  const wouldMaxOutPartnerFatigue = partner.fatigue + partnerFiringFatiguePerShot >= maxFatigue;
   // セッションハイジャック・内部不正：一定時間、同僚が乗っ取られて攻撃をやめる
   if (partner.fireTimer <= 0 && (enemies.length > 0 || scheduledReport || fixedEnemies.length > 0 || bossEvent) &&
-      !partner.fatigueResting && !wouldMaxOutPartnerFatigue && (partner.hijackedTimerMs || 0) <= 0) {
+      !partner.fatigueResting && (partner.hijackedTimerMs || 0) <= 0) {
     const intelligence = getPartnerEffectiveIntelligence();
     const recklessness = getPartnerEffectiveRecklessness();
     const fatigueRatio = partner.fatigue / maxFatigue;
@@ -2678,7 +2644,6 @@ function updatePartner(dt) {
           bounces: 0,
           owner: 'partner'
         });
-        partner.fatigue = Math.min(maxFatigue, partner.fatigue + partnerFiringFatiguePerShot);
         // 夜間は疲労そのものではなく発砲間隔を伸ばし、攻撃頻度を落とすことでパフォーマンス低下を表現する
         partner.fireTimer = partnerBaseFireRate * getTimeOfDayFatigueMultiplier();
       }
@@ -2926,7 +2891,7 @@ const specialSkillEffects = getDefaultSpecialSkillEffects();
 const specialSkills = [
   { id: 'dual-shot', name: 'マルチタスク', description: 'レベルごとに同時発射する弾が1発増える。追加の弾は正面から±20度以内のランダムな方向へ飛ぶ', maxLevel: 5 },
   { id: 'speed-up', name: 'フットワーク', description: '移動速度が上がる（Lv1:1.1倍 → Lv5:2.0倍）', maxLevel: 5 },
-  { id: 'fatigue-save', name: '脳疲労耐性', description: '射撃による脳疲労を軽減する（Lv1:-35% → Lv5:-50%）', maxLevel: 5 },
+  { id: 'fatigue-save', name: '脳疲労耐性', description: '時間経過による脳疲労の蓄積を軽減する（Lv1:-35% → Lv5:-50%）', maxLevel: 5 },
   { id: 'rapid-fire', name: '処理速度A', description: '発射間隔を短縮する（Lv1:当初の75% → Lv5:当初の30%）', maxLevel: 5 },
   { id: 'high-speed-bullet', name: '処理速度B', description: '弾の速度を上げる（Lv1:当初の140% → Lv5:当初の300%）', maxLevel: 5 },
   { id: 'short-sleeper', name: 'パワーナップ', description: '行動不能（stun）時間を半分にする', maxLevel: 1 },
@@ -3150,7 +3115,7 @@ const rankSkillDefs = [
   { rank: 4, id: 'orm', name: 'O/Rマッパー', description: '獲得Score+15%' },
   { rank: 5, id: 'auto-test', name: '自動テスト', description: '被SANダメージ-20%' },
   { rank: 5, id: 'cicd', name: 'CI/CD', description: '発射間隔-20%' },
-  { rank: 5, id: 'build-automation', name: 'ビルド自動化', description: '射撃による脳疲労-20%' },
+  { rank: 5, id: 'build-automation', name: 'ビルド自動化', description: '脳疲労の蓄積速度-20%' },
   {
     rank: 6, id: 'agile', name: 'アジャイル開発',
     description: '敵の納期+20%。また「巨大案件」は、7つのどこに当てても今対応すべき番号への命中として扱われる'
@@ -5366,10 +5331,32 @@ const deflectRange = 90; // これより近くにある同僚弾だけをパリ�
 // 「同僚のオートパリィレベル」で最大100%まで強化できる
 let partnerParryChance = Math.min(1, 0.3 + dreamMemorySave.upgrades.partnerAutoParry * 0.14); // ゲーム開始時にapplyDreamMemoryUpgradesForNewGameで再計算
 const deflectDamageMultiplier = 2; // パリィした弾は通常の2倍のダメージになる
-const deflectFatigueCost = 5; // キーを振るたび（成否問わず）暫定的に蓄積する脳疲労
+// パリィによる直接攻撃：パリィの効果範囲に敵本体の判定範囲が重なっている場合、直接ダメージを与える
+const parryDirectDamage = 2;
+function damageEnemyDirectByParry(en) {
+  updateSkillEffects();
+  const damageBonus = 1 + skillLevel * 0.08;
+  const actualDmg = Math.max(1, Math.round(parryDirectDamage * damageBonus));
+  en.hp = (en.hp || 1) - actualDmg;
+  spawnHitSpark(en.x, en.y, en.hp <= 0);
+  if (en.hp > 0) return;
+  const pts = Math.ceil(en.type * 3 * specialSkillEffects.scoreGainMultiplier);
+  score += pts;
+  exp += en.type * 5 * specialSkillEffects.expGainMultiplier;
+  updateSkillEffects();
+  if (en.hitByPartner && partner.active) {
+    showRandomPartnerSpeechBubbleIfFriendly(partnerThanksLines, '#69f0ae', partnerThanksStressedLines);
+    if (Math.random() < partnerThanksRelationshipChance) adjustPartnerRelationship(1);
+  }
+  const idx = enemies.indexOf(en);
+  if (idx >= 0) enemies.splice(idx, 1);
+  weeklyKills++;
+  weeklyScoreGained += pts;
+  checkEarlyQuotaAchievement();
+  if (enemies.length === 0) waveCooldownMs = waveCooldownDelayMs;
+}
 function attemptDeflectPartnerBullet() {
   if (stunned) return;
-  applyFatigueGain(deflectFatigueCost);
   spawnSlashEffect(player.x, player.y, player.angle, player.radius); // 命中の有無に関わらず、振った動作自体を見せる
   // 範囲内の条件を満たす弾は、まとめて同時にパリィする（1発だけに限らない）
   const targets = bullets.filter(b => {
@@ -5380,12 +5367,20 @@ function attemptDeflectPartnerBullet() {
     const d = Math.hypot(b.x - player.x, b.y - player.y);
     return d <= deflectRange + b.radius;
   });
-  if (targets.length === 0) return;
+  // パリィの効果範囲に本体が重なっている敵は、弾の有無に関わらず直接攻撃の対象にする
+  const meleeTargets = enemies.filter(en => Math.hypot(en.x - player.x, en.y - player.y) <= deflectRange + en.radius);
+  if (targets.length === 0 && meleeTargets.length === 0) return;
 
+  // パリィ（弾のはじき返し、または直接攻撃）に成功した時だけ、脳疲労が1蓄積する
+  applyFatigueGain(fatigueParryGain);
   for (const target of targets) {
     performBulletParry(target, player.x, player.y, player.angle);
   }
-  showMessage(targets.length > 1 ? `パリィ成功！（${targets.length}発同時）` : 'パリィ成功！', 1400, '#fff176');
+  meleeTargets.forEach(en => damageEnemyDirectByParry(en));
+  const messageParts = [];
+  if (targets.length > 0) messageParts.push(targets.length > 1 ? `弾${targets.length}発` : '弾');
+  if (meleeTargets.length > 0) messageParts.push(meleeTargets.length > 1 ? `敵${meleeTargets.length}体` : '敵');
+  showMessage(`パリィ成功！（${messageParts.join('・')}）`, 1400, '#fff176');
 }
 // スマホ用自動照準のターゲットを返す。定時報告が出ている間は、同僚の自律攻撃と同様にそちらを優先する
 // allowPartner: 完全オート・自動攻撃モードではない（自分の意思で撃っている）時にtrue。
@@ -5787,8 +5782,8 @@ function update() {
   // 「同僚と遊ぶ」アドベンチャーパート中は、ゲームの進行を止める
   if (adventureState) return;
 
-  // 攻撃による脳疲労増加の「1秒に1回」チェーンを進める
-  updateFatigueTickChain(dt);
+  // 脳疲労は発射とは無関係に、時間経過だけで緩やかに蓄積する
+  updatePassiveFatigueGain(dt);
   if (gameOver || deathSequence) return;
 
   // 一時メッセージの残り表示時間を減らし、期限切れなら削除する
@@ -5900,16 +5895,30 @@ function update() {
     }
   }
 
-  // 残業中（定時報告や「巨大案件」が残ったまま終業時刻を過ぎている間）は、SAN・寿命が継続的に削れていく
+  // 残業中（定時報告や「巨大案件」が残ったまま終業時刻を過ぎている間）は、SANが段階的に削れていく。
+  // 24時になっても「巨大案件」などの戦闘が続いていれば、同じペースでそのまま減り続ける
   if ((scheduledReport || midBossEvent) && currentHour >= dayEndHour) {
-    san = Math.max(0, san - overtimeSanDrainPerSec * dt);
+    const sanStepMs = (3600 / overtimeSanDrainPerHour) * 1000; // ゲーム内10分ごとに1減少
+    overtimeSanDrainAccumMs += dt * 1000;
+    while (overtimeSanDrainAccumMs >= sanStepMs) {
+      overtimeSanDrainAccumMs -= sanStepMs;
+      san = Math.max(0, san - 1);
+    }
     lifespan = Math.max(0, lifespan - overtimeLifespanDrainPerSec * dt);
     if (partner.active) {
-      partner.san = Math.max(0, partner.san - overtimeSanDrainPerSec * partnerOvertimeDrainRatio * dt);
+      const partnerSanStepMs = sanStepMs / partnerOvertimeDrainRatio;
+      partnerOvertimeSanDrainAccumMs += dt * 1000;
+      while (partnerOvertimeSanDrainAccumMs >= partnerSanStepMs) {
+        partnerOvertimeSanDrainAccumMs -= partnerSanStepMs;
+        partner.san = Math.max(0, partner.san - 1);
+      }
       partner.lifespan = Math.max(0, partner.lifespan - overtimeLifespanDrainPerSec * partnerOvertimeDrainRatio * dt);
     }
     checkVitalsGameOver();
     if (gameOver || deathSequence) return;
+  } else {
+    overtimeSanDrainAccumMs = 0;
+    partnerOvertimeSanDrainAccumMs = 0;
   }
 
   // 全滅したら少し間を置いて次のウェーブ（仕事）を出す。
@@ -6235,18 +6244,7 @@ function update() {
       }
     }
 
-    // 疲労を回復する。移動中は待機中より回復量が少ない。
-    // ただし時間帯に応じた下限（getFatigueRecoveryFloor）より下へは回復しない
     updateSkillEffects();
-    const fatigueFloor = getFatigueRecoveryFloor();
-    // マルウェア感染・サプライチェーン攻撃・水飲み場攻撃：感染中は疲労回復が無効化される
-    if (fixedEnemyRecoveryDisabledTimerMs <= 0) {
-      if (moving) {
-        fatigue = Math.max(fatigueFloor, fatigue - (idleRecoveryPerSec * 0.35) * dt);
-      } else {
-        fatigue = Math.max(fatigueFloor, fatigue - idleRecoveryPerSec * specialSkillEffects.idleRecoveryMultiplier * dt);
-      }
-    }
 
     // 攻撃モードに関係なく、自分は常にマウスカーソルの方向を向く。
     // スマホ用の自動照準・完全オートモードが有効な間は、代わりに定時報告（出ていれば優先）か最も近い敵の方向を向く。
@@ -6268,18 +6266,12 @@ function update() {
     const currentFireRate = baseFireRate * (1 + fatigueRatio * fireRateMultiplier) *
       specialSkillEffects.fireRateMultiplier * getEnergyDrinkFireRateMultiplier() *
       getCoffeeFireRateMultiplier() * getFixedEnemyFireRateMultiplier();
-    // 自動攻撃モード・完全オートモードは、stunになる手前で自動的に連射を控え、疲労が半分程度まで下がったら再開する
     const autoFiringActive = autoFireEnabled || fullAutoModeEnabled;
-    if (fatigue >= maxFatigue - autoFireStunSafetyMargin) {
-      autoFireResting = true;
-    } else if (autoFireResting && fatigue <= Math.max(maxFatigue * 0.5, getFatigueRecoveryFloor())) {
-      autoFireResting = false;
-    }
     // 自動攻撃モード・完全オートモードは、射線上に同僚がいる間は誤射を避けて撃たない。
     // 完全オートモードはさらに、射線のすぐ近くに同僚がいる場合も余裕を持って撃つのを控える
     const autoFireBlockedByPartner = autoFiringActive &&
       wouldPlayerShotHitPartner(player.angle, 4, fullAutoModeEnabled ? fullAutoPartnerLineOfFireMargin : 0);
-    const wantsToFire = (autoFiringActive && !autoFireResting && !autoFireBlockedByPartner) || mouseFireHeld;
+    const wantsToFire = (autoFiringActive && !autoFireBlockedByPartner) || mouseFireHeld;
     // CSRF・クリックジャッキング：一定時間、意図しない操作をさせられて攻撃できなくなる
     if (wantsToFire && !stunned && fixedEnemyFireLockTimerMs <= 0) {
       if (now - lastFire >= currentFireRate) {
@@ -6338,9 +6330,6 @@ function update() {
               owner: 'player'
             });
           }
-          // 発射時に疲労を増やす。1秒間攻撃し続けていても増加は1秒に1回分にまとめ、
-          // マルチタスク（同時複数発）で撃った場合はその1回分の負荷を1.5倍にする
-          registerFatigueAttack(shotOffsets.length > 1);
         }
       }
     }
@@ -9168,8 +9157,7 @@ function draw() {
   ctx.fillStyle = 'white';
   ctx.fillText(
     '攻撃モード: ' + (fullAutoModeEnabled ? '完全オート' : (autoFireEnabled ? '自動' : '手動')) +
-      (stunned ? '（行動不能）' :
-        ((autoFireEnabled || fullAutoModeEnabled) && autoFireResting ? '（疲労のため一時休止）' : '')),
+      (stunned ? '（行動不能）' : ''),
     12, 268
   );
   // 完全オートモード・3倍加速・スマホ用自動照準：左下に縦にコンパクトに並べる。
