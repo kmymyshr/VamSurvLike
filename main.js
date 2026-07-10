@@ -1590,8 +1590,6 @@ let weeklyQuizCount = 0;
 let quizState = null;
 let quizAnswerUnlockAt = 0; // この時刻（Date.now()基準）を過ぎるまで選択肢に触れても回答にならない
 let quizExpireAt = 0; // この時刻（Date.now()基準）を過ぎたら、未回答のままクイズを消す
-let internalItKnowledge = 0;
-let internalCommunicationSkill = 0;
 const quizQuestions = [
   { category: 'it', text: 'CPUの役割として最も適切なものはどれか。',
     choices: ['演算処理や各装置の制御を行う', 'データを長期間保存する', 'プリンタへ印刷する'], correct: 0 },
@@ -1694,14 +1692,11 @@ function answerQuiz(answerIndex) {
   const answer = quizState.answerTokens[answerIndex];
   if (!answer) return;
   if (answer.correct) {
-    if (quizState.category === 'it') internalItKnowledge++;
-    else internalCommunicationSkill++;
-    showMessage(
-      `クイズ正解！ ${quizState.category === 'it' ? 'IT知識' : 'コミュニケーション知識'}が上昇しました`,
-      2200, '#69f0ae', '22px sans-serif'
-    );
+    adjustPartnerRelationship(5);
+    showMessage('クイズ正解！ IT知識が上昇し、同僚の好感度が上がりました', 2200, '#69f0ae', '22px sans-serif');
     if (partner.active) showRandomPartnerSpeechBubbleIfFriendly(partnerQuizCorrectLines, '#69f0ae', partnerQuizCorrectStressedLines);
   } else {
+    adjustPartnerRelationship(-1);
     showMessage('クイズ不正解…', 2200, '#ef9a9a', '22px sans-serif');
     if (partner.active) showRandomPartnerSpeechBubble(partnerQuizWrongLines, '#ffb74d', partnerQuizWrongStressedLines);
   }
@@ -2218,6 +2213,14 @@ const partnerQuizCorrectStressedLines = [
   'はぁ…なんとか当たりましたね',
   '今は、それだけで救われます…',
   'ほっとしました…'
+];
+// クイズに答えないまま選択肢が消えた時のコメント（軽くネガティブな反応）
+const partnerQuizTimeoutLines = [
+  'あれ、答えないんですか…',
+  'せっかく出したのに、スルーですか',
+  '……無視されました？',
+  '時間切れです。もったいないですね',
+  'あら、興味なかったですか'
 ];
 
 // ===== 同僚が自機弾をパリィした時のコメント =====
@@ -4074,7 +4077,7 @@ function performBulletParry(bullet, fromX, fromY, actorAngle) {
 
 // ===== ラスボス（自機・同僚のSANが同時に20を切ると出現する、名状しがたい巨大な敵） =====
 // 通常の敵は出現を止め、発射口だけが弱点になる特別な戦闘に切り替わる（通常弾・パリィで打ち返した弾のどちらも有効打）
-const bossImage = loadImage('images/dreamcatcher/last_boss.png');
+const bossImage = loadImage('images/dreamcatcher/last_boss_normal.png');
 const bossSanTriggerThreshold = 20;
 const bossWidthRatio = 0.7; // 画面幅に対するラスボスの幅の割合
 const bossHeight = 210; // ラスボスが窓を覆う高さ
@@ -6206,7 +6209,9 @@ function update() {
   // 出現から実時間で一定時間、未回答のまま放置されたクイズは自動的に消える（3倍加速の影響を受けない）
   if (quizState && Date.now() >= quizExpireAt) {
     quizState = null;
+    adjustPartnerRelationship(-2);
     showMessage('クイズは時間切れで消えてしまった…', 2200, '#ef9a9a', '22px sans-serif');
+    if (partner.active) showRandomPartnerSpeechBubble(partnerQuizTimeoutLines, '#ffb74d');
   }
 
   // マップ上の番号アイコンへ触れるとクイズへ回答する（出現直後の誤回答を防ぐため、少しの間は反応しない）
