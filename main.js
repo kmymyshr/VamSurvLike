@@ -976,6 +976,9 @@ let dayTransitionPhase = null; // null / 'out' / 'in'
 let dayTransitionTimer = 0;
 const dayTransitionDurationMs = 650; // フェードアウト・フェードインそれぞれの長さ
 let dayTransitionAdvanceFn = null; // 画面が暗転しきった瞬間に実行する、実際の日付更新処理
+// 完全オートモード中、「DAY〇〇」のクリック待ち画面で経過した時間（この時間が経つと自動でクリックした扱いにする）
+let dayTransitionWaitingTimerMs = 0;
+const dayTransitionAutoAdvanceMs = 3000;
 
 // ===== DAYカウンターと週次ノルマシステム =====
 // dayNumber変数は、敵の強さ調整に使うためファイル前半で宣言済み
@@ -3279,6 +3282,9 @@ const specialSkillSelectionLockDurationMs = 1000; // 表示直後の連続タッ
 let specialSkillSelectionUnlockAt = 0; // この時刻（Date.now()基準）を過ぎるまで選択を受け付けない
 const specialSkillMaxRerolls = 3; // 1回のプレイ（ゲーム開始～終了）を通して選び直せる合計回数。選択のたびに回復はしない
 let specialSkillRerollsRemaining = specialSkillMaxRerolls;
+// 完全オートモード中、選択画面が表示されてからこの時間クリックがなければ、ランダムに1つ選んだ扱いにする
+const specialSkillSelectionAutoPickDelayMs = 3000;
+let specialSkillSelectionAutoPickAt = 0;
 
 // 取得済みスキルも候補に含め、再取得するとレベルアップできる（ただしmaxLevelに達したスキルは除外する）
 function getAvailableSpecialSkillsPool() {
@@ -3301,6 +3307,7 @@ function openSpecialSkillSelection(title) {
   specialSkillSelectionTitle = title;
   specialSkillSelectionActive = true;
   specialSkillSelectionUnlockAt = Date.now() + specialSkillSelectionLockDurationMs;
+  specialSkillSelectionAutoPickAt = Date.now() + specialSkillSelectionAutoPickDelayMs;
   // リロール回数はゲーム全体を通しての合計なので、選択画面を開くたびには回復させない
 }
 
@@ -6408,7 +6415,16 @@ function update() {
   // 一日の終わりの画面演出中は、フェードの進行だけを行い、他の処理はすべて止める（3倍加速の影響を受けない）
   if (dayTransitionPhase) {
     if (dayTransitionPhase === 'waiting') {
-      // クリック／タップされるまで、暗転したまま入力待ちにする
+      // クリック／タップされるまで、暗転したまま入力待ちにする。
+      // ただし完全オートモード中は、3秒経過したら自動でクリックした扱いにして次へ進める
+      if (fullAutoModeEnabled && !specialSkillSelectionActive) {
+        dayTransitionWaitingTimerMs += rawDt * 1000;
+        if (dayTransitionWaitingTimerMs >= dayTransitionAutoAdvanceMs) {
+          dayTransitionPhase = 'in';
+          dayTransitionTimer = dayTransitionDurationMs;
+          lastUpdate = Date.now();
+        }
+      }
       return;
     }
     dayTransitionTimer -= rawDt * 1000;
@@ -6422,6 +6438,7 @@ function update() {
       // 前日中に表示されていた一時メッセージ（イベント結果など）は、翌日の「DAY〇〇」画面には持ち越さず消す
       messages.length = 0;
       dayTransitionPhase = 'waiting';
+      dayTransitionWaitingTimerMs = 0;
     } else if (dayTransitionPhase === 'in' && dayTransitionTimer <= 0) {
       dayTransitionPhase = null;
     }
@@ -6730,6 +6747,12 @@ function update() {
     answerQuiz(fullAutoQuizChoiceIndex);
   } else if (!quizState) {
     fullAutoQuizChoiceIndex = null;
+  }
+
+  // 完全オートモード中、レベルアップの特殊スキル選択画面が出てから3秒クリックがなければ、
+  // ランダムに1つ選んだ扱いにする
+  if (specialSkillSelectionActive && fullAutoModeEnabled && Date.now() >= specialSkillSelectionAutoPickAt) {
+    chooseSpecialSkill(Math.floor(Math.random() * specialSkillChoices.length));
   }
 
   if (stunned) {
@@ -10124,22 +10147,21 @@ function draw() {
 
   // 「自己犠牲」「献身」：習得済みかつ同僚が健在で、まだこの周回で使っていない時だけ、
   // 同僚のプロフィール区画（x:164, y:12, w:145, h:204）内の、ステータス文字の下・区画下端より上の
-  // 余白部分に、十字型の小さなボタンを横に並べて表示する（1周回につき1回のみ発動可能）
+  // 余白部分に、十字型の小さなボタンを右寄せで縦に並べて表示する（1周回につき1回のみ発動可能）
   const partnerPanelX = 164, partnerPanelW = 145, partnerPanelBottom = 12 + 204;
-  const oneTimeSkillBtnSize = 30, oneTimeSkillBtnGap = 8;
-  const oneTimeSkillBtnY = partnerPanelBottom - oneTimeSkillBtnSize - 10;
-  const oneTimeSkillTotalW = oneTimeSkillBtnSize * 2 + oneTimeSkillBtnGap;
-  let oneTimeSkillBtnX = partnerPanelX + (partnerPanelW - oneTimeSkillTotalW) / 2;
-  if (dreamMemorySave.upgrades.selfSacrifice >= 1 && !selfSacrificeUsedThisRun && partner.active) {
-    drawUiButton(oneTimeSkillBtnX, oneTimeSkillBtnY, oneTimeSkillBtnSize, oneTimeSkillBtnSize,
-      '✝', useSelfSacrificeSkill,
-      { fillStyle: 'rgba(140, 20, 20, 0.65)', strokeStyle: '#ef9a9a', font: 'bold 16px sans-serif' });
-    oneTimeSkillBtnX += oneTimeSkillBtnSize + oneTimeSkillBtnGap;
-  }
+  const oneTimeSkillBtnSize = 24, oneTimeSkillBtnGap = 6, oneTimeSkillBtnRightMargin = 10;
+  const oneTimeSkillBtnX = partnerPanelX + partnerPanelW - oneTimeSkillBtnSize - oneTimeSkillBtnRightMargin;
+  let oneTimeSkillBtnY = partnerPanelBottom - oneTimeSkillBtnSize - 8;
   if (dreamMemorySave.upgrades.devotion >= 1 && !devotionUsedThisRun && partner.active) {
     drawUiButton(oneTimeSkillBtnX, oneTimeSkillBtnY, oneTimeSkillBtnSize, oneTimeSkillBtnSize,
       '✝', useDevotionSkill,
-      { fillStyle: 'rgba(20, 60, 140, 0.65)', strokeStyle: '#90caf9', font: 'bold 16px sans-serif' });
+      { fillStyle: 'rgba(20, 60, 140, 0.65)', strokeStyle: '#90caf9', font: 'bold 14px sans-serif' });
+    oneTimeSkillBtnY -= oneTimeSkillBtnSize + oneTimeSkillBtnGap;
+  }
+  if (dreamMemorySave.upgrades.selfSacrifice >= 1 && !selfSacrificeUsedThisRun && partner.active) {
+    drawUiButton(oneTimeSkillBtnX, oneTimeSkillBtnY, oneTimeSkillBtnSize, oneTimeSkillBtnSize,
+      '✝', useSelfSacrificeSkill,
+      { fillStyle: 'rgba(140, 20, 20, 0.65)', strokeStyle: '#ef9a9a', font: 'bold 14px sans-serif' });
   }
 
   // 一時メッセージを画面上部の中央に表示する
