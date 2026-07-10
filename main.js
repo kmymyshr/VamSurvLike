@@ -577,6 +577,8 @@ const fatigueAutoFireBonusRatePerHour = 12; // オート連射中は、上記に
 const fatigueParryGain = 1; // パリィが成功するたびに増える脳疲労
 const stunRecoveryPerSec = 18; // 行動不能中は脳疲労を回復する（自動回復が起きる唯一のケース）
 const fireRateMultiplier = 1.5; // 疲労が多いほど発射間隔を延ばす倍率
+// 朝から夜にかけて時間が経つほど、同僚の自律攻撃の間隔が伸びる（パフォーマンス低下の表現。脳疲労の値自体には影響しない）
+const timeOfDayFatigueMultiplierMax = 1.8; // 終業時刻ごろに到達する最大倍率
 let baseBulletDamage = 2 + dreamMemorySave.upgrades.bulletDamage; // 疲労がないときの基本攻撃力（夢の記憶ポイントの「初期攻撃力」で底上げされる、ゲーム開始時にapplyDreamMemoryUpgradesForNewGameで再計算）
 
 // ===== 回復アイテム（チョコレート） =====
@@ -617,30 +619,13 @@ function spawnChocolate() {
   };
 }
 
-// ===== 固定設備（コーヒーメーカー・冷蔵庫） =====
-// 画面端に固定で置かれ、それぞれコーヒー・栄養ドリンクをすぐ隣に生成し続ける
-const coffeeMakerPosition = { x: 50, y: 340 };
-const fridgePosition = { x: 750, y: 340 };
-const coffeeItemSpawnPosition = { x: coffeeMakerPosition.x + 60, y: coffeeMakerPosition.y };
-const energyDrinkItemSpawnPosition = { x: fridgePosition.x - 60, y: fridgePosition.y };
-const stationRespawnDelayMs = 3000; // 取得後、この設備の隣にまた出現するまでの時間
-
-function drawStation(x, y, icon, label, color) {
-  ctx.save();
-  ctx.fillStyle = 'rgba(40, 40, 48, 0.85)';
-  ctx.fillRect(x - 26, y - 32, 52, 64);
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 2;
-  ctx.strokeRect(x - 26, y - 32, 52, 64);
-  ctx.font = '28px "Segoe UI Emoji", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(icon, x, y - 6);
-  ctx.font = 'bold 11px sans-serif';
-  ctx.fillStyle = color;
-  ctx.fillText(label, x, y + 22);
-  ctx.restore();
-}
+// ===== コーヒー・栄養ドリンクの自動配置位置（コーヒーメーカー・冷蔵庫自体は表示しない） =====
+// 画面下部の固定位置に、それぞれコーヒー・栄養ドリンクを生成し続ける
+const coffeeMakerPosition = { x: 90, y: 520 };
+const fridgePosition = { x: 710, y: 520 };
+const coffeeItemSpawnPosition = { x: coffeeMakerPosition.x, y: coffeeMakerPosition.y };
+const energyDrinkItemSpawnPosition = { x: fridgePosition.x, y: fridgePosition.y };
+const stationRespawnDelayMs = 3000; // 取得後、この位置にまた出現するまでの時間
 
 // ===== 回復アイテム（栄養ドリンク） =====
 // チョコレートより効果は強いが出現頻度は低い上位互換の回復アイテム。時間経過では消えない
@@ -8523,9 +8508,6 @@ function draw() {
   drawBackground();
   drawBossEvent();
   drawMidBossEvent();
-  // 画面端に固定で置かれた、コーヒーメーカーと冷蔵庫
-  drawStation(coffeeMakerPosition.x, coffeeMakerPosition.y, '☕', 'COFFEE', '#a1887f');
-  drawStation(fridgePosition.x, fridgePosition.y, '🧊', 'FRIDGE', '#80deea');
   // 敵・アイコン・自分/同僚などの前景要素に薄い影をつけ、背景から浮き上がって見やすくする
   ctx.shadowColor = 'rgba(0, 0, 0, 0.65)';
   ctx.shadowBlur = 4;
