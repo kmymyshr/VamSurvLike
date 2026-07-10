@@ -619,6 +619,27 @@ function spawnChocolate() {
   };
 }
 
+// クリック／タップ、または完全オートモードで取得された時に呼ばれる
+function consumeChocolate() {
+  const recoveryAmount = Math.ceil(
+    maxFatigue * chocolateRecoveryRatio * specialSkillEffects.chocolateRecoveryMultiplier
+  );
+  const reducedFatigue = Math.min(fatigue, recoveryAmount);
+  fatigue -= reducedFatigue;
+  san = Math.min(maxSan, san + chocolateSanRecovery);
+  chocolateDailyCount++;
+  const lifespanEffect = getChocolateLifespanEffect(chocolateDailyCount);
+  lifespan = Math.max(0, Math.min(maxLifespan, lifespan + lifespanEffect));
+  showMessage(
+    `チョコレート取得！ 脳疲労 -${Math.ceil(reducedFatigue)} / SAN +${chocolateSanRecovery} / 寿命 ${lifespanEffect >= 0 ? '+' : ''}${lifespanEffect}` +
+    `（本日${chocolateDailyCount}個目）`,
+    1800, '#ffcc80'
+  );
+  checkVitalsGameOver();
+  chocolate = null;
+  chocolateSpawnTimerMs = getRandomChocolateSpawnDelay();
+}
+
 // ===== コーヒー・栄養ドリンクの自動配置位置（コーヒーメーカー・冷蔵庫自体は表示しない） =====
 // 画面下部の固定位置に、それぞれコーヒー・栄養ドリンクを生成し続ける
 const coffeeMakerPosition = { x: 90, y: 520 };
@@ -676,6 +697,32 @@ function spawnEnergyDrink() {
     fallSpeed: 0,
     landed: true
   };
+}
+
+// クリック／タップ、または完全オートモードで取得された時に呼ばれる
+function consumeEnergyDrink() {
+  energyDrinkDailyCount++;
+  energyDrinkTotalCount++;
+  const isSecondOrLater = energyDrinkDailyCount >= 2;
+  const isCrossDrink = coffeeBuffTimerMs > 0;
+  const totalLifespanCost = energyDrinkLifespanCost +
+    (isSecondOrLater ? energyDrinkSecondDrinkLifespanCost : 0) +
+    (isCrossDrink ? coffeeCrossDrinkLifespanCost : 0);
+  const reducedFatigue = Math.min(fatigue, energyDrinkFatigueReduction);
+  fatigue -= reducedFatigue;
+  san = Math.min(maxSan, san + energyDrinkSanRecovery);
+  lifespan = Math.max(0, lifespan - totalLifespanCost);
+  energyDrinkBuffTimerMs = energyDrinkBuffDurationMs;
+  energyDrinkCrashTimerMs = 0; // 反動状態が残っていても、新たに飲めば打ち消してすぐ強化状態に入る
+  if (currentHour >= dayEndHour) eveningDrinkRecoveryPenalty = true;
+  showMessage(
+    `栄養ドリンク取得！ 脳疲労 -${Math.ceil(reducedFatigue)} / SAN +${energyDrinkSanRecovery} / 寿命 -${totalLifespanCost}` +
+    (isSecondOrLater ? '（本日2本目以降…）' : '') + (isCrossDrink ? '（コーヒーとの飲み合わせ…）' : ''),
+    1800, '#80deea'
+  );
+  checkVitalsGameOver();
+  energyDrink = null;
+  energyDrinkSpawnTimerMs = getRandomEnergyDrinkSpawnDelay();
 }
 
 // ===== 回復アイテム（コーヒー） =====
@@ -776,6 +823,27 @@ function spawnCoffee() {
   };
 }
 
+// クリック／タップ、または完全オートモードで取得された時に呼ばれる
+function consumeCoffee() {
+  coffeeDailyCount++;
+  coffeeTotalCount++;
+  coffeeStunImmunityCharges++;
+  const isCrossDrink = energyDrinkBuffTimerMs > 0;
+  const totalLifespanCost = coffeeLifespanCost + (isCrossDrink ? coffeeCrossDrinkLifespanCost : 0);
+  san = Math.min(maxSan, san + coffeeSanRecovery);
+  lifespan = Math.max(0, lifespan - totalLifespanCost);
+  coffeeBuffTimerMs = coffeeBuffDurationMs;
+  if (currentHour >= dayEndHour) eveningDrinkRecoveryPenalty = true;
+  showMessage(
+    `コーヒー取得！ SAN +${coffeeSanRecovery} / 寿命 -${totalLifespanCost}` +
+    (isCrossDrink ? '（栄養ドリンクとの飲み合わせ…）' : ''),
+    1800, '#a1887f'
+  );
+  checkVitalsGameOver();
+  coffee = null;
+  coffeeSpawnTimerMs = getRandomCoffeeSpawnDelay();
+}
+
 // ===== コーヒー・栄養ドリンクを夕方以降に飲んだ場合のペナルティ =====
 // その日の終業時（自然回復）のSAN・脳疲労回復量が半分になる
 let eveningDrinkRecoveryPenalty = false;
@@ -813,6 +881,18 @@ function spawnHeartWall() {
     landed: false,
     remainingMs: heartWallLifetimeMs
   };
+}
+
+// クリック／タップ、または完全オートモードで取得された時に呼ばれる
+function consumeHeartWall() {
+  playerBarrierCharges += heartWallBarrierCharges;
+  if (partner.active) partner.barrierCharges += heartWallBarrierCharges;
+  showMessage(
+    `ファイヤーウォールを手に入れた！ 誤射・敵の接触ダメージを${heartWallBarrierCharges}回まで防ぐバリアを展開`,
+    2200, '#b39ddb'
+  );
+  heartWall = null;
+  heartWallSpawnTimerMs = getRandomHeartWallSpawnDelay();
 }
 
 // ===== ゲーム内の時刻・一日進行システム =====
@@ -5513,23 +5593,6 @@ function computeFullAutoDodgeVector(dt) {
   return { x: vx / len, y: vy / len };
 }
 
-// 優先度3〜5：食事（近い順）→チョコレート→ファイヤーウォールの順で、拾いに行く対象を返す
-function findFullAutoSeekTarget() {
-  if (lunchState && lunchState.items.length > 0) {
-    return lunchState.items.reduce((closest, item) => {
-      const d = Math.hypot(item.x - player.x, item.y - player.y);
-      return (!closest || d < closest.d) ? { x: item.x, y: item.y, d } : closest;
-    }, null);
-  }
-  if (chocolate && chocolate.landed) {
-    return { x: chocolate.x, y: chocolate.y };
-  }
-  if (heartWall && heartWall.landed) {
-    return { x: heartWall.x, y: heartWall.y };
-  }
-  return null;
-}
-
 // 優先度2：近い敵から離れようとする反発ベクトルを返す（敵との接触を避けるため。かなり近づいてから反応する）
 function computeFullAutoEnemyAvoidanceVector() {
   const avoidMargin = 24; // 敵の半径に加えて、これだけの余裕を保とうとする
@@ -5550,8 +5613,8 @@ function computeFullAutoEnemyAvoidanceVector() {
 
 // 完全オートモード中の移動方向（-1〜1に正規化済み）を、優先度順に1つだけ選んで決める
 // （複数の意図を混ぜず、優先度が高いものだけに従うことで振動を防ぐ）
-// 優先度1: 同僚弾の回避 → 優先度2: 近い敵からの回避 → 優先度3〜5: 食事・チョコレート・ファイヤーウォール
-// → 優先度6: 同僚との距離を置く
+// 優先度1: 同僚弾の回避 → 優先度2: 近い敵からの回避 → 優先度3: 同僚との距離を置く
+// （食事・チョコレート・ファイヤーウォールは着地と同時に自動取得するため、拾いに行く移動は行わない）
 // 敵の反発がほぼ打ち消し合って板挟みになった時、振動せずランダムな方向へ抜け出すための状態
 const fullAutoStuckVectorThreshold = 0.15; // 合成ベクトルの大きさがこれ未満なら「板挟み」とみなす
 const fullAutoEscapeDurationMs = 500; // 一度ランダムな方向へ逃げ始めたら、この間は同じ方向を保つ
@@ -5593,17 +5656,7 @@ function computeFullAutoMoveVector(dt) {
   }
   fullAutoEscapeTimerMs = 0;
 
-  // 優先度3〜5：避けるべきものがなければ、食事・チョコレート・ファイヤーウォールの順で拾いに行く
-  const seekTarget = findFullAutoSeekTarget();
-  if (seekTarget) {
-    const dx = seekTarget.x - player.x;
-    const dy = seekTarget.y - player.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist <= 4) return { x: 0, y: 0 };
-    return { x: dx / dist, y: dy / dist };
-  }
-
-  // 優先度7：他に優先事項がなければ、同僚から距離を置く
+  // 優先度3：他に優先事項がなければ、同僚から距離を置く
   // （同僚弾を被弾しにくくし、自機の弾線上に同僚が入って誤射を防ぐ状況自体も減らす）
   if (partner.active) {
     const pdx = player.x - partner.x;
@@ -5614,6 +5667,41 @@ function computeFullAutoMoveVector(dt) {
     }
   }
   return { x: 0, y: 0 };
+}
+
+// クリック／タップした地点が、着地済みのアイテムの上であればそれを取得する（自機のみ。同僚は従来通り自動）
+const itemClickHitTolerance = 6;
+function tryCollectItemAtPoint(p) {
+  if (chocolate && chocolate.landed &&
+      Math.hypot(p.x - chocolate.x, p.y - chocolate.y) <= chocolate.radius + itemClickHitTolerance) {
+    consumeChocolate();
+    return true;
+  }
+  if (coffee && coffee.landed &&
+      Math.hypot(p.x - coffee.x, p.y - coffee.y) <= coffee.radius + itemClickHitTolerance) {
+    consumeCoffee();
+    return true;
+  }
+  if (energyDrink && energyDrink.landed &&
+      Math.hypot(p.x - energyDrink.x, p.y - energyDrink.y) <= energyDrink.radius + itemClickHitTolerance) {
+    consumeEnergyDrink();
+    return true;
+  }
+  if (heartWall && heartWall.landed &&
+      Math.hypot(p.x - heartWall.x, p.y - heartWall.y) <= heartWall.radius + itemClickHitTolerance) {
+    consumeHeartWall();
+    return true;
+  }
+  if (lunchState) {
+    for (let i = lunchState.items.length - 1; i >= 0; i--) {
+      const item = lunchState.items[i];
+      if (Math.hypot(p.x - item.x, p.y - item.y) <= item.radius + itemClickHitTolerance) {
+        collectLunchItem(i);
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 // ===== メニュー選択のタップ／クリック対応 =====
@@ -5667,18 +5755,29 @@ canvas.addEventListener('click', (event) => {
     }
   }
   const p = getCanvasPoint(event);
+  let clickedUiButton = false;
   for (const b of uiButtons) {
     if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) {
       b.action();
+      clickedUiButton = true;
       break;
     }
   }
+  if (clickedUiButton) return;
+
+  // ゲーム本編の画面（タイトル・各種選択画面・演出中でない）でのクリック／タップ：
+  // アイテムに当たればそれを取得し、何もなければオート攻撃のON/OFFを切り替える
+  const inCoreGameplay = !startScreen && setupStep === null && !dreamMemoryShopActive &&
+    !endingListActive && !specialSkillSelectionActive && !adventureState && !reunionSceneActive &&
+    !bossFinalSequence && !normalEndSequence && !isPaused && !wakeUpConfirmActive &&
+    !gameOver && !gameClear && dayTransitionPhase === null;
+  if (inCoreGameplay) {
+    if (tryCollectItemAtPoint(p)) return;
+    autoFireEnabled = !autoFireEnabled;
+  }
 });
 
-// ===== 常時表示の操作ボタン（自動/手動・一時停止） =====
-document.getElementById('btnAutoFire').addEventListener('click', () => {
-  autoFireEnabled = !autoFireEnabled;
-});
+// ===== 常時表示の操作ボタン（一時停止） =====
 document.getElementById('btnPause').addEventListener('click', () => {
   if (wakeUpConfirmActive) return; // 確認ダイアログ表示中はボタンでの再開を無視する
   isPaused = !isPaused;
@@ -6008,29 +6107,9 @@ function update() {
     }
   } else if (chocolate) {
     chocolate.remainingMs -= dt * 1000;
-    const distanceToChocolate = Math.hypot(
-      player.x - chocolate.x,
-      player.y - chocolate.y
-    );
-
-    if (distanceToChocolate <= player.radius + chocolate.radius) {
-      const recoveryAmount = Math.ceil(
-        maxFatigue * chocolateRecoveryRatio * specialSkillEffects.chocolateRecoveryMultiplier
-      );
-      const reducedFatigue = Math.min(fatigue, recoveryAmount);
-      fatigue -= reducedFatigue;
-      san = Math.min(maxSan, san + chocolateSanRecovery);
-      chocolateDailyCount++;
-      const lifespanEffect = getChocolateLifespanEffect(chocolateDailyCount);
-      lifespan = Math.max(0, Math.min(maxLifespan, lifespan + lifespanEffect));
-      showMessage(
-        `チョコレート取得！ 脳疲労 -${Math.ceil(reducedFatigue)} / SAN +${chocolateSanRecovery} / 寿命 ${lifespanEffect >= 0 ? '+' : ''}${lifespanEffect}` +
-        `（本日${chocolateDailyCount}個目）`,
-        1800, '#ffcc80'
-      );
-      checkVitalsGameOver();
-      chocolate = null;
-      chocolateSpawnTimerMs = getRandomChocolateSpawnDelay();
+    // 完全オートモード中は、クリック操作を挟まず着地後すぐに自動で取得する
+    if (fullAutoModeEnabled) {
+      consumeChocolate();
       if (gameOver || deathSequence) return;
     } else if (chocolate.remainingMs <= 0) {
       chocolate = null;
@@ -6064,34 +6143,9 @@ function update() {
       energyDrink.landed = true;
     }
   } else if (energyDrink) {
-    const distanceToEnergyDrink = Math.hypot(
-      player.x - energyDrink.x,
-      player.y - energyDrink.y
-    );
-
-    if (distanceToEnergyDrink <= player.radius + energyDrink.radius) {
-      energyDrinkDailyCount++;
-      energyDrinkTotalCount++;
-      const isSecondOrLater = energyDrinkDailyCount >= 2;
-      const isCrossDrink = coffeeBuffTimerMs > 0;
-      const totalLifespanCost = energyDrinkLifespanCost +
-        (isSecondOrLater ? energyDrinkSecondDrinkLifespanCost : 0) +
-        (isCrossDrink ? coffeeCrossDrinkLifespanCost : 0);
-      const reducedFatigue = Math.min(fatigue, energyDrinkFatigueReduction);
-      fatigue -= reducedFatigue;
-      san = Math.min(maxSan, san + energyDrinkSanRecovery);
-      lifespan = Math.max(0, lifespan - totalLifespanCost);
-      energyDrinkBuffTimerMs = energyDrinkBuffDurationMs;
-      energyDrinkCrashTimerMs = 0; // 反動状態が残っていても、新たに飲めば打ち消してすぐ強化状態に入る
-      if (currentHour >= dayEndHour) eveningDrinkRecoveryPenalty = true;
-      showMessage(
-        `栄養ドリンク取得！ 脳疲労 -${Math.ceil(reducedFatigue)} / SAN +${energyDrinkSanRecovery} / 寿命 -${totalLifespanCost}` +
-        (isSecondOrLater ? '（本日2本目以降…）' : '') + (isCrossDrink ? '（コーヒーとの飲み合わせ…）' : ''),
-        1800, '#80deea'
-      );
-      checkVitalsGameOver();
-      energyDrink = null;
-      energyDrinkSpawnTimerMs = getRandomEnergyDrinkSpawnDelay();
+    // 完全オートモード中は、クリック操作を挟まず着地後すぐに自動で取得する
+    if (fullAutoModeEnabled) {
+      consumeEnergyDrink();
       if (gameOver || deathSequence) return;
     }
   } else {
@@ -6116,29 +6170,9 @@ function update() {
       coffee.landed = true;
     }
   } else if (coffee) {
-    const distanceToCoffee = Math.hypot(
-      player.x - coffee.x,
-      player.y - coffee.y
-    );
-
-    if (distanceToCoffee <= player.radius + coffee.radius) {
-      coffeeDailyCount++;
-      coffeeTotalCount++;
-      coffeeStunImmunityCharges++;
-      const isCrossDrink = energyDrinkBuffTimerMs > 0;
-      const totalLifespanCost = coffeeLifespanCost + (isCrossDrink ? coffeeCrossDrinkLifespanCost : 0);
-      san = Math.min(maxSan, san + coffeeSanRecovery);
-      lifespan = Math.max(0, lifespan - totalLifespanCost);
-      coffeeBuffTimerMs = coffeeBuffDurationMs;
-      if (currentHour >= dayEndHour) eveningDrinkRecoveryPenalty = true;
-      showMessage(
-        `コーヒー取得！ SAN +${coffeeSanRecovery} / 寿命 -${totalLifespanCost}` +
-        (isCrossDrink ? '（栄養ドリンクとの飲み合わせ…）' : ''),
-        1800, '#a1887f'
-      );
-      checkVitalsGameOver();
-      coffee = null;
-      coffeeSpawnTimerMs = getRandomCoffeeSpawnDelay();
+    // 完全オートモード中は、クリック操作を挟まず着地後すぐに自動で取得する
+    if (fullAutoModeEnabled) {
+      consumeCoffee();
       if (gameOver || deathSequence) return;
     }
   } else {
@@ -6159,20 +6193,9 @@ function update() {
     }
   } else if (heartWall) {
     heartWall.remainingMs -= dt * 1000;
-    const distanceToHeartWall = Math.hypot(
-      player.x - heartWall.x,
-      player.y - heartWall.y
-    );
-
-    if (distanceToHeartWall <= player.radius + heartWall.radius) {
-      playerBarrierCharges += heartWallBarrierCharges;
-      if (partner.active) partner.barrierCharges += heartWallBarrierCharges;
-      showMessage(
-        `ファイヤーウォールを手に入れた！ 誤射・敵の接触ダメージを${heartWallBarrierCharges}回まで防ぐバリアを展開`,
-        2200, '#b39ddb'
-      );
-      heartWall = null;
-      heartWallSpawnTimerMs = getRandomHeartWallSpawnDelay();
+    // 完全オートモード中は、クリック操作を挟まず着地後すぐに自動で取得する
+    if (fullAutoModeEnabled) {
+      consumeHeartWall();
     } else if (heartWall.remainingMs <= 0) {
       heartWall = null;
       heartWallSpawnTimerMs = getRandomHeartWallSpawnDelay();
@@ -6210,9 +6233,9 @@ function update() {
       lunchState.nextSpawnIndex++;
       lunchState.spawnTimerMs = lunchSpawnIntervalMs;
     }
-    for (let i = lunchState.items.length - 1; i >= 0; i--) {
-      const item = lunchState.items[i];
-      if (Math.hypot(player.x - item.x, player.y - item.y) <= player.radius + item.radius) {
+    // 完全オートモード中は、クリック操作を挟まず出現した料理をそのまま自動で取得する
+    if (fullAutoModeEnabled) {
+      for (let i = lunchState.items.length - 1; i >= 0; i--) {
         collectLunchItem(i);
         if (!lunchState) break;
       }
