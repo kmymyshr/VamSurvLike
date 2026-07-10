@@ -692,6 +692,22 @@ let stunTimer = 0;
 let invincible = false;
 const invincibleDuration = 1200; // 敵との接触後に無敵になる時間（ミリ秒）
 let invincibleTimer = 0;
+
+// ===== 残機システム：自機・同僚ともSAN値または寿命が0になっても、残機がある間は復活する =====
+const maxExtraLives = 3; // 自機・同僚それぞれの残機
+let playerLivesRemaining = maxExtraLives;
+let partnerLivesRemaining = maxExtraLives;
+const reviveStunDurationMs = 5000; // 気絶して復活を待つ時間
+const revivePostGlowDurationMs = 3000; // 復活直後、輝いてダメージを受けなくなる時間
+const reviveSanRatio = 0.5; // 復活時のSAN・寿命は、それぞれの最大値のこの割合
+const reviveLifespanRatio = 0.5;
+let playerReviveTimerMs = 0; // >0の間、自機は気絶して復活を待っている（移動・攻撃できない）
+
+// HUDの残機表示用の色（残機が0の間は赤く点滅させる）
+function getLivesCounterColor(livesRemaining) {
+  if (livesRemaining > 0) return '#ffe082';
+  return Math.floor(gameClockMs / 300) % 2 === 0 ? '#ff1744' : '#4a0000';
+}
 let lastUpdate = Date.now();
 let gameClockMs = 0;
 let gameTimeScale = 1;
@@ -2045,7 +2061,7 @@ function startDeathSequence(visualType, deathEndingType) {
 // SAN・寿命のいずれかが尽きたら演出を経てゲームオーバーにする（二重発火防止にgameOver/deathSequenceで一度だけ発火）
 // どちらが尽きたかで演出とバッドエンドの種類を分ける
 function checkVitalsGameOver(deathEndingType = null) {
-  if (gameOver || deathSequence) return;
+  if (gameOver || deathSequence || playerReviveTimerMs > 0) return;
   // ノーマルルート終了時の負けイベント戦闘・同僚消滅演出中：自機は何度でもSAN1・寿命1で復活する。
   // このシーケンス自体のタイマーで同僚消滅→フェードアウトへ進むため、自機の生死では進行しない
   if (normalEndSequence && (normalEndSequence.phase === 'battle' ||
@@ -2066,6 +2082,12 @@ function checkVitalsGameOver(deathEndingType = null) {
       san = 1;
       return;
     }
+    // 残機システム：残機がある間は、力尽きる代わりに気絶して復活を待つ
+    if (playerLivesRemaining > 0) {
+      playerLivesRemaining--;
+      startPlayerRevival();
+      return;
+    }
     startDeathSequence('san', deathEndingType || 'bad-san');
   } else if (lifespan <= 0) {
     // 「永遠の命（自分）」：寿命が0にならなくなる
@@ -2073,8 +2095,20 @@ function checkVitalsGameOver(deathEndingType = null) {
       lifespan = 1;
       return;
     }
+    // 残機システム：残機がある間は、力尽きる代わりに気絶して復活を待つ
+    if (playerLivesRemaining > 0) {
+      playerLivesRemaining--;
+      startPlayerRevival();
+      return;
+    }
     startDeathSequence('lifespan', deathEndingType || 'bad-lifespan');
   }
+}
+
+// 残機システム：気絶状態を開始する（移動・攻撃不可、点滅・頭上に星が舞う演出）。
+// reviveStunDurationMs後、自動的に復活してSAN・寿命がそれぞれ最大値の50%に戻り、その後しばらく無敵になる
+function startPlayerRevival() {
+  playerReviveTimerMs = reviveStunDurationMs;
 }
 
 // ===== 「自己犠牲」「献身」：夢の記憶ポイントで習得する、戦闘中に発動できる特殊行動 =====
@@ -2369,6 +2403,32 @@ const partnerRelationshipDamagePerHit = 15;
 const partnerRelationshipRetaliationThreshold = 40;
 const partnerRelationshipDailyRecovery = 5; // 一日が終了するたびに回復する関係性の量
 
+// 自分の役職ランクに応じて、同僚も強化される（ランクが上がるごとの効果を積み上げていく）
+// ランク2: 弾発射速度×1.2、発射間隔×0.8 / ランク3: 移動速度1.5倍、さらに弾発射速度×1.2、発射間隔×0.8 /
+// ランク4: 弾発射速度×1.2、発射間隔×0.8 / ランク5: マルチタスクAと同様の攻撃（追加の1発） / ランク6: 弾発射速度×1.5、発射間隔×0.8
+function getPartnerRankFireSpeedMultiplier(currentRank) {
+  let m = 1;
+  if (currentRank >= 2) m *= 1.2;
+  if (currentRank >= 3) m *= 1.2;
+  if (currentRank >= 4) m *= 1.2;
+  if (currentRank >= 6) m *= 1.5;
+  return m;
+}
+function getPartnerRankFireIntervalMultiplier(currentRank) {
+  let m = 1;
+  if (currentRank >= 2) m *= 0.8;
+  if (currentRank >= 3) m *= 0.8;
+  if (currentRank >= 4) m *= 0.8;
+  if (currentRank >= 6) m *= 0.8;
+  return m;
+}
+function getPartnerRankMoveSpeedMultiplier(currentRank) {
+  return currentRank >= 3 ? 1.5 : 1;
+}
+function isPartnerRankMultiShotActive(currentRank) {
+  return currentRank >= 5;
+}
+
 // ===== 同僚の吹き出し（一言セリフ） =====
 let partnerSpeechBubble = null; // { text, color, timer }
 const partnerSpeechBubbleDurationMs = 2600;
@@ -2643,7 +2703,8 @@ const partner = {
   // 賢さ（0〜1、初期はランダム）：高いほど的が正確で、疲労時に無駄撃ちを避けやすい
   intelligence: 0.5,
   // 性格・向こう見ずさ（0〜1、初期はランダム）：高いほど疲労していても構わず撃ちたがる
-  recklessness: 0.5
+  recklessness: 0.5,
+  reviveTimerMs: 0 // >0の間、気絶して復活を待っている（移動・攻撃できない）
 };
 // 同僚が離脱した原因（'san' / 'lifespan' / null）。休日に会いに行った時の対応を分けるために使う
 let partnerLossReason = null;
@@ -2679,6 +2740,7 @@ function initPartner() {
   partner.relationship = partnerRelationshipInitial;
   partner.intelligence = Math.random();
   partner.recklessness = Math.random();
+  partner.reviveTimerMs = 0;
 }
 
 // 同僚のSANにダメージを与える（プレイヤーのdamageSanとは独立。同僚の生死のみに影響する）
@@ -2808,6 +2870,21 @@ function wouldPlayerShotHitPartner(angle, bulletRadius = 4, extraMargin = 0) {
 function updatePartner(dt) {
   if (!partner.active) return;
 
+  if (partner.reviveTimerMs > 0) {
+    // 残機を使って気絶し、復活を待っている間：移動・攻撃できない
+    partner.reviveTimerMs -= dt * 1000;
+    if (partner.reviveTimerMs <= 0) {
+      partner.reviveTimerMs = 0;
+      partner.san = maxSan * reviveSanRatio;
+      partner.lifespan = maxLifespan * reviveLifespanRatio;
+      partner.invincible = true;
+      partner.invincibleTimer = revivePostGlowDurationMs;
+      partner.friendlyFireInvincibleTimer = revivePostGlowDurationMs;
+      showMessage(`同僚が復活！（残機 ×${partnerLivesRemaining}）`, 2600, '#69f0ae', '24px sans-serif');
+    }
+    return;
+  }
+
   partner.friendlyFireInvincibleTimer = Math.max(0,
     partner.friendlyFireInvincibleTimer - dt * 1000);
 
@@ -2850,7 +2927,7 @@ function updatePartner(dt) {
   const fdx = followTarget.x - partner.x;
   const fdy = followTarget.y - partner.y;
   const fdist = Math.hypot(fdx, fdy);
-  const movementSpeed = partnerMoveSpeed *
+  const movementSpeed = partnerMoveSpeed * getPartnerRankMoveSpeedMultiplier(rank) *
     (nearestFixedEnemyForPartner || partnerWantsRecoveryItem || partner.wandering ? 1 : partnerFollowSpeedMultiplier);
   let desiredVx = 0;
   let desiredVy = 0;
@@ -2962,7 +3039,8 @@ function updatePartner(dt) {
       const scatterDegrees = (1 - accuracy) * 35 * (Math.random() - 0.5) * 2;
       const angle = Math.atan2(target.y - partner.y, target.x - partner.x) +
         scatterDegrees * Math.PI / 180;
-      const bulletSpeed = 6;
+      // 役職ランクに応じて、同僚の弾速も上がっていく
+      const bulletSpeed = 6 * getPartnerRankFireSpeedMultiplier(rank);
       // 「無敵（テスト用）」「β版設定」：同僚の攻撃力も自機と同様に50倍になる
       const partnerInvincibleDamageMultiplier = isTestInvincibleUpgradeActive() ? 50 : 1;
       const damage = Math.max(1, Math.round(
@@ -2977,18 +3055,27 @@ function updatePartner(dt) {
       } else {
         // 第4段階「承認欲求」：狙って撃っただけで（当たらなくても）耐久力が少し回復してしまう
         checkApprovalSeekingFireHeal(partner.x, partner.y, angle);
-        bullets.push({
-          x: partner.x + Math.cos(angle) * partner.radius,
-          y: partner.y + Math.sin(angle) * partner.radius,
-          vx: Math.cos(angle) * bulletSpeed,
-          vy: Math.sin(angle) * bulletSpeed,
-          radius: 4,
-          damage,
-          bounces: 0,
-          owner: 'partner'
-        });
-        // 夜間は疲労そのものではなく発砲間隔を伸ばし、攻撃頻度を落とすことでパフォーマンス低下を表現する
-        partner.fireTimer = partnerBaseFireRate * getTimeOfDayFatigueMultiplier();
+        // 役職ランク5以降：自機の「マルチタスクA」と同様に、正面から±20度以内のランダムな方向へ追加の1発を撃つ
+        const partnerShotAngles = [angle];
+        if (isPartnerRankMultiShotActive(rank)) {
+          partnerShotAngles.push(angle + (Math.random() * 2 - 1) * 20 * Math.PI / 180);
+        }
+        for (const shotAngle of partnerShotAngles) {
+          bullets.push({
+            x: partner.x + Math.cos(shotAngle) * partner.radius,
+            y: partner.y + Math.sin(shotAngle) * partner.radius,
+            vx: Math.cos(shotAngle) * bulletSpeed,
+            vy: Math.sin(shotAngle) * bulletSpeed,
+            radius: 4,
+            damage,
+            bounces: 0,
+            owner: 'partner'
+          });
+        }
+        // 夜間は疲労そのものではなく発砲間隔を伸ばし、攻撃頻度を落とすことでパフォーマンス低下を表現する。
+        // 役職ランクに応じて、発射間隔も短くなっていく
+        partner.fireTimer = partnerBaseFireRate * getTimeOfDayFatigueMultiplier() *
+          getPartnerRankFireIntervalMultiplier(rank);
       }
       }
     }
@@ -3054,8 +3141,14 @@ function updatePartner(dt) {
     if (dreamMemorySave.upgrades.hopePartner >= 1) partner.san = Math.max(partner.san, 1);
   }
 
-  // 退場判定：SANか寿命が尽きたら以後登場しなくなり、プレイヤーにもSANダメージが入る
+  // 退場判定：SANか寿命が尽きたら以後登場しなくなり、プレイヤーにもSANダメージが入る。
+  // ただし、ノーマルルート終了時の負けイベント戦闘中を除き、残機が残っていれば離脱の代わりに気絶して復活を待つ
   if (partner.san <= 0 || partner.lifespan <= 0) {
+    if (!normalEndBattleActive && partnerLivesRemaining > 0) {
+      partnerLivesRemaining--;
+      partner.reviveTimerMs = reviveStunDurationMs;
+      return;
+    }
     partner.active = false;
     partnerLossReason = partner.lifespan <= 0 ? 'lifespan' : 'san';
     partnerLifespanAtLoss = partner.lifespan;
@@ -4214,6 +4307,10 @@ function beginGameplay() {
   // 「激励A」「激励B」のクールダウンも、新しい周回の開始時にリセットする
   encourageANextAvailableAtMs = 0;
   encourageBNextAvailableAtMs = 0;
+  // 残機・復活演出も、新しい周回の開始時にリセットする
+  playerLivesRemaining = maxExtraLives;
+  partnerLivesRemaining = maxExtraLives;
+  playerReviveTimerMs = 0;
   // 前回と同じ自機・同僚で始めた場合、関係性は前回終了時の値+20から始まる
   // （分岐等に影響するのは100までだが、余裕を持たせて120まで許容する）
   if (shouldShowReunionScene()) {
@@ -7102,7 +7199,19 @@ function update() {
     chooseSpecialSkill(Math.floor(Math.random() * specialSkillChoices.length));
   }
 
-  if (stunned) {
+  if (playerReviveTimerMs > 0) {
+    // 残機を使って気絶し、復活を待っている間：移動・攻撃できない
+    playerReviveTimerMs -= dt * 1000;
+    if (playerReviveTimerMs <= 0) {
+      playerReviveTimerMs = 0;
+      san = maxSan * reviveSanRatio;
+      lifespan = maxLifespan * reviveLifespanRatio;
+      invincible = true;
+      invincibleTimer = revivePostGlowDurationMs;
+      friendlyFireInvincibleTimer = revivePostGlowDurationMs;
+      showMessage(`復活！（残機 ×${playerLivesRemaining}）`, 2600, '#ffd54f', '24px sans-serif');
+    }
+  } else if (stunned) {
     // 行動不能中は移動・攻撃できないが、疲労が回復する
     stunTimer -= dt * 1000;
     fatigue = Math.max(0, fatigue - stunRecoveryPerSec * dt);
@@ -9088,6 +9197,24 @@ function drawBarrierShield(x, y, radius, charges) {
   ctx.restore();
 }
 
+// 残機を使って気絶し、復活を待っている間、頭上でぐるぐる回る星（暫定の簡易エフェクト）を描く
+function drawReviveStars(centerX, centerY, entityRadius) {
+  const starCount = 3;
+  const orbitRadiusX = entityRadius + 14;
+  const orbitRadiusY = orbitRadiusX * 0.4;
+  ctx.save();
+  ctx.font = 'bold 16px "Segoe UI Emoji", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i < starCount; i++) {
+    const starAngle = gameClockMs / 250 + (i * Math.PI * 2 / starCount);
+    const sx = centerX + Math.cos(starAngle) * orbitRadiusX;
+    const sy = centerY + Math.sin(starAngle) * orbitRadiusY;
+    ctx.fillText('⭐', sx, sy);
+  }
+  ctx.restore();
+}
+
 // 描き終えた1フレーム全体（文字・アイコン含む）を、横スライスごとに正弦波でずらして歪ませる。
 // 文字が判読できる程度になるよう、amplitudeは小さめの値を渡すこと。
 function applyScreenDistortion(amplitude) {
@@ -9203,7 +9330,7 @@ function drawDeathSequenceOverlay() {
 }
 
 // HUD用プロフィール区画。選択した絵文字を仮の顔イラストとして使う。
-function drawHudProfilePanel(x, y, width, height, title, icon, accentColor, statLines, inactive = false, dangerLevel = 0, iconImage = null, portraitRadius = 23) {
+function drawHudProfilePanel(x, y, width, height, title, icon, accentColor, statLines, inactive = false, dangerLevel = 0, iconImage = null, portraitRadius = 23, rankBadge = null) {
   ctx.save();
   ctx.fillStyle = 'rgba(7, 12, 22, 0.34)';
   ctx.fillRect(x, y, width, height);
@@ -9244,6 +9371,37 @@ function drawHudProfilePanel(x, y, width, height, title, icon, accentColor, stat
   ctx.lineWidth = 2;
   ctx.stroke();
 
+  // 役職ランクのバッジ：ポートレートの円の端にかかるように「LV 〇〇」を表示し、その下に少し小さく役職名を表示する
+  if (rankBadge) {
+    const badgeCenterX = portraitCenterX + portraitRadius * 0.72;
+    const badgeCenterY = portraitCenterY + portraitRadius * 0.72;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const lvText = `LV ${rankBadge.rank}`;
+    ctx.font = 'bold 13px sans-serif';
+    const lvTextWidth = ctx.measureText(lvText).width;
+    const badgeW = lvTextWidth + 10;
+    const badgeH = 16;
+    ctx.fillStyle = 'rgba(20, 24, 32, 0.85)';
+    ctx.strokeStyle = '#ffd54f';
+    ctx.lineWidth = 1.5;
+    if (ctx.roundRect) {
+      ctx.beginPath();
+      ctx.roundRect(badgeCenterX - badgeW / 2, badgeCenterY - badgeH / 2, badgeW, badgeH, 8);
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      ctx.fillRect(badgeCenterX - badgeW / 2, badgeCenterY - badgeH / 2, badgeW, badgeH);
+      ctx.strokeRect(badgeCenterX - badgeW / 2, badgeCenterY - badgeH / 2, badgeW, badgeH);
+    }
+    ctx.fillStyle = '#ffd54f';
+    ctx.fillText(lvText, badgeCenterX, badgeCenterY);
+    ctx.font = 'bold 9px sans-serif';
+    ctx.fillStyle = '#fff3c4';
+    ctx.fillText(rankBadge.roleName, badgeCenterX, badgeCenterY + badgeH / 2 + 8);
+    ctx.restore();
+  }
 
   const titleY = portraitCenterY + portraitRadius + 8;
   ctx.font = 'bold 14px sans-serif';
@@ -9947,6 +10105,10 @@ function draw() {
     ctx.globalAlpha = blinkOn ? (1 - vanishProgress) : 0;
   } else if (deathSequence && deathSequence.phase === 'fadeOut') {
     ctx.globalAlpha = 0;
+  } else if (playerReviveTimerMs > 0) {
+    // 残機を使って気絶し、復活を待っている間：半透明で点滅させる
+    const blink = Math.floor(gameClockMs / 150) % 2 === 0;
+    ctx.globalAlpha = blink ? 0.25 : 0.55;
   } else if (invincible) {
     const blink = Math.floor(gameClockMs / 100) % 2 === 0;
     ctx.globalAlpha = blink ? 0.4 : 0.8;
@@ -10049,10 +10211,19 @@ function draw() {
     ctx.restore();
   }
 
+  // 残機を使って気絶し、復活を待っている間：頭上をぐるぐる回る星を表示する
+  if (playerReviveTimerMs > 0) {
+    drawReviveStars(player.x, player.y - player.radius - 16, player.radius);
+  }
+
   // 同僚の描画（存在するときのみ。imagesフォルダの選択した画像を使用）
   if (partner.active) {
     ctx.save();
-    if (partner.invincible) {
+    if (partner.reviveTimerMs > 0) {
+      // 残機を使って気絶し、復活を待っている間：半透明で点滅させる
+      const blink = Math.floor(gameClockMs / 150) % 2 === 0;
+      ctx.globalAlpha = blink ? 0.25 : 0.55;
+    } else if (partner.invincible) {
       ctx.globalAlpha = Math.floor(gameClockMs / 100) % 2 === 0 ? 0.4 : 0.8;
     }
     const partnerImg = partnerIconImageElements[partner.icon];
@@ -10066,6 +10237,11 @@ function draw() {
       ctx.fillText('🧑', partner.x, partner.y);
     }
     ctx.restore();
+
+    // 残機を使って気絶し、復活を待っている間：頭上をぐるぐる回る星を表示する
+    if (partner.reviveTimerMs > 0) {
+      drawReviveStars(partner.x, partner.y - partner.radius - 16, partner.radius);
+    }
 
     // 「ファイヤーウォール」の効果が残っている間、同僚の周りにバリアを表示する
     drawBarrierShield(partner.x, partner.y, partner.radius, partner.barrierCharges);
@@ -10613,9 +10789,9 @@ function draw() {
     { text: `寿命: ${Math.ceil(lifespan)} / ${maxLifespan}` },
     { text: `脳疲労: ${Math.floor(fatigue)} / ${maxFatigue}` },
     { text: `Score: ${score}` },
-    { text: `Rank: ${rank} ${rankNames[rank - 1]}` },
+    { text: `残機: ×${playerLivesRemaining}`, color: getLivesCounterColor(playerLivesRemaining) },
     { text: `Skill:${skillLevel}  EXP:${Math.floor(exp)}` }
-  ], false, 0, genderImageElements[selectedPlayerIcon], 46);
+  ], false, 0, genderImageElements[selectedPlayerIcon], 46, { rank, roleName: rankNames[rank - 1] });
 
   // 役職スキル「AIエージェント」やコーヒー・栄養ドリンクの効果が有効な間、プロフィール区画内に
   // 点滅する小さなアイコンで状態を示す（複数同時に有効な場合は縦に並べる）
@@ -10651,19 +10827,21 @@ function draw() {
   const partnerTitle = selectedPartnerIcon === null
     ? '同僚なし'
     : (partner.active ? '同僚' : '同僚離脱');
-  drawHudProfilePanel(164, 12, 145, 204, partnerTitle,
+  drawHudProfilePanel(164, 12, 145, 218, partnerTitle,
     selectedPartnerIcon, '#80cbc4', partner.active ? [
       { text: `SAN: ${Math.floor(partner.san)} / ${maxSan}` },
       { text: `寿命: ${Math.ceil(partner.lifespan)} / ${maxLifespan}` },
       { text: `脳疲労: ${Math.floor(partner.fatigue)} / ${maxFatigue}` },
       { text: '状態: 行動中' },
-      { text: `関係性: ${Math.floor(partner.relationship)} / ${partnerRelationshipMax}` }
+      { text: `関係性: ${Math.floor(partner.relationship)} / ${partnerRelationshipMax}` },
+      { text: `残機: ×${partnerLivesRemaining}`, color: getLivesCounterColor(partnerLivesRemaining) }
     ] : [
       { text: 'SAN: —' },
       { text: '寿命: —' },
       { text: '脳疲労: —' },
       { text: `状態: ${selectedPartnerIcon === null ? '不在' : '離脱'}` },
-      { text: selectedPartnerIcon === null ? '関係性: —' : `関係性: ${Math.floor(partner.relationship)} / ${partnerRelationshipMax}` }
+      { text: selectedPartnerIcon === null ? '関係性: —' : `関係性: ${Math.floor(partner.relationship)} / ${partnerRelationshipMax}` },
+      { text: `残機: ×${partnerLivesRemaining}`, color: getLivesCounterColor(partnerLivesRemaining) }
     ], partnerUnavailable,
     (partnerRelationshipMax - partner.relationship) / partnerRelationshipMax,
     selectedPartnerIcon !== null ? partnerIconImageElements[selectedPartnerIcon] : null,
