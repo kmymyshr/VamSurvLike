@@ -7759,9 +7759,9 @@ const backgroundTimeKeyframes = [
 ];
 
 function drawBackground() {
-  // 前回ノーマルエンドを迎えた時と全く同じ自機・同僚を選んで周回している間は、
-  // 時間帯に応じた背景の代わりに、常にこの専用背景を使う
-  if (shouldShowReunionScene()) {
+  // タイトル（オープニング）画面の背景がafter_normalENDになっている周回では、
+  // 戦闘画面も時間帯に応じた背景の代わりに、常にこの専用背景を使う
+  if (shouldShowAfterNormalEndTitleBackground()) {
     if (backgroundDreamcatcherImage.complete && backgroundDreamcatcherImage.naturalWidth > 0) {
       ctx.drawImage(backgroundDreamcatcherImage, 0, 0, canvas.width, canvas.height);
     } else {
