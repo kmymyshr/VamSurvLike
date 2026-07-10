@@ -1349,7 +1349,8 @@ const fixedEnemyDefs = [
 ];
 
 let fixedEnemies = []; // 現在アクティブな固定敵（最大fixedEnemyMaxConcurrent体）
-let fixedEnemySpawnTimerMs = getRandomFixedEnemySpawnIntervalMs(); // 次の出現までの残り時間（現実のミリ秒）
+// ここではadventureRunCount（この後で宣言される）にまだアクセスできないため、初期値は控えめ倍率を使わない素の間隔で計算する
+let fixedEnemySpawnTimerMs = Math.max(fixedEnemySpawnIntervalMinMs, -Math.log(1 - Math.random()) * fixedEnemySpawnIntervalAvgMs); // 次の出現までの残り時間（現実のミリ秒）
 let fixedEnemyLastRealMs = null; // 実時間の経過を測るための直前のDate.now()
 const pendingFixedEnemyBackdoors = []; // バックドア設置：撃破後もしばらく残る、不意打ち予約リスト
 
