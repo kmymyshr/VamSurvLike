@@ -1988,10 +1988,11 @@ const reunionSceneToneByTier = {
   5: { direction: 'dark', intensity: 1 }
 };
 
-// 前回と全く同じ自機・同僚の組み合わせで始めた場合のみ、再会シーンを表示する
+// 前回、第3回アドベンチャーパートを経てノーマルエンドに至っており、かつ前回と全く同じ
+// 自機・同僚の組み合わせで始めた場合だけ、再会シーンを表示する
 function shouldShowReunionScene() {
   const lastRun = dreamMemorySave.lastRun;
-  return !!(lastRun && lastRun.partnerIcon && selectedPartnerIcon &&
+  return !!(lastRun && lastRun.viaAdv3NormalEnd && lastRun.partnerIcon && selectedPartnerIcon &&
     lastRun.playerGender === selectedGender && lastRun.partnerIcon === selectedPartnerIcon);
 }
 
@@ -4992,7 +4993,9 @@ function finishNormalEndSequence() {
     playerGender: selectedGender,
     partnerIcon: selectedPartnerIcon,
     relationship: partner.relationship,
-    endingType: endingId
+    endingType: endingId,
+    // 第3回アドベンチャーパートを経てノーマルエンドに至った場合だけ立てるフラグ（再会シーンの条件に使う）
+    viaAdv3NormalEnd: true
   } : null;
   saveDreamMemorySave();
   location.reload();
@@ -5194,6 +5197,7 @@ function getMidBossHoleAbsolutePosition(hole) {
 }
 
 function startMidBossEvent() {
+  enemies.length = 0; // 中ボス戦の間、通常の敵は出現しない（固定敵は従来通り出現する）
   const width = canvas.width * midBossWidthRatio;
   const startX = (canvas.width - width) / 2;
   midBossEvent = {
@@ -5987,12 +5991,12 @@ function update() {
   }
 
   // 全滅したら少し間を置いて次のウェーブ（仕事）を出す。
-  // 定時報告・「巨大案件」が出ている間は、同時出現数を1体にする
-  if (enemies.length === 0) {
+  // 「巨大案件」が出ている間は、通常の敵は一切出現しない。定時報告が出ている間は、同時出現数を1体にする
+  if (!midBossEvent && enemies.length === 0) {
     if (waveCooldownMs > 0) {
       waveCooldownMs -= dt * 1000;
     } else {
-      spawnWave((scheduledReport || midBossEvent) ? 1 : maxEnemies);
+      spawnWave(scheduledReport ? 1 : maxEnemies);
     }
   }
   }
@@ -7751,6 +7755,18 @@ function mixHexColors(fromColor, toColor, ratio) {
   return `rgb(${mixed[0]}, ${mixed[1]}, ${mixed[2]})`;
 }
 
+// mixHexColorsと同様の補間だが、任意の透過度（alpha）付きのrgba()文字列で返す
+function mixHexColorsRgba(fromColor, toColor, ratio, alpha) {
+  const t = Math.max(0, Math.min(1, ratio));
+  const from = parseInt(fromColor.slice(1), 16);
+  const to = parseInt(toColor.slice(1), 16);
+  const fromRgb = [(from >> 16) & 255, (from >> 8) & 255, from & 255];
+  const toRgb = [(to >> 16) & 255, (to >> 8) & 255, to & 255];
+  const mixed = fromRgb.map((value, index) =>
+    Math.round(value + (toRgb[index] - value) * t));
+  return `rgba(${mixed[0]}, ${mixed[1]}, ${mixed[2]}, ${alpha})`;
+}
+
 // 自機・同僚の下に表示する、SAN・寿命・脳疲労の小さなステータスバー
 function drawMiniStatBars(centerX, topY, stats) {
   const barWidth = 44, barHeight = 4, gap = 2;
@@ -8281,23 +8297,48 @@ function draw() {
       const cost = maxed ? null : getDreamMemoryUpgradeCost(def, level);
       const affordable = !maxed && dreamMemorySave.points >= cost;
 
-      ctx.fillStyle = 'rgba(103, 58, 183, 0.30)';
+      // レベルが上がるほど、MAX時の輝く色（金色）へ段階的に色を近づける
+      // （MAXレベルが1のスキルは、購入した瞬間に1段階でMAXの色へ到達する）
+      const levelRatio = level > 0 ? level / maxLevel : 0;
+      const cellBorderColor = level > 0 ? mixHexColors('#ce93d8', '#ffd700', levelRatio) : '#616161';
+      const cellBgColor = level > 0
+        ? mixHexColorsRgba('#67328a', '#8a6a10', levelRatio, 0.30)
+        : 'rgba(60, 60, 60, 0.35)';
+
+      ctx.fillStyle = cellBgColor;
       ctx.fillRect(cellX, cellY, cellWidth, cellHeight);
-      ctx.strokeStyle = '#ce93d8';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(cellX, cellY, cellWidth, cellHeight);
+      if (maxed) {
+        // MAX達成：縁が輝き、光沢（上部のハイライト）が乗る
+        ctx.save();
+        ctx.shadowColor = '#ffe082';
+        ctx.shadowBlur = 12;
+        ctx.strokeStyle = cellBorderColor;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(cellX, cellY, cellWidth, cellHeight);
+        ctx.restore();
+        const gloss = ctx.createLinearGradient(cellX, cellY, cellX, cellY + cellHeight * 0.55);
+        gloss.addColorStop(0, 'rgba(255, 255, 255, 0.28)');
+        gloss.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        ctx.fillStyle = gloss;
+        ctx.fillRect(cellX, cellY, cellWidth, cellHeight * 0.55);
+      } else {
+        ctx.strokeStyle = cellBorderColor;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(cellX, cellY, cellWidth, cellHeight);
+      }
 
       const btnW = 100, btnH = 22;
       const btnX = cellX + cellWidth - btnW - 10;
       const btnY = cellY + cellHeight - btnH - 6;
       const textMaxWidth = cellWidth - 20;
 
-      ctx.fillStyle = 'white';
+      ctx.fillStyle = maxed ? '#ffe082' : 'white';
       ctx.font = 'bold 13px sans-serif';
       ctx.fillText(`${def.label}  Lv.${level}/${maxLevel}`, cellX + 10, cellY + 14);
       ctx.fillStyle = '#cfd8dc';
       ctx.font = '11px sans-serif';
-      const descText = maxed ? '既に最大レベルまで強化済み' : def.describeLevel(level + 1);
+      // 現在のレベルに応じた「今の効果」を表示する（MAX後も、その時点の効果をそのまま表示し続ける）
+      const descText = level > 0 ? def.describeLevel(level) : '未強化（まだ効果なし）';
       const descLines = wrapTextToWidth(descText, textMaxWidth).slice(0, 2);
       descLines.forEach((line, i) => {
         ctx.fillText(line, cellX + 10, cellY + 27 + i * 12);
