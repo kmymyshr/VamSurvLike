@@ -2117,7 +2117,7 @@ let selectedPlayerIcon = null; // 性別選択で選んだ画像（genderChoices
 
 // ===== 同僚のアイコン選択（imagesフォルダの画像を使用） =====
 const partnerIconChoices = [
-  'char_03', 'char_06', 'char_08', 'char_09', 'char_10', 'char_12'
+  'char_07', 'char_06', 'char_08', 'char_09', 'char_10', 'char_12'
 ];
 const partnerIconImageElements = {};
 partnerIconChoices.forEach(id => {
@@ -2129,7 +2129,7 @@ let selectedPartnerIcon = partnerIconChoices[0]; // nullの場合は「同僚な
 
 // 同僚アイコンごとの性別（一人称・三人称の言い回しの出し分けに使う）
 const partnerGenderById = {
-  char_03: 'male', char_06: 'female', char_08: 'male',
+  char_07: 'male', char_06: 'female', char_08: 'male',
   char_09: 'female', char_10: 'male', char_12: 'female'
 };
 
