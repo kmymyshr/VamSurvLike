@@ -3468,7 +3468,7 @@ function startPartnerAdventure(onComplete) {
   // history：スレッド形式で表示する、これまでの同僚・自分のメッセージ履歴（性別に応じた言葉遣いに解決してから積む）
   const partnerGender = partnerGenderById[selectedPartnerIcon];
   adventureState = {
-    scene, nodeId, onComplete,
+    scene, nodeId, onComplete, lineIndex: 0,
     history: [{ speaker: 'partner', text: resolveGenderedAdventureText(scene.nodes[nodeId].text, partnerGender) }]
   };
 }
@@ -3495,6 +3495,7 @@ function chooseAdventureOption(choiceIndex) {
   if (target) {
     adventureState.scene = target.scene;
     adventureState.nodeId = target.nodeId;
+    adventureState.lineIndex = 0; // 新しいノードに入ったら、発言単位の表示を最初からやり直す
     // 次のノードの本文を、同僚の発言（同僚の性別に応じた言葉遣い）としてスレッドに積む
     const partnerGender = partnerGenderById[selectedPartnerIcon];
     adventureState.history.push({
@@ -3799,10 +3800,18 @@ document.addEventListener("keydown", (event) => {
   if (iconGreetingPhase) return;
   // 前回と同じ自機・同僚で始めた時の再会シーン中は、クリック／タップでのみ進める
   if (reunionSceneActive) return;
-  // 「同僚と遊ぶ」アドベンチャーパート中は、数字キーで選択肢を選ぶ
+  // 「同僚と遊ぶ」アドベンチャーパート中：本文がまだ続く間は数字キーでも次へ進め、
+  // 最後のブロックまで進んだ後だけ、数字キーで選択肢を選べるようにする
   if (adventureState) {
-    const idx = Number(event.key) - 1;
     const node = adventureState.scene.nodes[adventureState.nodeId];
+    const partnerGender = partnerGenderById[selectedPartnerIcon];
+    const bodyText = resolveGenderedAdventureText(node.text, partnerGender);
+    const lineBlocks = bodyText.split('\n');
+    if ((adventureState.lineIndex || 0) < lineBlocks.length - 1) {
+      adventureState.lineIndex = (adventureState.lineIndex || 0) + 1;
+      return;
+    }
+    const idx = Number(event.key) - 1;
     if (idx >= 0 && idx < node.choices.length) chooseAdventureOption(idx);
     return;
   }
@@ -5653,6 +5662,18 @@ canvas.addEventListener('click', (event) => {
     normalEndSequence.phase = 'endScreenFadeOut';
     normalEndSequence.phaseTimerMs = 0;
     return;
+  }
+  // 「同僚と遊ぶ」アドベンチャーパート：本文がまだ続く間は、クリックで次の発言・地の文へ進める
+  // （最後のブロックまで進んだ後は、下の選択肢ボタンをそのままクリックさせる）
+  if (adventureState) {
+    const node = adventureState.scene.nodes[adventureState.nodeId];
+    const partnerGender = partnerGenderById[selectedPartnerIcon];
+    const bodyText = resolveGenderedAdventureText(node.text, partnerGender);
+    const lineBlocks = bodyText.split('\n');
+    if ((adventureState.lineIndex || 0) < lineBlocks.length - 1) {
+      adventureState.lineIndex = (adventureState.lineIndex || 0) + 1;
+      return;
+    }
   }
   const p = getCanvasPoint(event);
   for (const b of uiButtons) {
@@ -9516,41 +9537,52 @@ function draw() {
       { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
   }
 
-  // 「同僚と遊ぶ」アドベンチャーパート：地の文＋会話文をそのまま1画面に表示する、通常のノベル形式
+  // 「同僚と遊ぶ」アドベンチャーパート：発言・地の文を1ブロックずつ、同じ場所に表示→消去して
+  // クリックで次のブロックへ進める。最後のブロックまで進んだら、代わりに選択肢を表示する
   if (adventureState && !gameOver && !gameClear) {
     const node = adventureState.scene.nodes[adventureState.nodeId];
     ctx.fillStyle = 'rgba(4, 6, 12, 0.92)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+    const partnerGender = partnerGenderById[selectedPartnerIcon];
+    const bodyText = resolveGenderedAdventureText(node.text, partnerGender);
+    // 本文の改行を「発言・地の文のひとかたまり」の区切りとして扱う
+    const lineBlocks = bodyText.split('\n');
+    const lineIndex = Math.min(adventureState.lineIndex || 0, lineBlocks.length - 1);
+    const isLastBlock = lineIndex >= lineBlocks.length - 1;
+
     ctx.fillStyle = '#ffe0b2';
     ctx.font = 'bold 21px sans-serif';
     ctx.textAlign = 'left';
-    const partnerGender = partnerGenderById[selectedPartnerIcon];
-    const bodyText = resolveGenderedAdventureText(node.text, partnerGender);
-    // 本文中の改行（地の文と会話文の段落分け）はそのまま活かし、段落ごとに幅で折り返す
-    let textLines = [];
-    bodyText.split('\n').forEach(paragraph => {
-      textLines = textLines.concat(wrapTextToWidth(paragraph, canvas.width - 160));
-    });
+    const textLines = wrapTextToWidth(lineBlocks[lineIndex], canvas.width - 160);
     textLines.forEach((line, i) => {
-      ctx.fillText(line, 80, 90 + i * 30);
+      ctx.fillText(line, 80, 240 + i * 30);
     });
 
-    const btnW2 = 600, btnH2 = 52;
-    const btnX2 = canvas.width / 2 - btnW2 / 2;
-    const choicesStartY = 90 + textLines.length * 30 + 36;
-    node.choices.forEach((choice, i) => {
-      const choiceLabel = resolveGenderedAdventureText(choice.label, selectedGender);
-      drawUiButton(btnX2, choicesStartY + i * 62, btnW2, btnH2, `${i + 1}. ${choiceLabel}`,
-        () => chooseAdventureOption(i), { font: 'bold 19px sans-serif' });
-    });
+    if (!isLastBlock) {
+      // まだ続きがある間は、選択肢の代わりにクリックを促す表示だけを出す
+      ctx.fillStyle = '#cfd8dc';
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('▼ クリック / タップで続ける', canvas.width / 2, 240 + textLines.length * 30 + 36);
+      ctx.textAlign = 'left';
+    } else {
+      const btnW2 = 600, btnH2 = 52;
+      const btnX2 = canvas.width / 2 - btnW2 / 2;
+      const choicesStartY = 240 + textLines.length * 30 + 36;
+      node.choices.forEach((choice, i) => {
+        const choiceLabel = resolveGenderedAdventureText(choice.label, selectedGender);
+        drawUiButton(btnX2, choicesStartY + i * 62, btnW2, btnH2, `${i + 1}. ${choiceLabel}`,
+          () => chooseAdventureOption(i), { font: 'bold 19px sans-serif' });
+      });
 
-    ctx.fillStyle = '#cfd8dc';
-    ctx.font = '14px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('数字キー / タップで選択',
-      canvas.width / 2, choicesStartY + node.choices.length * 62 + 20);
-    ctx.textAlign = 'left';
+      ctx.fillStyle = '#cfd8dc';
+      ctx.font = '14px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('数字キー / タップで選択',
+        canvas.width / 2, choicesStartY + node.choices.length * 62 + 20);
+      ctx.textAlign = 'left';
+    }
   }
 
   // 爆発直後は画面全体へ白い半透明レイヤーを重ねてフラッシュさせる
