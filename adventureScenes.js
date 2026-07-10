@@ -360,7 +360,6 @@ Object.assign(partnerAdventureScenes, { dreamRoute: buildLinearScene('dream', [
   'その時、窓の外がわずかに暗くなった。\n' +
   'ビルの明かりが、ひとつ、またひとつと黒に飲まれていく。\n' +
   '夜そのものより濃い影が、こちらへ近づいていた。',
-
   '同僚「…逃げますか？」\n' +
   '？？？は首を振る。\n' +
   '？？？「逃げても、また繰り返すだけだと思う」\n' +
@@ -370,7 +369,6 @@ Object.assign(partnerAdventureScenes, { dreamRoute: buildLinearScene('dream', [
   '？？？「勝てる保証はない」\n' +
   '同僚「でも今回は、あなたが覚えています」\n' +
   '？？？「ああ。今度は、同じ終わりにはしない」',
-
   '黒い影が、窓の外いっぱいに広がっていく。\n' +
   'ガラスが小さく震えた。\n' +
   '二人は並んで立つ。\n' +
