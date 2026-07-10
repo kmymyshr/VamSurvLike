@@ -455,6 +455,9 @@ let setupStep = null;
 let dreamMemoryShopActive = false; // タイトル画面から開く、夢の記憶ポイントでの強化画面
 let endingListActive = false; // タイトル画面から開く、到達済みエンディング一覧画面
 let titleResetConfirmActive = false; // タイトル画面左上の「リセット」ボタンを押した後の確認ダイアログ表示中かどうか
+// 目覚めエンド（真エンド・同僚生存）到達後、通常のタイトルへ戻す代わりに表示する専用のタイトル画面
+let trueEndTitleScreenActive = false;
+let trueEndEndingListActive = false; // 専用タイトル画面から開く、専用デザインのエンディングリスト画面
 
 // タイトル画面の「リセット」：夢の記憶ポイント・引き継ぎ役職／Score・エンディング記録など、
 // 永続化されている状態をすべて消し、まっさらな状態からやり直す
@@ -5532,7 +5535,13 @@ function finishBossTrueEnd() {
   } : null;
   saveCarriedProgressionForNextRun();
   saveDreamMemorySave();
-  location.reload();
+  if (bossEndingId === 'true1') {
+    // 目覚めエンド（真エンド・同僚生存）：通常のタイトルへ戻す代わりに、専用のタイトル画面を表示する
+    bossFinalSequence = null;
+    trueEndTitleScreenActive = true;
+  } else {
+    location.reload();
+  }
 }
 
 // ===== 中ボス「大規模プロジェクト」（DAY7ごと・18時に出現する）=====
@@ -6274,6 +6283,11 @@ fitCanvasToViewport();
 // 毎フレーム、移動・攻撃・時刻・衝突などを計算する
 function update() {
   if (acknowledgementNotice) {
+    lastUpdate = Date.now();
+    return;
+  }
+  // 目覚めエンド専用タイトル画面（とそのエンディングリスト）は静的な画面なので、他の一切を止める
+  if (trueEndTitleScreenActive) {
     lastUpdate = Date.now();
     return;
   }
@@ -7629,6 +7643,202 @@ function titleGlitchPseudoRandom(seed) {
   return x - Math.floor(x);
 }
 
+// タイトルの「ここで寝たらただのサラリーマン」＋サブタイトルを描画する共通処理。
+// showClawMarks が true の間は、「サラリーマン」の部分を爪痕＋鉛筆の線で打ち消す（通常のタイトル画面・
+// 目覚めエンド専用タイトル画面のどちらからも呼ばれる）
+function drawGameTitleText(fontFamily, strokeColor, fillColor, subtitleText, showClawMarks) {
+  const titleY = canvas.height / 2 - 154;
+  ctx.save();
+  ctx.font = `bold 38px ${fontFamily}`;
+  ctx.textAlign = 'center';
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+  ctx.shadowBlur = 6;
+  ctx.shadowOffsetY = 3;
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = strokeColor;
+  ctx.strokeText('ここで寝たらただのサラリーマン', canvas.width / 2, titleY);
+  ctx.fillStyle = fillColor;
+  ctx.fillText('ここで寝たらただのサラリーマン', canvas.width / 2, titleY);
+  ctx.restore();
+
+  if (showClawMarks) {
+    ctx.save();
+    ctx.font = `bold 38px ${fontFamily}`;
+    ctx.textAlign = 'left';
+    const titlePrefix = 'ここで寝たらただの';
+    const titleTarget = 'サラリーマン';
+    const fullWidth = ctx.measureText(titlePrefix + titleTarget).width;
+    const prefixWidth = ctx.measureText(titlePrefix).width;
+    const targetWidth = ctx.measureText(titleTarget).width;
+    const titleLeftX = canvas.width / 2 - fullWidth / 2;
+    const targetLeftX = titleLeftX + prefixWidth;
+
+    // 爪痕：暗い血のような色の斜めの傷を数本、それぞれジグザグに走らせ、中央が太く両端が細くなるようにする。
+    // 1本おきに逆方向の傷を重ねて交差させ、文字がずたずたに引き裂かれたように見せる
+    ctx.strokeStyle = 'rgba(28, 3, 3, 0.92)';
+    ctx.lineCap = 'round';
+    const clawCount = 5;
+    for (let c = 0; c < clawCount; c++) {
+      const crossing = c % 2 === 1;
+      const startX = targetLeftX - 8 + (targetWidth + 16) / (clawCount + 1) * (c + 0.55);
+      const startY = titleY - 26 + (titleGlitchPseudoRandom(c * 17 + 3) - 0.5) * 8;
+      const baseAngleDeg = crossing ? -28 : 28;
+      const angleDeg = baseAngleDeg + (titleGlitchPseudoRandom(c * 41 + 11) - 0.5) * 10;
+      const angle = angleDeg * Math.PI / 180;
+      const length = 34 + titleGlitchPseudoRandom(c * 29 + 5) * 10;
+      const endX = startX + Math.cos(angle) * length;
+      const endY = startY + Math.sin(angle) * length;
+      const perpAngle = angle + Math.PI / 2;
+      const segs = 6;
+      let prevX = startX, prevY = startY;
+      for (let s = 1; s <= segs; s++) {
+        const t = s / segs;
+        const jag = (titleGlitchPseudoRandom(c * 71 + s * 13) - 0.5) * 3;
+        const px = startX + (endX - startX) * t + Math.cos(perpAngle) * jag;
+        const py = startY + (endY - startY) * t + Math.sin(perpAngle) * jag;
+        // 中央が太く、両端にいくほど細くなる（爪で引っかいた時の力の抜け方をイメージ）
+        ctx.lineWidth = 1.5 + Math.sin(Math.PI * t) * 3.5;
+        ctx.beginPath();
+        ctx.moveTo(prevX, prevY);
+        ctx.lineTo(px, py);
+        ctx.stroke();
+        prevX = px; prevY = py;
+      }
+    }
+
+    // 鉛筆でぐしゃぐしゃと二重線を引いて打ち消したような、ほぼ水平のランダムな線も、爪痕と同じ色で重ねる
+    const pencilLineCount = 2;
+    for (let p = 0; p < pencilLineCount; p++) {
+      const baseY = titleY - 12 + p * 9 + (titleGlitchPseudoRandom(p * 53 + 7) - 0.5) * 6;
+      const angleDeg = (titleGlitchPseudoRandom(p * 61 + 19) - 0.5) * 8; // ほぼ水平
+      const angle = angleDeg * Math.PI / 180;
+      const startX = targetLeftX - 6 - titleGlitchPseudoRandom(p * 11 + 2) * 4;
+      const length = targetWidth + 12 + titleGlitchPseudoRandom(p * 23 + 9) * 10;
+      const endX = startX + Math.cos(angle) * length;
+      const endY = baseY + Math.sin(angle) * length;
+      const perpAngle = angle + Math.PI / 2;
+      const segs = 10;
+      let prevPX = startX, prevPY = baseY;
+      ctx.lineWidth = 2;
+      for (let s = 1; s <= segs; s++) {
+        const t = s / segs;
+        const jag = (titleGlitchPseudoRandom(p * 97 + s * 17 + 31) - 0.5) * 4;
+        const px = startX + (endX - startX) * t + Math.cos(perpAngle) * jag;
+        const py = baseY + (endY - baseY) * t + Math.sin(perpAngle) * jag;
+        ctx.beginPath();
+        ctx.moveTo(prevPX, prevPY);
+        ctx.lineTo(px, py);
+        ctx.stroke();
+        prevPX = px; prevPY = py;
+      }
+    }
+    ctx.restore();
+  }
+
+  ctx.save();
+  ctx.font = `bold 24px ${fontFamily}`;
+  ctx.textAlign = 'center';
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+  ctx.shadowBlur = 4;
+  ctx.shadowOffsetY = 2;
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = strokeColor;
+  ctx.strokeText(subtitleText, canvas.width / 2, canvas.height / 2 - 118);
+  ctx.fillStyle = fillColor;
+  ctx.fillText(subtitleText, canvas.width / 2, canvas.height / 2 - 118);
+  ctx.restore();
+  ctx.textAlign = 'left';
+}
+
+// 目覚めエンド（真エンド・同僚生存）到達後に表示する専用タイトル画面（暫定：白背景）。
+// タイトル文字は通常タイトルと同じ書体で、常に爪痕＋鉛筆の線で打ち消した状態にする
+const trueEndTitleMinchoFont = '"Yu Mincho", "Hiragino Mincho ProN", "MS PMincho", serif';
+const trueEndTitleCursiveFont = '"Comic Sans MS", "Chalkboard SE", "Marker Felt", cursive, sans-serif';
+const trueEndTitleButtonStyle = {
+  fillStyle: 'rgba(0, 0, 0, 0.08)',
+  strokeStyle: '#000000',
+  textColor: '#000000',
+  font: `bold 18px ${trueEndTitleMinchoFont}`
+};
+
+function drawTrueEndTitleScreen() {
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  drawGameTitleText(trueEndTitleCursiveFont, '#ff8fab', '#fffaf0', 'Wakin’ UnDead', true);
+
+  const btnW = 260, btnH = 46, btnGap = 16;
+  const btnX = canvas.width / 2 - btnW / 2;
+  const startY = canvas.height / 2 - 10;
+  drawUiButton(btnX, startY, btnW, btnH, 'エンディングリスト',
+    () => { trueEndEndingListActive = true; }, trueEndTitleButtonStyle);
+  drawUiButton(btnX, startY + (btnH + btnGap), btnW, btnH, '就活を始める',
+    () => { trueEndTitleScreenActive = false; selectMode(); }, trueEndTitleButtonStyle);
+  drawUiButton(btnX, startY + (btnH + btnGap) * 2, btnW, btnH, '寝る',
+    () => {
+      // 同僚との関係値・前回誰を選んだかの情報だけをリセットする（役職・Score・記憶ポイントなどは残す）
+      dreamMemorySave.lastRun = null;
+      saveDreamMemorySave();
+      location.reload();
+    }, trueEndTitleButtonStyle);
+}
+
+// 目覚めエンド専用タイトル画面から開く、専用デザイン（白背景・明朝体・黒枠半透明）のエンディングリスト
+function drawTrueEndEndingListScreen() {
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#000000';
+  ctx.font = `bold 24px ${trueEndTitleMinchoFont}`;
+  ctx.fillText('エンディングリスト', canvas.width / 2, 34);
+  ctx.textAlign = 'left';
+
+  const cols = 2;
+  const colGap = 16;
+  const rowX = 40;
+  const totalGridWidth = canvas.width - rowX * 2;
+  const colWidth = (totalGridWidth - colGap * (cols - 1)) / cols;
+  const rowHeight = 60;
+  const rowGap = 8;
+  const gridStartY = 56;
+  const rows = Math.ceil(endingListDefs.length / cols);
+
+  endingListDefs.forEach((def, index) => {
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    const colX = rowX + col * (colWidth + colGap);
+    const rowY = gridStartY + row * (rowHeight + rowGap);
+    const achieved = !!dreamMemorySave.endingsCleared[def.id];
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.06)';
+    ctx.fillRect(colX, rowY, colWidth, rowHeight);
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(colX, rowY, colWidth, rowHeight);
+
+    ctx.font = `bold 26px ${trueEndTitleMinchoFont}`;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = achieved ? '#000000' : '#9e9e9e';
+    ctx.fillText(achieved ? def.icon : '？', colX + 14, rowY + 40);
+
+    ctx.font = `bold 15px ${trueEndTitleMinchoFont}`;
+    ctx.fillStyle = achieved ? '#000000' : '#9e9e9e';
+    ctx.fillText(achieved ? def.label : '？？？？？', colX + 56, rowY + 24);
+
+    ctx.font = `13px ${trueEndTitleMinchoFont}`;
+    ctx.fillStyle = achieved ? '#333333' : '#aaaaaa';
+    const hintText = achieved ? def.hint : 'まだ到達していないエンディング';
+    const hintLines = wrapTextToWidth(hintText, colWidth - 70).slice(0, 1);
+    ctx.fillText(hintLines[0] || '', colX + 56, rowY + 44);
+  });
+
+  const gridBottom = gridStartY + rows * (rowHeight + rowGap) - rowGap;
+  const backBtnW = 200, backBtnH = 32;
+  ctx.textAlign = 'left';
+  drawUiButton(canvas.width / 2 - backBtnW / 2, gridBottom + 12, backBtnW, backBtnH,
+    '戻る', () => { trueEndEndingListActive = false; }, trueEndTitleButtonStyle);
+}
+
 // スタート画面～プレイ開始直前（モード選択・性別選択・同僚選択）で使う共通背景
 const startScreenBackgroundImage = (() => {
   const img = new Image();
@@ -8784,6 +8994,16 @@ function draw() {
     return;
   }
 
+  // 目覚めエンド（真エンド・同僚生存）到達後の専用タイトル画面（とそのエンディングリスト）
+  if (trueEndTitleScreenActive) {
+    if (trueEndEndingListActive) {
+      drawTrueEndEndingListScreen();
+    } else {
+      drawTrueEndTitleScreen();
+    }
+    return;
+  }
+
   // 力尽きた演出中は、通常のゲーム画面は描かず専用の演出画面のみを表示する
   if (deathSequence) {
     drawDeathSequenceScene();
@@ -9290,111 +9510,11 @@ function draw() {
       : 'sans-serif';
     const titleStrokeColor = useMinchoTitle ? '#a9828c' : '#ff8fab';
     const titleFillColor = useMinchoTitle ? '#d9d3c6' : '#fffaf0';
-    ctx.save();
-    ctx.font = `bold 38px ${titleFontFamily}`;
-    ctx.textAlign = 'center';
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-    ctx.shadowBlur = 6;
-    ctx.shadowOffsetY = 3;
-    ctx.lineWidth = 6;
-    ctx.strokeStyle = titleStrokeColor;
-    ctx.strokeText('ここで寝たらただのサラリーマン', canvas.width / 2, canvas.height / 2 - 154);
-    ctx.fillStyle = titleFillColor;
-    ctx.fillText('ここで寝たらただのサラリーマン', canvas.width / 2, canvas.height / 2 - 154);
-    ctx.restore();
-
     // 二週目以降（過去にいずれかのエンディングに到達済み）：「サラリーマン」の部分を、
-    // 爪で引っかいたような暗い傷跡で打ち消す（固定表示。毎フレーム同じ形になる固定の乱数を使う）
+    // 爪で引っかいたような暗い傷跡＋鉛筆の線で打ち消す（固定表示。毎フレーム同じ形になる固定の乱数を使う）
     const hasPlayedBefore = Object.values(dreamMemorySave.endingsCleared).some(v => v);
-    if (hasPlayedBefore) {
-      ctx.save();
-      ctx.font = `bold 38px ${titleFontFamily}`;
-      ctx.textAlign = 'left';
-      const titlePrefix = 'ここで寝たらただの';
-      const titleTarget = 'サラリーマン';
-      const fullWidth = ctx.measureText(titlePrefix + titleTarget).width;
-      const prefixWidth = ctx.measureText(titlePrefix).width;
-      const targetWidth = ctx.measureText(titleTarget).width;
-      const titleY = canvas.height / 2 - 154;
-      const titleLeftX = canvas.width / 2 - fullWidth / 2;
-      const targetLeftX = titleLeftX + prefixWidth;
-
-      // 爪痕：暗い血のような色の斜めの傷を数本、それぞれジグザグに走らせ、中央が太く両端が細くなるようにする。
-      // 1本おきに逆方向の傷を重ねて交差させ、文字がずたずたに引き裂かれたように見せる
-      ctx.strokeStyle = 'rgba(28, 3, 3, 0.92)';
-      ctx.lineCap = 'round';
-      const clawCount = 5;
-      for (let c = 0; c < clawCount; c++) {
-        const crossing = c % 2 === 1;
-        const startX = targetLeftX - 8 + (targetWidth + 16) / (clawCount + 1) * (c + 0.55);
-        const startY = titleY - 26 + (titleGlitchPseudoRandom(c * 17 + 3) - 0.5) * 8;
-        const baseAngleDeg = crossing ? -28 : 28;
-        const angleDeg = baseAngleDeg + (titleGlitchPseudoRandom(c * 41 + 11) - 0.5) * 10;
-        const angle = angleDeg * Math.PI / 180;
-        const length = 34 + titleGlitchPseudoRandom(c * 29 + 5) * 10;
-        const endX = startX + Math.cos(angle) * length;
-        const endY = startY + Math.sin(angle) * length;
-        const perpAngle = angle + Math.PI / 2;
-        const segs = 6;
-        let prevX = startX, prevY = startY;
-        for (let s = 1; s <= segs; s++) {
-          const t = s / segs;
-          const jag = (titleGlitchPseudoRandom(c * 71 + s * 13) - 0.5) * 3;
-          const px = startX + (endX - startX) * t + Math.cos(perpAngle) * jag;
-          const py = startY + (endY - startY) * t + Math.sin(perpAngle) * jag;
-          // 中央が太く、両端にいくほど細くなる（爪で引っかいた時の力の抜け方をイメージ）
-          ctx.lineWidth = 1.5 + Math.sin(Math.PI * t) * 3.5;
-          ctx.beginPath();
-          ctx.moveTo(prevX, prevY);
-          ctx.lineTo(px, py);
-          ctx.stroke();
-          prevX = px; prevY = py;
-        }
-      }
-
-      // 鉛筆でぐしゃぐしゃと二重線を引いて打ち消したような、ほぼ水平のランダムな線も、爪痕と同じ色で重ねる
-      const pencilLineCount = 2;
-      for (let p = 0; p < pencilLineCount; p++) {
-        const baseY = titleY - 12 + p * 9 + (titleGlitchPseudoRandom(p * 53 + 7) - 0.5) * 6;
-        const angleDeg = (titleGlitchPseudoRandom(p * 61 + 19) - 0.5) * 8; // ほぼ水平
-        const angle = angleDeg * Math.PI / 180;
-        const startX = targetLeftX - 6 - titleGlitchPseudoRandom(p * 11 + 2) * 4;
-        const length = targetWidth + 12 + titleGlitchPseudoRandom(p * 23 + 9) * 10;
-        const endX = startX + Math.cos(angle) * length;
-        const endY = baseY + Math.sin(angle) * length;
-        const perpAngle = angle + Math.PI / 2;
-        const segs = 10;
-        let prevPX = startX, prevPY = baseY;
-        ctx.lineWidth = 2;
-        for (let s = 1; s <= segs; s++) {
-          const t = s / segs;
-          const jag = (titleGlitchPseudoRandom(p * 97 + s * 17 + 31) - 0.5) * 4;
-          const px = startX + (endX - startX) * t + Math.cos(perpAngle) * jag;
-          const py = baseY + (endY - baseY) * t + Math.sin(perpAngle) * jag;
-          ctx.beginPath();
-          ctx.moveTo(prevPX, prevPY);
-          ctx.lineTo(px, py);
-          ctx.stroke();
-          prevPX = px; prevPY = py;
-        }
-      }
-      ctx.restore();
-    }
-
-    ctx.save();
-    ctx.font = `bold 24px ${titleFontFamily}`;
-    ctx.textAlign = 'center';
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-    ctx.shadowBlur = 4;
-    ctx.shadowOffsetY = 2;
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = titleStrokeColor;
     const subtitleText = useMinchoTitle ? 'Wakin’ UnDead' : 'Workin’ FunDead';
-    ctx.strokeText(subtitleText, canvas.width / 2, canvas.height / 2 - 118);
-    ctx.fillStyle = titleFillColor;
-    ctx.fillText(subtitleText, canvas.width / 2, canvas.height / 2 - 118);
-    ctx.restore();
-    ctx.textAlign = 'left';
+    drawGameTitleText(titleFontFamily, titleStrokeColor, titleFillColor, subtitleText, hasPlayedBefore);
 
     // 真エンド（ラスボス撃破）に到達済みなら、タイトルにその印を表示する
     if (dreamMemorySave.trueEndCleared) {
