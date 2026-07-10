@@ -41,46 +41,6 @@ const dreamMemoryPointsForAdv3NormalEnd = 5; // 第3回を経てノーマルエ�
 const dreamMemoryUpgradeMaxLevel = 5;
 const dreamMemoryUpgradeDefs = [
   {
-    id: 'skillLevel', label: '初期特殊スキルレベル',
-    describeLevel: (lv) => `ゲーム開始時のスキルレベルが+${lv}される`
-  },
-  {
-    id: 'maxSan', label: '初期SAN上限',
-    describeLevel: (lv) => `ゲーム開始時のSANの上限が+${lv * 10}される`
-  },
-  {
-    id: 'maxLifespan', label: '初期寿命上限',
-    describeLevel: (lv) => `ゲーム開始時の寿命の上限が+${lv * 10}される`
-  },
-  {
-    id: 'fatigueCap', label: '初期脳疲労の上限緩和',
-    describeLevel: (lv) => `脳疲労の上限が+${lv * 10}され、疲労で動けなくなりにくくなる`
-  },
-  {
-    id: 'startScore', label: '初期スコア',
-    describeLevel: (lv) => `ゲーム開始時のScoreが+${lv * 20}された状態で始まる`
-  },
-  {
-    id: 'bulletDamage', label: '初期攻撃力',
-    describeLevel: (lv) => `弾の基本威力が+${lv}される`
-  },
-  {
-    id: 'moveSpeed', label: '初期移動速度',
-    describeLevel: (lv) => `自機の移動速度が+${(lv * 0.3).toFixed(1)}される`
-  },
-  {
-    id: 'barrierCharges', label: '初期「ファイヤーウォール」バリア',
-    describeLevel: (lv) => `毎日の始まりに、誤射・接触ダメージを${lv}回防ぐバリアが新たに張られる`
-  },
-  {
-    id: 'partnerBond', label: '同僚との初期関係性',
-    describeLevel: (lv) => `同僚との初期関係性が+${lv * 5}され、反撃されにくくなる`
-  },
-  {
-    id: 'quotaEase', label: '週間ノルマ緩和',
-    describeLevel: (lv) => `週間ノルマが${lv * 3}%緩和される`
-  },
-  {
     id: 'partnerAutoParry', label: '同僚のオートパリィレベル',
     describeLevel: (lv) => `同僚が被弾しそうな時にパリィする確率が${30 + lv * 14}%になる（未強化時は30%）`
   },
@@ -89,16 +49,6 @@ const dreamMemoryUpgradeDefs = [
     describeLevel: () => '自機・同僚のSAN上限が25になる（ラスボスに遭遇しやすくなる）',
     maxLevel: 1,
     costOverride: 1
-  },
-  {
-    id: 'prayerGuard', label: '祈る',
-    describeLevel: () => 'SANが0になるダメージでもSAN1で耐え、SAN20まで回復する。回復後5秒間はSANが減らない',
-    maxLevel: 1
-  },
-  {
-    id: 'gutsGuard', label: '根性',
-    describeLevel: () => '寿命が0になる攻撃を受けても寿命1で耐え、寿命20まで回復する。回復後5秒間は寿命が減らない',
-    maxLevel: 1
   },
   {
     id: 'invincibleTest', label: '無敵（テスト用）',
@@ -116,6 +66,42 @@ const dreamMemoryUpgradeDefs = [
   {
     id: 'unbreakableBond', label: '固い絆',
     describeLevel: () => '同僚との関係性が一切低下しなくなる（上昇する効果はこれまで通り発生する）',
+    maxLevel: 1,
+    costOverride: 0
+  },
+  {
+    id: 'selfSacrifice', label: '自己犠牲',
+    describeLevel: () => '戦闘中、十字型のボタンから発動できる特殊行動。発動すると自分の寿命が半分になる代わりに、' +
+      '同僚の寿命が100まで回復する（1周回につき1回のみ使用可）',
+    maxLevel: 1
+  },
+  {
+    id: 'devotion', label: '献身',
+    describeLevel: () => '戦闘中、十字型のボタンから発動できる特殊行動。発動すると自分のSANが半分になる代わりに、' +
+      '同僚のSANが100まで回復する（1周回につき1回のみ使用可）',
+    maxLevel: 1
+  },
+  {
+    id: 'eternalLifePlayer', label: '永遠の命（自分）',
+    describeLevel: () => '自分の寿命が0にならなくなる',
+    maxLevel: 1,
+    costOverride: 0
+  },
+  {
+    id: 'eternalLifePartner', label: '永遠の命（同僚）',
+    describeLevel: () => '同僚の寿命が0にならなくなる',
+    maxLevel: 1,
+    costOverride: 0
+  },
+  {
+    id: 'hopePlayer', label: '希望（自分）',
+    describeLevel: () => '自分のSAN値が0にならなくなる',
+    maxLevel: 1,
+    costOverride: 0
+  },
+  {
+    id: 'hopePartner', label: '希望（同僚）',
+    describeLevel: () => '同僚のSAN値が0にならなくなる',
     maxLevel: 1,
     costOverride: 0
   }
@@ -270,7 +256,7 @@ const player = {
   x: 400,
   y: 300,
   radius: 15,
-  speed: 4 + dreamMemorySave.upgrades.moveSpeed * 0.3, // 夢の記憶ポイントの「初期移動速度」で底上げされる
+  speed: 4,
   angle: 0 // 自分が向いている角度（ラジアン）
 };
 // 画面外のランダムな位置を決め、座標を { x, y } で返す
@@ -443,7 +429,7 @@ function spawnSlashEffect(x, y, angle, entityRadius) {
 }
 const baseFireRate = 350; // 基本の発射間隔（従来の半分、ミリ秒）
 let lastFire = 0;
-let score = dreamMemorySave.upgrades.startScore * 20; // 夢の記憶ポイントの「初期スコア」で底上げされる
+let score = 0;
 let gameOver = false;
 let gameClear = false;
 // 起動時はまずモード選択（startScreen）を表示し、その後 'gender' → 'partner-icon' → null（完了、ゲーム開始）と進む
@@ -546,7 +532,7 @@ let explosionShakeTimer = 0;
 let friendlyFireHitFlashTimer = 0;
 
 // ===== 脳疲労システム =====
-let maxFatigue = 100 + dreamMemorySave.upgrades.fatigueCap * 10; // 夢の記憶ポイントの「初期脳疲労の上限緩和」で底上げされる（ゲーム開始時にapplyDreamMemoryUpgradesForNewGameで再計算）
+let maxFatigue = 100;
 let fatigue = 0; // 0が元気な状態、maxFatigueが疲労の限界
 
 // 時間帯が進むほど、回復してもここより下がらなくなる「脳疲労の下限」。
@@ -651,7 +637,7 @@ const stunRecoveryPerSec = 18; // 行動不能中は脳疲労を回復する（�
 const fireRateMultiplier = 1.5; // 疲労が多いほど発射間隔を延ばす倍率
 // 朝から夜にかけて時間が経つほど、同僚の自律攻撃の間隔が伸びる（パフォーマンス低下の表現。脳疲労の値自体には影響しない）
 const timeOfDayFatigueMultiplierMax = 1.8; // 終業時刻ごろに到達する最大倍率
-let baseBulletDamage = 2 + dreamMemorySave.upgrades.bulletDamage; // 疲労がないときの基本攻撃力（夢の記憶ポイントの「初期攻撃力」で底上げされる、ゲーム開始時にapplyDreamMemoryUpgradesForNewGameで再計算）
+let baseBulletDamage = 2; // 疲労がないときの基本攻撃力
 
 // ===== 回復アイテム（チョコレート） =====
 const chocolateLifetimeMs = 10000; // 出現してから消えるまでの時間（10秒）
@@ -865,7 +851,6 @@ function skipCollapseRestDay() {
   clearRemainingItemsAndBulletsForNewDay();
   currentDate.setDate(currentDate.getDate() + 1);
   dayNumber++;
-  applyDailyBarrierRenewal();
   resetPlayerAndPartnerPositionForNewDay();
   if (currentDate.getDay() === 1) {
     startNewWeek();
@@ -937,12 +922,6 @@ const heartWallBarrierCharges = 3; // 1個取得するごとに、お互いの�
 let heartWall = null;
 let heartWallSpawnTimerMs = getRandomHeartWallSpawnDelay();
 let playerBarrierCharges = 0; // 残っている間は同僚の誤射を防ぐ
-
-// 夢の記憶ポイントの「初期『ファイヤーウォール』バリア」は、毎日の始まりにスキルレベル分のバリアが新たに張られる
-// （前日の残りが多ければそちらを優先し、減ることはない）
-function applyDailyBarrierRenewal() {
-  playerBarrierCharges = Math.max(playerBarrierCharges, dreamMemorySave.upgrades.barrierCharges);
-}
 
 // チョコレート・栄養ドリンクの約20%の頻度でしか出現しない、希少アイテム
 function getRandomHeartWallSpawnDelay() {
@@ -1924,9 +1903,7 @@ function endWorkday() {
 }
 // ===== SAN（精神力）システム =====
 // 「DreamCatcher」を購入していると、SAN上限は25に固定される（ラスボスに遭遇しやすくするため）
-let maxSan = dreamMemorySave.upgrades.dreamCatcher >= 1
-  ? 25
-  : 100 + dreamMemorySave.upgrades.maxSan * 10; // 夢の記憶ポイントの「初期SAN上限」で底上げされる（ゲーム開始時にapplyDreamMemoryUpgradesForNewGameで再計算）
+let maxSan = dreamMemorySave.upgrades.dreamCatcher >= 1 ? 25 : 100;
 let san = maxSan;
 
 // SANが減少する量
@@ -1946,7 +1923,7 @@ let friendlyFireInvincibleTimer = 0;
 // ===== 寿命（健康）システム =====
 // SANダメージの蓄積や、脳疲労・SANの悪い状態が長く続くことで少しずつ削れていく。
 // 0になったらSANとは別にゲームオーバーになる（＝一時的にSANを回復させても、慢性的な消耗の蓄積だけは元に戻らない）
-let maxLifespan = 100 + dreamMemorySave.upgrades.maxLifespan * 10; // 夢の記憶ポイントの「初期寿命上限」で底上げされる（ゲーム開始時にapplyDreamMemoryUpgradesForNewGameで再計算）
+let maxLifespan = 100;
 let lifespan = maxLifespan;
 const sanDamageToLifespanRatio = 0.15; // SANダメージを受けるたびに、その15%ぶん寿命も削れる
 const highFatigueThresholdRatio = 0.8; // 脳疲労がこの割合を超えている状態を「高疲労」とみなす
@@ -1986,17 +1963,6 @@ function startDeathSequence(visualType, deathEndingType) {
   };
 }
 
-// 夢の記憶ポイントの「祈る」「根性」：SAN・寿命が0になる致命傷を受けても、
-// 1で持ちこたえた直後に20まで回復し、5秒間だけその項目が減らなくなる
-const guardReviveValue = 20;
-const guardImmunityDurationMs = 5000;
-let prayerGuardTimerMs = 0;
-let prayerGuardFloor = 0;
-let prayerGuardUsed = false; // 一度発動したら、そのプレイ中は二度と発動しない
-let gutsGuardTimerMs = 0;
-let gutsGuardFloor = 0;
-let gutsGuardUsed = false; // 一度発動したら、そのプレイ中は二度と発動しない
-
 // SAN・寿命のいずれかが尽きたら演出を経てゲームオーバーにする（二重発火防止にgameOver/deathSequenceで一度だけ発火）
 // どちらが尽きたかで演出とバッドエンドの種類を分ける
 function checkVitalsGameOver(deathEndingType = null) {
@@ -2023,26 +1989,45 @@ function checkVitalsGameOver(deathEndingType = null) {
     return;
   }
   if (san <= 0) {
-    if (dreamMemorySave.upgrades.prayerGuard >= 1 && !prayerGuardUsed) {
-      san = guardReviveValue;
-      prayerGuardFloor = guardReviveValue;
-      prayerGuardTimerMs = guardImmunityDurationMs;
-      prayerGuardUsed = true;
-      showMessage('……祈りが通じた。SAN 1で持ちこたえ、正気を取り戻した', 3000, '#ce93d8', '22px sans-serif');
+    // 「希望（自分）」：SANが0にならなくなる
+    if (dreamMemorySave.upgrades.hopePlayer >= 1) {
+      san = 1;
       return;
     }
     startDeathSequence('san', deathEndingType || 'bad-san');
   } else if (lifespan <= 0) {
-    if (dreamMemorySave.upgrades.gutsGuard >= 1 && !gutsGuardUsed) {
-      lifespan = guardReviveValue;
-      gutsGuardFloor = guardReviveValue;
-      gutsGuardTimerMs = guardImmunityDurationMs;
-      gutsGuardUsed = true;
-      showMessage('……根性で持ちこたえた。寿命1で踏みとどまった', 3000, '#ff8a65', '22px sans-serif');
+    // 「永遠の命（自分）」：寿命が0にならなくなる
+    if (dreamMemorySave.upgrades.eternalLifePlayer >= 1) {
+      lifespan = 1;
       return;
     }
     startDeathSequence('lifespan', deathEndingType || 'bad-lifespan');
   }
+}
+
+// ===== 「自己犠牲」「献身」：夢の記憶ポイントで習得する、戦闘中に発動できる特殊行動 =====
+// どちらも1周回につき1回だけ使用でき、beginGameplayで新しい周回のたびにリセットされる
+let selfSacrificeUsedThisRun = false;
+let devotionUsedThisRun = false;
+
+// 「自己犠牲」：自分の寿命が半分になる代わりに、同僚の寿命が100まで回復する
+function useSelfSacrificeSkill() {
+  if (selfSacrificeUsedThisRun || dreamMemorySave.upgrades.selfSacrifice < 1 || !partner.active) return;
+  selfSacrificeUsedThisRun = true;
+  lifespan = Math.max(0, Math.floor(lifespan / 2));
+  partner.lifespan = Math.min(maxLifespan, 100);
+  showMessage('「自己犠牲」発動！ 自分の寿命が半分に、同僚の寿命が回復した', 3000, '#ef9a9a', '22px sans-serif');
+  checkVitalsGameOver();
+}
+
+// 「献身」：自分のSANが半分になる代わりに、同僚のSANが100まで回復する
+function useDevotionSkill() {
+  if (devotionUsedThisRun || dreamMemorySave.upgrades.devotion < 1 || !partner.active) return;
+  devotionUsedThisRun = true;
+  san = Math.max(0, Math.floor(san / 2));
+  partner.san = Math.min(maxSan, 100);
+  showMessage('「献身」発動！ 自分のSANが半分に、同僚のSANが回復した', 3000, '#90caf9', '22px sans-serif');
+  checkVitalsGameOver();
 }
 
 // ===== 自機の性別選択（imagesフォルダの画像を使用） =====
@@ -2306,8 +2291,7 @@ const partnerContactSanMultiplier = 3; // 接触時のSANダメージ = 敵の�
 const partnerInvincibleDuration = 1200;
 const partnerLossSanPenalty = 20; // 同僚が力尽きたとき、プレイヤーが受けるSANダメージ
 const partnerRelationshipMax = 100;
-// 夢の記憶ポイントの「同僚との初期関係性」で底上げされる（上限は超えない）
-let partnerRelationshipInitial = Math.min(partnerRelationshipMax, 50 + dreamMemorySave.upgrades.partnerBond * 5); // ゲーム開始時にapplyDreamMemoryUpgradesForNewGameで再計算
+let partnerRelationshipInitial = 50;
 const partnerRelationshipSafeFireThreshold = 50;
 const partnerRelationshipDamagePerHit = 15;
 const partnerRelationshipRetaliationThreshold = 40;
@@ -2956,6 +2940,12 @@ function updatePartner(dt) {
     partner.fatigue = 0;
     return;
   }
+  // 「永遠の命（同僚）」「希望（同僚）」：同僚のSAN・寿命がそれぞれ0にならないようにする
+  // （ノーマルルート終了時の負けイベント戦闘中は、これらの効果も無効化する）
+  if (!normalEndBattleActive) {
+    if (dreamMemorySave.upgrades.eternalLifePartner >= 1) partner.lifespan = Math.max(partner.lifespan, 1);
+    if (dreamMemorySave.upgrades.hopePartner >= 1) partner.san = Math.max(partner.san, 1);
+  }
 
   // 退場判定：SANか寿命が尽きたら以後登場しなくなり、プレイヤーにもSANダメージが入る
   if (partner.san <= 0 || partner.lifespan <= 0) {
@@ -3020,8 +3010,7 @@ function nextMonday(date) {
   return d;
 }
 
-// 夢の記憶ポイントの「週間ノルマ緩和」による軽減倍率（レベルごとに3%緩和、最大15%）
-let weeklyQuotaEaseMultiplier = 1 - dreamMemorySave.upgrades.quotaEase * 0.03; // ゲーム開始時にapplyDreamMemoryUpgradesForNewGameで再計算
+let weeklyQuotaEaseMultiplier = 1;
 
 // ランクに応じて今週のノルマを再設定する
 // 集中して手を止めずにプレイしてようやく届く程度の、ぎりぎり達成できる水準にしてある
@@ -3111,7 +3100,7 @@ const rankThresholds = [0, 240, 800, 2000, 4000, 7200, 12800]; // 各ランク�
 let exp = 0;
 const baseExpPerLevel = 20; // 最初のレベルアップに必要な経験値（序盤が上がりやすいよう引き下げ）
 const expPerLevelGrowth = 6; // レベルが1上がるごとに、次のレベルアップに必要な経験値が増える量
-let skillLevel = dreamMemorySave.upgrades.skillLevel; // 夢の記憶ポイントの「初期特殊スキルレベル」で底上げされる
+let skillLevel = 0;
 
 // 指定レベルに到達するまでの累積必要経験値（レベルが上がるほど1レベルあたりの必要量が増える等差数列の和）
 function expThresholdForLevel(level) {
@@ -3503,7 +3492,6 @@ function autoAdvanceDay() {
   clearRemainingItemsAndBulletsForNewDay();
   currentDate.setDate(currentDate.getDate() + 1);
   applyDayEndRecovery();
-  applyDailyBarrierRenewal();
   resetPlayerAndPartnerPositionForNewDay();
   // 終わった一日に5本以上飲んでいたら、翌朝（＝今から始まる日）の判定だけ確率を倍にする
   if (energyDrinkDailyCount + coffeeDailyCount >= caffeineHeavyDayThreshold) {
@@ -3532,7 +3520,6 @@ function jumpToNextMondayAndResetWeek() {
   clearRemainingItemsAndBulletsForNewDay();
   currentDate = nextMonday(currentDate);
   eveningDrinkRecoveryPenalty = false; // 休日を挟むため、このペナルティは持ち越さない
-  applyDailyBarrierRenewal();
   resetPlayerAndPartnerPositionForNewDay();
   // 終わった一日に5本以上飲んでいたら、翌朝（＝今から始まる日）の判定だけ確率を倍にする
   if (energyDrinkDailyCount + coffeeDailyCount >= caffeineHeavyDayThreshold) {
@@ -4017,12 +4004,12 @@ function backToGenderSelectFromPartnerSelect() {
 // これから始まるゲームの初期値に反映する。これらの値はスクリプト読み込み時に一度だけ計算されるため、
 // ゲーム開始直前に呼び直さないと、同じページを読み込んだままショップで変更した内容が実際のプレイに反映されないバグがあった
 function applyDreamMemoryUpgradesForNewGame() {
-  // 周回プレイの引き継ぎ：前回終了時のScoreに、初期スコア強化ぶんを上乗せする
-  score = (dreamMemorySave.carriedScore || 0) + dreamMemorySave.upgrades.startScore * 20;
-  maxFatigue = 100 + dreamMemorySave.upgrades.fatigueCap * 10;
-  baseBulletDamage = 2 + dreamMemorySave.upgrades.bulletDamage;
-  maxSan = dreamMemorySave.upgrades.dreamCatcher >= 1 ? 25 : 100 + dreamMemorySave.upgrades.maxSan * 10;
-  maxLifespan = 100 + dreamMemorySave.upgrades.maxLifespan * 10;
+  // 周回プレイの引き継ぎ：前回終了時のScoreをそのまま初期値にする
+  score = dreamMemorySave.carriedScore || 0;
+  maxFatigue = 100;
+  baseBulletDamage = 2;
+  maxSan = dreamMemorySave.upgrades.dreamCatcher >= 1 ? 25 : 100;
+  maxLifespan = 100;
   // 周回プレイの引き継ぎ：前回終了時の役職（ランク）・役職スキルを復元する（「クラウド」のSAN・寿命上限+10も再適用する）
   rank = dreamMemorySave.carriedRank || 1;
   rankSkillLevels.clear();
@@ -4035,11 +4022,11 @@ function applyDreamMemoryUpgradesForNewGame() {
   });
   san = maxSan;
   lifespan = maxLifespan;
-  skillLevel = dreamMemorySave.upgrades.skillLevel;
-  partnerRelationshipInitial = Math.min(partnerRelationshipMax, 50 + dreamMemorySave.upgrades.partnerBond * 5);
-  weeklyQuotaEaseMultiplier = 1 - dreamMemorySave.upgrades.quotaEase * 0.03;
+  skillLevel = 0;
+  partnerRelationshipInitial = 50;
+  weeklyQuotaEaseMultiplier = 1;
   partnerParryChance = Math.min(1, 0.3 + dreamMemorySave.upgrades.partnerAutoParry * 0.14);
-  player.speed = 4 + dreamMemorySave.upgrades.moveSpeed * 0.3;
+  player.speed = 4;
   recomputeSpecialSkillEffects();
 }
 
@@ -4051,9 +4038,11 @@ function beginGameplay() {
   lastHourTime = 0;
   dayStartTime = 0;
   dayNumber = 1;
-  applyDailyBarrierRenewal();
   resetWeeklyQuotaForNewWeek();
   initPartner();
+  // 「自己犠牲」「献身」は1周回につき1回だけ発動できる特殊行動なので、新しい周回の開始時にリセットする
+  selfSacrificeUsedThisRun = false;
+  devotionUsedThisRun = false;
   // 前回と同じ自機・同僚で始めた場合、関係性は前回終了時の値+20から始まる
   // （分岐等に影響するのは100までだが、余裕を持たせて120まで許容する）
   if (shouldShowReunionScene()) {
@@ -7186,16 +7175,6 @@ function update() {
   // 「無敵（テスト用）」「β版設定」：脳疲労を常に0のままにする
   if (isTestInvincibleUpgradeActive()) fatigue = 0;
 
-  // 「祈る」「根性」発動直後の5秒間は、この間に受けたダメージ分を打ち消してSAN・寿命を維持する
-  if (prayerGuardTimerMs > 0) {
-    prayerGuardTimerMs -= dt * 1000;
-    san = Math.max(san, prayerGuardFloor);
-  }
-  if (gutsGuardTimerMs > 0) {
-    gutsGuardTimerMs -= dt * 1000;
-    lifespan = Math.max(lifespan, gutsGuardFloor);
-  }
-
   // 脳疲労が高い状態・SANが低い状態が一定時間続くと、寿命が少しずつ削れていく
   if (fatigue >= maxFatigue * highFatigueThresholdRatio) {
     highFatigueTimerMs += dt * 1000;
@@ -8595,8 +8574,6 @@ function getPlayerActiveEffectsList() {
   if (energyDrinkBuffTimerMs > 0) list.push(`栄養ドリンク効果 ${(energyDrinkBuffTimerMs / 1000).toFixed(1)}s`);
   if (coffeeBuffTimerMs > 0) list.push(`コーヒー効果 ${(coffeeBuffTimerMs / 1000).toFixed(1)}s`);
   if (coffeeStunImmunityTimerMs > 0) list.push(`stun回避中（コーヒー） ${(coffeeStunImmunityTimerMs / 1000).toFixed(1)}s`);
-  if (prayerGuardTimerMs > 0) list.push(`「祈る」無敵猶予 ${(prayerGuardTimerMs / 1000).toFixed(1)}s`);
-  if (gutsGuardTimerMs > 0) list.push(`「根性」無敵猶予 ${(gutsGuardTimerMs / 1000).toFixed(1)}s`);
   if (fixedEnemyControlsReversedTimerMs > 0) list.push(`操作反転（XSS） ${(fixedEnemyControlsReversedTimerMs / 1000).toFixed(1)}s`);
   if (fixedEnemyMoveHijackTimerMs > 0) list.push(`移動乗っ取り ${(fixedEnemyMoveHijackTimerMs / 1000).toFixed(1)}s`);
   if (fixedEnemyMoveSpeedDebuffTimerMs > 0) list.push(`移動速度低下 ${(fixedEnemyMoveSpeedDebuffTimerMs / 1000).toFixed(1)}s`);
@@ -10047,6 +10024,24 @@ function draw() {
     mobileAutoAimEnabled
       ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 12px sans-serif' }
       : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 12px sans-serif' });
+
+  // 「自己犠牲」「献身」：習得済みかつ同僚が健在で、まだこの周回で使っていない時だけ、
+  // 十字型の小さなボタンをトグルボタン列の右側に並べて表示する（1周回につき1回のみ発動可能）
+  const oneTimeSkillBtnSize = 40;
+  const oneTimeSkillBtnX = toggleBtnX + toggleBtnW + 10;
+  let oneTimeSkillBtnY = toggleBtnStartY;
+  if (dreamMemorySave.upgrades.selfSacrifice >= 1 && !selfSacrificeUsedThisRun && partner.active) {
+    drawUiButton(oneTimeSkillBtnX, oneTimeSkillBtnY, oneTimeSkillBtnSize, oneTimeSkillBtnSize,
+      '✝', useSelfSacrificeSkill,
+      { fillStyle: 'rgba(140, 20, 20, 0.65)', strokeStyle: '#ef9a9a', font: 'bold 22px sans-serif' });
+    oneTimeSkillBtnY += oneTimeSkillBtnSize + toggleBtnGap;
+  }
+  if (dreamMemorySave.upgrades.devotion >= 1 && !devotionUsedThisRun && partner.active) {
+    drawUiButton(oneTimeSkillBtnX, oneTimeSkillBtnY, oneTimeSkillBtnSize, oneTimeSkillBtnSize,
+      '✝', useDevotionSkill,
+      { fillStyle: 'rgba(20, 60, 140, 0.65)', strokeStyle: '#90caf9', font: 'bold 22px sans-serif' });
+  }
+
   // 一時メッセージを画面上部の中央に表示する
   drawPendingMessages();
   // 画面右上に日付・時刻・曜日を表示する
