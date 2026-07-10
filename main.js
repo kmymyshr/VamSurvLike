@@ -8319,39 +8319,47 @@ function draw() {
     ctx.fillText('エンディングリスト', canvas.width / 2, 34);
     ctx.textAlign = 'left';
 
-    const rowX = 60;
-    const rowWidth = canvas.width - rowX * 2;
+    // 画面下まではみ出して「戻る」ボタンが押せなくならないよう、2列で表示する
+    const cols = 2;
+    const colGap = 16;
+    const rowX = 40;
+    const totalGridWidth = canvas.width - rowX * 2;
+    const colWidth = (totalGridWidth - colGap * (cols - 1)) / cols;
     const rowHeight = 60;
-    const rowGap = 6;
+    const rowGap = 8;
     const gridStartY = 56;
+    const rows = Math.ceil(endingListDefs.length / cols);
 
     endingListDefs.forEach((def, index) => {
-      const rowY = gridStartY + index * (rowHeight + rowGap);
+      const col = index % cols;
+      const row = Math.floor(index / cols);
+      const colX = rowX + col * (colWidth + colGap);
+      const rowY = gridStartY + row * (rowHeight + rowGap);
       const achieved = !!dreamMemorySave.endingsCleared[def.id];
 
       ctx.fillStyle = achieved ? 'rgba(103, 58, 183, 0.30)' : 'rgba(40, 40, 40, 0.45)';
-      ctx.fillRect(rowX, rowY, rowWidth, rowHeight);
+      ctx.fillRect(colX, rowY, colWidth, rowHeight);
       ctx.strokeStyle = achieved ? '#ce93d8' : '#616161';
       ctx.lineWidth = 1;
-      ctx.strokeRect(rowX, rowY, rowWidth, rowHeight);
+      ctx.strokeRect(colX, rowY, colWidth, rowHeight);
 
       ctx.font = 'bold 26px sans-serif';
       ctx.textAlign = 'left';
       ctx.fillStyle = achieved ? 'white' : '#616161';
-      ctx.fillText(achieved ? def.icon : '？', rowX + 14, rowY + 40);
+      ctx.fillText(achieved ? def.icon : '？', colX + 14, rowY + 40);
 
       ctx.font = 'bold 15px sans-serif';
       ctx.fillStyle = achieved ? '#ffd54f' : '#9e9e9e';
-      ctx.fillText(achieved ? def.label : '？？？？？', rowX + 56, rowY + 24);
+      ctx.fillText(achieved ? def.label : '？？？？？', colX + 56, rowY + 24);
 
       ctx.font = '12px sans-serif';
       ctx.fillStyle = achieved ? '#cfd8dc' : '#757575';
       const hintText = achieved ? def.hint : 'まだ到達していないエンディング';
-      const hintLines = wrapTextToWidth(hintText, rowWidth - 70).slice(0, 1);
-      ctx.fillText(hintLines[0] || '', rowX + 56, rowY + 44);
+      const hintLines = wrapTextToWidth(hintText, colWidth - 70).slice(0, 1);
+      ctx.fillText(hintLines[0] || '', colX + 56, rowY + 44);
     });
 
-    const gridBottom = gridStartY + endingListDefs.length * (rowHeight + rowGap) - rowGap;
+    const gridBottom = gridStartY + rows * (rowHeight + rowGap) - rowGap;
     const backBtnW = 200, backBtnH = 32;
     ctx.textAlign = 'left';
     drawUiButton(canvas.width / 2 - backBtnW / 2, gridBottom + 12, backBtnW, backBtnH,
