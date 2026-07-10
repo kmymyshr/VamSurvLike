@@ -4055,7 +4055,7 @@ function selectGender(genderId) {
     const isRepeatingAfterNormalEnd = !!(lastRun && typeof lastRun.endingType === 'string' &&
       lastRun.endingType.startsWith('normal') && lastRun.playerGender === genderId);
     const line = isRepeatingAfterNormalEnd
-      ? '…繰り返し、同じ夢を見ている？'
+      ? '…繰り返し、同じ夢を、見ている…？'
       : playerIconGreetingLines[Math.floor(Math.random() * playerIconGreetingLines.length)];
     startIconGreeting(genderId, line, () => { setupStep = 'partner-icon'; }, genderImageElements[genderId]);
   });
