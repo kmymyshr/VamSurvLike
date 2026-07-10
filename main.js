@@ -3648,28 +3648,11 @@ function resolveWeekEnd() {
 
 // ===== 「同僚と遊ぶ」を選んだ時のアドベンチャーパート（簡易サウンドノベル） =====
 // 現在進行中のシーン状態。null なら非表示
-// lineFadePhase: 'in'（表示中のフェードイン中）→ null（安定表示）→（進める操作で）'out'（フェードアウト中）→次の文へ
+// lineFadePhase: 'in'（表示中のフェードイン中）→ null（安定表示）→（進める操作で）'out'（フェードアウト中）→次のブロックへ
 let adventureState = null; // { scene, nodeId, onComplete, lineIndex, lineFadePhase, lineFadeTimerMs }
 const adventureMinchoFont = '"Yu Mincho", "Hiragino Mincho ProN", "MS PMincho", serif';
 const adventureLineFadeInDurationMs = 260;
 const adventureLineFadeOutDurationMs = 200;
-
-// 本文を「\n」区切りの発言単位に分けた上で、各単位をさらに「。」ごとの文単位に分割する
-// （「。」は文の末尾に残す。末尾に「。」がなく残った断片は、そのまま1つの文として扱う）
-function splitAdventureTextIntoSentences(bodyText) {
-  const sentences = [];
-  bodyText.split('\n').forEach(block => {
-    const parts = block.split('。');
-    parts.forEach((part, i) => {
-      if (i === parts.length - 1) {
-        if (part.length > 0) sentences.push(part);
-      } else {
-        sentences.push(part + '。');
-      }
-    });
-  });
-  return sentences;
-}
 
 // 特定の特殊スキルを1レベル分だけ習得させる（アドベンチャーの選択肢報酬などに使う）
 function grantSpecialSkillById(id) {
@@ -4204,9 +4187,9 @@ document.addEventListener("keydown", (event) => {
     const node = adventureState.scene.nodes[adventureState.nodeId];
     const partnerGender = partnerGenderById[selectedPartnerIcon];
     const bodyText = resolveGenderedAdventureText(node.text, partnerGender);
-    const sentences = splitAdventureTextIntoSentences(bodyText);
-    if ((adventureState.lineIndex || 0) < sentences.length - 1) {
-      // フェード中（表示しきる／消えきる前）の連打では進めず、安定表示中だけ次の文へのフェードアウトを始める
+    const lineBlocks = bodyText.split('\n');
+    if ((adventureState.lineIndex || 0) < lineBlocks.length - 1) {
+      // フェード中（表示しきる／消えきる前）の連打では進めず、安定表示中だけ次のブロックへのフェードアウトを始める
       if (!adventureState.lineFadePhase) {
         adventureState.lineFadePhase = 'out';
         adventureState.lineFadeTimerMs = 0;
@@ -6435,15 +6418,15 @@ canvas.addEventListener('click', (event) => {
     normalEndSequence.phaseTimerMs = 0;
     return;
   }
-  // 「同僚と遊ぶ」アドベンチャーパート：本文がまだ続く間は、クリックで次の文へ進める
-  // （最後の文まで進んだ後は、下の選択肢ボタンをそのままクリックさせる）
+  // 「同僚と遊ぶ」アドベンチャーパート：本文がまだ続く間は、クリックで次のブロックへ進める
+  // （最後のブロックまで進んだ後は、下の選択肢ボタンをそのままクリックさせる）
   if (adventureState) {
     const node = adventureState.scene.nodes[adventureState.nodeId];
     const partnerGender = partnerGenderById[selectedPartnerIcon];
     const bodyText = resolveGenderedAdventureText(node.text, partnerGender);
-    const sentences = splitAdventureTextIntoSentences(bodyText);
-    if ((adventureState.lineIndex || 0) < sentences.length - 1) {
-      // フェード中（表示しきる／消えきる前）の連打では進めず、安定表示中だけ次の文へのフェードアウトを始める
+    const lineBlocks = bodyText.split('\n');
+    if ((adventureState.lineIndex || 0) < lineBlocks.length - 1) {
+      // フェード中（表示しきる／消えきる前）の連打では進めず、安定表示中だけ次のブロックへのフェードアウトを始める
       if (!adventureState.lineFadePhase) {
         adventureState.lineFadePhase = 'out';
         adventureState.lineFadeTimerMs = 0;
@@ -10938,8 +10921,8 @@ function draw() {
       { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
   }
 
-  // 「同僚と遊ぶ」アドベンチャーパート：発言・地の文を「。」ごとの文単位で、同じ場所にフェードイン→
-  // 表示→（進める操作で）フェードアウトしながら次の文へ切り替える。最後の文まで進んだら選択肢を表示する
+  // 「同僚と遊ぶ」アドベンチャーパート：発言・地の文を「\n」区切りのブロック単位で、同じ場所にフェードイン→
+  // 表示→（進める操作で）フェードアウトしながら次のブロックへ切り替える。最後まで進んだら選択肢を表示する
   if (adventureState && !gameOver && !gameClear) {
     const node = adventureState.scene.nodes[adventureState.nodeId];
     ctx.fillStyle = 'rgba(4, 6, 12, 0.92)';
@@ -10947,9 +10930,9 @@ function draw() {
 
     const partnerGender = partnerGenderById[selectedPartnerIcon];
     const bodyText = resolveGenderedAdventureText(node.text, partnerGender);
-    const sentences = splitAdventureTextIntoSentences(bodyText);
-    const lineIndex = Math.min(adventureState.lineIndex || 0, sentences.length - 1);
-    const isLastBlock = lineIndex >= sentences.length - 1;
+    const lineBlocks = bodyText.split('\n');
+    const lineIndex = Math.min(adventureState.lineIndex || 0, lineBlocks.length - 1);
+    const isLastBlock = lineIndex >= lineBlocks.length - 1;
 
     // フェードイン中は0→1、フェードアウト中は1→0、安定表示中（フェードなし）は常に1
     let lineAlpha = 1;
@@ -10964,7 +10947,7 @@ function draw() {
     ctx.fillStyle = '#ffe0b2';
     ctx.font = `bold 21px ${adventureMinchoFont}`;
     ctx.textAlign = 'left';
-    const textLines = wrapTextToWidth(sentences[lineIndex], canvas.width - 160);
+    const textLines = wrapTextToWidth(lineBlocks[lineIndex], canvas.width - 160);
     textLines.forEach((line, i) => {
       ctx.fillText(line, 80, 240 + i * 30);
     });
