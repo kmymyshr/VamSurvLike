@@ -269,7 +269,7 @@ const player = {
   x: 400,
   y: 300,
   radius: 15,
-  speed: 4,
+  speed: 6, // 初期速度（以前の設定の150%）
   angle: 0 // 自分が向いている角度（ラジアン）
 };
 // 画面外のランダムな位置を決め、座標を { x, y } で返す
@@ -448,6 +448,8 @@ spawnWave();
 // ===== 弾・スコア・ゲーム状態 =====
 // プレイヤーが発射した弾を保存する配列
 const bullets = [];
+// 自機の弾は、発射地点からこの距離（戦闘画面の横幅の60%）だけ進むと消滅する（パリィされた弾は対象外）
+const playerBulletMaxDistance = canvas.width * 0.6;
 
 // ===== 敵に弾が命中した瞬間の弾けるようなヒットエフェクト =====
 const hitSparks = [];
@@ -4121,7 +4123,7 @@ function applyDreamMemoryUpgradesForNewGame() {
   partnerRelationshipInitial = 50;
   weeklyQuotaEaseMultiplier = 1;
   partnerParryChance = Math.min(1, 0.3 + dreamMemorySave.upgrades.partnerAutoParry * 0.14);
-  player.speed = 4;
+  player.speed = 6; // 初期速度（以前の設定の150%）
   recomputeSpecialSkillEffects();
 }
 
@@ -4311,9 +4313,9 @@ function updateMousePosition(event) {
   );
 }
 
-// タッチでの移動・攻撃は画面外の専用ボタン（#moveDpad / #btnMobileFire）が担当するため、
+// タッチでの移動・攻撃は画面外の専用コントロール（#moveJoystick / #btnMobileFire）が担当するため、
 // キャンバス上のポインタ操作はマウスのときだけ従来通り扱う（タップはメニュー用のclickイベントで別途処理する）
-const touchMoveVector = { x: 0, y: 0 }; // 十字キーの入力方向（-1〜1、斜めは正規化する）
+const touchMoveVector = { x: 0, y: 0 }; // ジョイスティックの入力方向・強さ（-1〜1）
 
 canvas.addEventListener('pointermove', (event) => {
   if (event.pointerType === 'mouse') updateMousePosition(event);
@@ -4340,42 +4342,57 @@ canvas.addEventListener('pointercancel', (event) => {
 });
 canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 
-// ===== 画面外の移動ボタン（#moveDpad、上下左右のデジタル入力） =====
-// ボタンの押下状態から touchMoveVector を求める（斜め押しは正規化して速度が変わらないようにする）
-const moveDpadState = { up: false, down: false, left: false, right: false };
-function updateTouchMoveVectorFromDpad() {
-  let x = 0, y = 0;
-  if (moveDpadState.left) x -= 1;
-  if (moveDpadState.right) x += 1;
-  if (moveDpadState.up) y -= 1;
-  if (moveDpadState.down) y += 1;
-  if (x !== 0 && y !== 0) {
-    x *= Math.SQRT1_2;
-    y *= Math.SQRT1_2;
-  }
-  touchMoveVector.x = x;
-  touchMoveVector.y = y;
+// ===== 画面外の移動ジョイスティック（#moveJoystick、アナログ入力） =====
+// 指が土台の中心からどれだけ・どの方向に離れているかで touchMoveVector（-1〜1）を求める。
+// 感度は高めにしてあり、moveJoystickSensitivityRadiusぶん動かしただけで最大速度に達する
+// （ノブ自体の見た目上の可動範囲はmoveJoystickVisualMaxOffsetまでで、それより指が離れても追従は頭打ちになる）
+const moveJoystickEl = document.getElementById('moveJoystick');
+const moveJoystickKnobEl = document.getElementById('moveJoystickKnob');
+const moveJoystickSensitivityRadius = 26;
+const moveJoystickVisualMaxOffset = 45;
+let moveJoystickPointerId = null;
+
+function updateJoystickKnobPosition(offsetX, offsetY) {
+  moveJoystickKnobEl.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
 }
-function bindMoveDpadButton(elementId, directionKey) {
-  const el = document.getElementById(elementId);
-  const press = (event) => {
-    moveDpadState[directionKey] = true;
-    updateTouchMoveVectorFromDpad();
-    event.preventDefault();
-  };
-  const release = () => {
-    moveDpadState[directionKey] = false;
-    updateTouchMoveVectorFromDpad();
-  };
-  el.addEventListener('pointerdown', press);
-  el.addEventListener('pointerup', release);
-  el.addEventListener('pointercancel', release);
-  el.addEventListener('pointerleave', release);
+
+function resetJoystick() {
+  touchMoveVector.x = 0;
+  touchMoveVector.y = 0;
+  updateJoystickKnobPosition(0, 0);
 }
-bindMoveDpadButton('btnMoveUp', 'up');
-bindMoveDpadButton('btnMoveDown', 'down');
-bindMoveDpadButton('btnMoveLeft', 'left');
-bindMoveDpadButton('btnMoveRight', 'right');
+
+function handleJoystickMove(event) {
+  const rect = moveJoystickEl.getBoundingClientRect();
+  const dx = event.clientX - (rect.left + rect.width / 2);
+  const dy = event.clientY - (rect.top + rect.height / 2);
+  const dist = Math.hypot(dx, dy);
+  const angle = Math.atan2(dy, dx);
+  const magnitude = Math.min(1, dist / moveJoystickSensitivityRadius);
+  touchMoveVector.x = magnitude > 0 ? Math.cos(angle) * magnitude : 0;
+  touchMoveVector.y = magnitude > 0 ? Math.sin(angle) * magnitude : 0;
+  const visualDist = Math.min(moveJoystickVisualMaxOffset, dist);
+  updateJoystickKnobPosition(Math.cos(angle) * visualDist, Math.sin(angle) * visualDist);
+}
+
+moveJoystickEl.addEventListener('pointerdown', (event) => {
+  moveJoystickPointerId = event.pointerId;
+  moveJoystickEl.setPointerCapture(event.pointerId);
+  handleJoystickMove(event);
+  event.preventDefault();
+});
+moveJoystickEl.addEventListener('pointermove', (event) => {
+  if (event.pointerId !== moveJoystickPointerId) return;
+  handleJoystickMove(event);
+  event.preventDefault();
+});
+const releaseJoystick = (event) => {
+  if (event.pointerId !== moveJoystickPointerId) return;
+  moveJoystickPointerId = null;
+  resetJoystick();
+};
+moveJoystickEl.addEventListener('pointerup', releaseJoystick);
+moveJoystickEl.addEventListener('pointercancel', releaseJoystick);
 
 // ===== 画面外の攻撃ボタン（#btnMobileFire） =====
 // 押している間だけ連射する、単純なボタン（向きはスマホ用の自動照準設定で決まる）
@@ -7140,7 +7157,8 @@ function update() {
               radius: 4,
               damage,
               bounces: specialSkillEffects.bulletBounceCount,
-              owner: 'player'
+              owner: 'player',
+              distanceTraveled: 0
             });
           }
         }
@@ -7214,6 +7232,15 @@ function update() {
     const b = bullets[i];
     b.x += b.vx;
     b.y += b.vy;
+    // 自機の弾は、発射地点からの累計移動距離が一定値（戦闘画面の横幅の60%）に達すると消滅する。
+    // パリィされた弾は owner が 'deflected' に変わるため、この判定の対象外になる
+    if (b.owner === 'player') {
+      b.distanceTraveled = (b.distanceTraveled || 0) + Math.hypot(b.vx, b.vy);
+      if (b.distanceTraveled >= playerBulletMaxDistance) {
+        bullets.splice(i, 1);
+        continue;
+      }
+    }
     // 画面端に達した弾は、跳ね返り回数が残っていれば反射し、なければ削除する
     // （援護弾は、画面端の外側からゆっくり飛来してくる演出のため、この判定の対象外にする）
     let removed = false;
