@@ -82,7 +82,7 @@ Object.assign(partnerAdventureScenes, { adv1: buildAdvScene('adv1', [
   '同僚「それは大きな進歩ですね」\n' +
   '？？？「この部署の迷宮度が高いんだよ」\n' +
   '同僚は軽く笑う。\n' +
-  '彼女はまだ何も覚えていない。\n' +
+  '同僚はまだ何も覚えていない。\n' +
   'けれど、？？？にとっては、失いたくない相手だった。\n' +
   '同僚「この資料、少し一緒に見てもらえますか？」'
 ], [
@@ -187,7 +187,7 @@ Object.assign(partnerAdventureScenes, { adv2B: buildAdvScene('adv2B', [
 Object.assign(partnerAdventureScenes, { adv3AC: buildAdvScene('adv3AC', [
   '配置換えから三週間。\n' +
   '同僚「もう三週間ですね。最初より、だいぶ仕事しやすくなりました」\n' +
-  '？？？「僕もそう思う」\n' +
+  '？？？「うん、そう思う」\n' +
   '同僚「この資料も、かなり早く終わりましたし」\n' +
   '？？？「二人でやると迷いにくいね」\n' +
   '同僚「資料でも？」\n' +
