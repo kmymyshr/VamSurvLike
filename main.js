@@ -112,6 +112,12 @@ const dreamMemoryUpgradeDefs = [
       '中ボス・ラスボス戦（イベント戦は除く）では1発ごとに相手の耐久力の最大値の20%ぶんダメージを与え、最低5発で撃破できる',
     maxLevel: 1,
     costOverride: 1
+  },
+  {
+    id: 'unbreakableBond', label: '固い絆',
+    describeLevel: () => '同僚との関係性が一切低下しなくなる（上昇する効果はこれまで通り発生する）',
+    maxLevel: 1,
+    costOverride: 0
   }
 ];
 // 現在のレベルから次のレベルへ上げるのに必要な夢の記憶ポイント数（レベルが上がるごとに1ずつ増える。Lv0→1は1、Lv1→2は2…）
@@ -1827,8 +1833,10 @@ function startQuizEvent() {
   if (quizState || weeklyQuizCount >= maxWeeklyQuizCount) return;
   const source = quizQuestions[Math.floor(Math.random() * quizQuestions.length)];
   // 正解位置が固定化しないよう選択肢を並べ替える
-  const shuffled = source.choices.map((text, index) => ({ text, correct: index === source.correct }))
-    .sort(() => Math.random() - 0.5);
+  // （sort(() => Math.random() - 0.5)は要素数が少ないと偏りが出やすいため、Fisher-YatesのshuffleArrayを使う）
+  const shuffled = shuffleArray(
+    source.choices.map((text, index) => ({ text, correct: index === source.correct }))
+  );
   quizState = {
     category: source.category,
     text: source.text,
@@ -3586,6 +3594,8 @@ function grantSpecialSkillById(id) {
 }
 
 function adjustPartnerRelationship(amount) {
+  // 「固い絆」：関係性が低下するイベントを一切無効化する（上昇は今まで通り発生する）
+  if (amount < 0 && dreamMemorySave.upgrades.unbreakableBond >= 1) return;
   // 特殊スキル「コミュニケーション力」：関係性が悪化する原因（誤射など）による低下値を軽減する
   const scaledAmount = amount < 0 ? amount * specialSkillEffects.relationshipDamageMultiplier : amount;
   partner.relationship = Math.max(0, Math.min(partnerRelationshipMax, partner.relationship + scaledAmount));
@@ -4369,6 +4379,10 @@ function performBulletParry(bullet, fromX, fromY, actorAngle, isAuto = false) {
     } else {
       angle = actorAngle;
     }
+  }
+  // 同僚が撃った弾をパリィではじき返した時は、信頼関係が2上がる（手動・オートパリィとも共通）
+  if (bullet.owner === 'partner') {
+    adjustPartnerRelationship(2);
   }
   bullet.vx = Math.cos(angle) * speed;
   bullet.vy = Math.sin(angle) * speed;
@@ -5980,8 +5994,8 @@ function computeFullAutoEnemyAvoidanceVector() {
 // 完全オートモード中の移動方向（-1〜1に正規化済み）を、優先度順に1つだけ選んで決める
 // （複数の意図を混ぜず、優先度が高いものだけに従うことで振動を防ぐ）
 // 優先度1: 同僚弾の回避 → 優先度2: 近い敵からの回避 → 優先度3: 同僚との距離を置く
-// （チョコレート・栄養ドリンク・コーヒー・ファイヤーウォールは、自機が実際にその場へ来ない限り取得されないため、
-// 　完全オートモード中はクリック操作がない以上これらを取得できない。食事だけは例外的に自動取得する）
+// （チョコレート・栄養ドリンク・コーヒー・ファイヤーウォール・食事はいずれも、自機が実際にその場へ来ない限り
+// 　取得されないため、完全オートモード中はクリック操作がない以上、これらを取得できない）
 // 敵の反発がほぼ打ち消し合って板挟みになった時、振動せずランダムな方向へ抜け出すための状態
 const fullAutoStuckVectorThreshold = 0.15; // 合成ベクトルの大きさがこれ未満なら「板挟み」とみなす
 const fullAutoEscapeDurationMs = 500; // 一度ランダムな方向へ逃げ始めたら、この間は同じ方向を保つ
@@ -6628,13 +6642,8 @@ function update() {
       lunchState.nextSpawnIndex++;
       lunchState.spawnTimerMs = lunchSpawnIntervalMs;
     }
-    // 完全オートモード中は、クリック操作を挟まず出現した料理をそのまま自動で取得する
-    if (fullAutoModeEnabled) {
-      for (let i = lunchState.items.length - 1; i >= 0; i--) {
-        collectLunchItem(i);
-        if (!lunchState) break;
-      }
-    }
+    // 完全オートモード中も、自機がその場まで移動したわけではないので自動取得はしない
+    // （取得されないまま15時を過ぎれば、既存の時間切れ処理でまとめて片付けられる）
   }
 
   // 出現から実時間で一定時間、未回答のまま放置されたクイズは自動的に消える（3倍加速の影響を受けない）
