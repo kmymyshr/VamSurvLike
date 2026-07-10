@@ -29,11 +29,15 @@ const deathPortraitCtx = deathPortraitCanvas.getContext('2d');
 
 console.log('main.js loaded');
 
-// ===== 周回プレイの引き継ぎ（夢の記憶ポイント） =====
-// クリア・ゲームオーバーを問わず、「・・・という夢をみました」を選んだ時点のScoreの一部が
-// 「夢の記憶ポイント」としてブラウザに永続化され、次回以降のタイトル画面で初期パラメータの強化に使える
+// ===== 周回プレイの引き継ぎ（夢の記憶ポイント・役職・Score） =====
+// 「夢の記憶ポイント」は、アドベンチャーパートの進行度に応じてブラウザに永続化され、
+// 次回以降のタイトル画面で初期パラメータの強化に使える（Scoreからの変換ではない）。
+// これとは別に、役職（ランク）・役職スキル・Score自体は、エンディング・ゲームオーバーを問わず
+// 「・・・という夢をみました」を選んだ時点の状態がそのまま次回プレイの開始値として引き継がれる
 const dreamMemoryStorageKey = 'vamSurvLike_dreamMemory_v1';
-const dreamMemoryScoreDivisor = 10; // Scoreをこの値で割った分だけ夢の記憶ポイントを獲得する
+// 夢の記憶ポイントは、アドベンチャーパートの進行に応じて貯まる（Scoreとは無関係）
+const dreamMemoryPointsForAdv1Or2 = 1; // 第1回・第2回のアドベンチャーパートを終えるごとに獲得
+const dreamMemoryPointsForAdv3NormalEnd = 5; // 第3回を経てノーマルエンドに至った場合に獲得
 const dreamMemoryUpgradeMaxLevel = 5;
 const dreamMemoryUpgradeDefs = [
   {
@@ -103,9 +107,9 @@ const dreamMemoryUpgradeDefs = [
     costOverride: 1
   }
 ];
-// 現在のレベルから次のレベルへ上げるのに必要な夢の記憶ポイント数
+// 現在のレベルから次のレベルへ上げるのに必要な夢の記憶ポイント数（貯まりにくくなった分、一律1ポイントにしてある）
 function dreamMemoryUpgradeCost(currentLevel) {
-  return 5 + currentLevel * 4;
+  return 1;
 }
 
 // ===== エンディングリスト（タイトル画面から確認できる、到達済みエンディングの一覧） =====
@@ -128,7 +132,8 @@ function loadDreamMemorySave() {
   endingListDefs.forEach(def => { fallbackEndingsCleared[def.id] = false; });
   const fallback = {
     points: 0, upgrades: fallbackUpgrades, lastRun: null,
-    trueEndCleared: false, endingsCleared: fallbackEndingsCleared
+    trueEndCleared: false, endingsCleared: fallbackEndingsCleared,
+    carriedRank: 1, carriedRankSkillIds: [], carriedScore: 0
   };
   try {
     const raw = localStorage.getItem(dreamMemoryStorageKey);
@@ -156,7 +161,11 @@ function loadDreamMemorySave() {
       upgrades,
       lastRun,
       trueEndCleared: !!parsed.trueEndCleared,
-      endingsCleared
+      endingsCleared,
+      // 周回プレイの引き継ぎ：役職（ランク）・役職スキル・Scoreは、前回終了時点の状態をそのまま次回開始時に復元する
+      carriedRank: Math.max(1, Math.floor(parsed.carriedRank) || 1),
+      carriedRankSkillIds: Array.isArray(parsed.carriedRankSkillIds) ? parsed.carriedRankSkillIds.filter(id => typeof id === 'string') : [],
+      carriedScore: Math.max(0, Math.floor(parsed.carriedScore) || 0)
     };
   } catch (e) {
     return fallback;
@@ -170,6 +179,14 @@ function saveDreamMemorySave() {
   }
 }
 let dreamMemorySave = loadDreamMemorySave();
+
+// 周回プレイの引き継ぎ：エンディング・ゲームオーバーを問わず、今回終了時点の役職（ランク）・役職スキル・Scoreを
+// 次回開始時にそのまま復元できるよう保存しておく（applyDreamMemoryUpgradesForNewGameで復元する）
+function saveCarriedProgressionForNextRun() {
+  dreamMemorySave.carriedRank = rank;
+  dreamMemorySave.carriedRankSkillIds = Array.from(rankSkillLevels);
+  dreamMemorySave.carriedScore = score;
+}
 
 // 夢の記憶ポイントを消費して、指定した強化を1レベル上げる
 function getDreamMemoryUpgradeDef(id) {
@@ -929,9 +946,6 @@ let weeklyScoreQuota = 0; // 今週のスコア獲得ノルマ
 let weeklyKills = 0; // 今週の撃破数
 let weeklyScoreGained = 0; // 今週のスコア獲得量（減点は含まない）
 let weekendWorkChoice = false; // 「休日出勤しますか」の選択待ち
-let restActivityChoice = false; // 「休日の過ごし方」3択の選択待ち
-let restStudyPending = false; // 休日の「勉強」からスキル選択を開いた後の後続処理待ち
-const restStudyTotalPicks = 3; // 休日の「勉強」で選べる特殊スキルの回数
 let weekendWorkQuotaChoice = false; // 休日出勤中にノルマ達成し、「家に帰りますか」の選択待ち
 const weekendWorkSanDrainPerSec = 0.5; // 休日出勤中、1秒あたり緩やかに減少するSAN
 const weekendWorkLifespanDrainPerSec = 0.15; // 休日出勤中、1秒あたり緩やかに減少する寿命
@@ -2943,7 +2957,9 @@ const rankNames = [
 ];
 // rank変数は、敵生成時に使うためファイル前半で宣言済み
 // ミスなくほぼ完璧に立ち回った場合のみ最終ランクへ届く想定で、最終ランクだけ必要スコアを大きく跳ね上げてある
-const rankThresholds = [0, 60, 200, 500, 1000, 1800, 3200]; // 各ランクへの昇格に必要なスコア
+// 役職・役職スキルは周回プレイを通じて引き継がれ、Scoreも周回間で累積していくため、
+// 1プレイ内だけで上がっていた頃より必要スコアを大きく引き上げ、昇進しにくく調整してある
+const rankThresholds = [0, 240, 800, 2000, 4000, 7200, 12800]; // 各ランクへの昇格に必要な累積Score
 
 // スキルレベルと経験値
 // レベルが上がるほど必要経験値が増えていく（後半ほどレベルが上がりにくくなるようにするため）
@@ -3168,19 +3184,8 @@ function chooseSpecialSkill(choiceIndex) {
 
   if (pendingSpecialSkillSelections > 0) {
     pendingSpecialSkillSelections--;
-    if (restStudyPending) {
-      const pickNumber = restStudyTotalPicks - pendingSpecialSkillSelections;
-      openSpecialSkillSelection(`休日の勉強：特殊スキルを選択（${pickNumber}/${restStudyTotalPicks}）`);
-    } else {
-      openSpecialSkillSelection('レベルアップ：特殊スキルを選択');
-    }
+    openSpecialSkillSelection('レベルアップ：特殊スキルを選択');
     return;
-  }
-
-  // 休日の「勉強」から呼ばれていた場合、ここでランダムイベント＋週明けへの進行を続ける
-  if (restStudyPending) {
-    restStudyPending = false;
-    finishRestDayAndAdvanceToMonday();
   }
 }
 
@@ -3401,19 +3406,12 @@ function jumpToNextMondayAndResetWeek() {
   checkCaffeineOverdoseAtDayStart();
 }
 
-// 週の終わりを迎えたときの、週末の過ごし方選択画面の見出し文。状況に応じて呼び分ける
-let restActivityChoiceHeader = ['休日はどう過ごしますか？'];
+// 週の終わりを迎えたときに表示する、ノルマ達成時のフレーバーテキスト
 const weekCompleteFlavorTexts = [
   '一週間が終わった！ようやく休日だ…',
   '長い一週間だった…やっと休日だ。',
   '今週も乗り切った！さて、休日は何をしよう。'
 ];
-
-// 週末の過ごし方選択（休日の過ごし方3択）を開く
-function openRestActivityChoice(headerLines) {
-  restActivityChoiceHeader = headerLines;
-  restActivityChoice = true;
-}
 
 // 週の最終稼働日（金曜相当）の終業処理。ノルマ達成の可否で分岐する
 function resolveWeekEnd() {
@@ -3423,7 +3421,8 @@ function resolveWeekEnd() {
     score += bonus;
     showMessage(`週間ノルマ達成！ Score +${bonus}`, 4000, '#69f0ae', '28px sans-serif');
     const flavor = weekCompleteFlavorTexts[Math.floor(Math.random() * weekCompleteFlavorTexts.length)];
-    openRestActivityChoice([flavor, '休日をどう過ごしますか？']);
+    showMessage(flavor, 3000, '#ffe0b2', '22px sans-serif');
+    applyRestActivity();
   } else {
     const scorePenalty = Math.ceil(score * weeklyFailScorePenaltyRatio);
     const sanPenalty = Math.ceil(maxSan * weeklyFailSanPenaltyRatio);
@@ -3502,6 +3501,16 @@ function getNormalEndingByRelationship() {
 // ADV4以降は選択肢を出さず、現在の関係性でそのまま好感度ルート（⑨⑩⑪）へ直行する
 function startPartnerAdventure(onComplete) {
   adventureRunCount++;
+  const completedRun = adventureRunCount;
+  // 第1回・第2回のアドベンチャーパートを終えるごとに、夢の記憶ポイントが1貯まる
+  // （第3回を経てノーマルエンドに至った場合の+5は、finishNormalEndSequence側で別途加算する）
+  const wrappedOnComplete = () => {
+    if (completedRun === 1 || completedRun === 2) {
+      dreamMemorySave.points += dreamMemoryPointsForAdv1Or2;
+      saveDreamMemorySave();
+    }
+    if (onComplete) onComplete();
+  };
   const category = getRelationshipCategory(partner.relationship);
   let sceneKey, nodeId;
   if (adventureRunCount === 1) {
@@ -3532,7 +3541,7 @@ function startPartnerAdventure(onComplete) {
   // history：スレッド形式で表示する、これまでの同僚・自分のメッセージ履歴（性別に応じた言葉遣いに解決してから積む）
   const partnerGender = partnerGenderById[selectedPartnerIcon];
   adventureState = {
-    scene, nodeId, onComplete, lineIndex: 0,
+    scene, nodeId, onComplete: wrappedOnComplete, lineIndex: 0,
     history: [{ speaker: 'partner', text: resolveGenderedAdventureText(scene.nodes[nodeId].text, partnerGender) }]
   };
 }
@@ -3573,67 +3582,56 @@ function chooseAdventureOption(choiceIndex) {
   }
 }
 
-// 休日の過ごし方（1:同僚と遊ぶ 2:休息 3:勉強）を適用する
-function applyRestActivity(choiceIndex) {
-  if (choiceIndex === 1) {
-    if (partner.active) {
-      // アドベンチャーパート自体がこの日の出来事なので、通常のランダムイベントは発生させず週明けへ進む。
-      // ただし、ADV3をノーマルルート（夢ルートではない）で終えた場合は、これが最終日として
-      // 特別な「負けイベント」戦闘（第？？？？戦）を経てノーマルエンドへ直行する
-      startPartnerAdventure(() => {
-        if (adventureRunCount === 3 && !dreamRouteCompleted) {
-          startNormalEndBattleSequence();
-        } else {
-          startDayTransition(jumpToNextMondayAndResetWeek);
-        }
-      });
-    } else if (partnerLossReason === 'lifespan') {
-      // 寿命が尽きての離脱はもう戻らない。会いに行った虚しさで自機のSANが大きく削れる
-      san = Math.max(0, Math.floor(san * partnerLossGriefSanRatio));
-      checkVitalsGameOver();
-      showAcknowledgementNotice(
-        '同僚に会いに行った。……しかし、もうそこに同僚はいない。静かな部屋を前に、言葉を失う。 SANが半分になった',
-        '#78909c', '',
-        () => { if (!gameOver && !deathSequence) finishRestDayAndAdvanceToMonday(); }
-      );
-    } else if (partnerLossReason === 'san') {
-      if (Math.random() < partnerRevivalChance) {
-        partner.active = true;
-        partner.san = partnerRevivalSan;
-        partner.lifespan = Math.max(1, Math.floor(partnerLifespanAtLoss * partnerRevivalLifespanRatio));
-        partner.fatigue = 0;
-        partner.highFatigueTimerMs = 0;
-        partner.lowSanTimerMs = 0;
-        partner.fatigueResting = false;
-        partner.friendlyFireInvincibleTimer = 0;
-        partner.invincible = false;
-        partner.invincibleTimer = 0;
-        partner.wandering = false;
-        partner.wanderTimer = 1800 + Math.random() * 2200;
-        partner.fireTimer = partnerBaseFireRate;
-        partner.relationship = partnerRelationshipInitial;
-        partner.x = player.x + partnerFollowOffsetX;
-        partner.y = player.y + partnerFollowOffsetY;
-        partnerLossReason = null;
-        showAcknowledgementNotice('同僚に会いに行くと、元気を取り戻して戻ってきてくれた！', '#69f0ae', '',
-          () => finishRestDayAndAdvanceToMonday());
+// 休日は必ず「同僚と遊ぶ」（アドベンチャーパート）に入る（休息・勉強の選択肢は廃止した）
+function applyRestActivity() {
+  if (partner.active) {
+    // アドベンチャーパート自体がこの日の出来事なので、通常のランダムイベントは発生させず週明けへ進む。
+    // ただし、ADV3をノーマルルート（夢ルートではない）で終えた場合は、これが最終日として
+    // 特別な「負けイベント」戦闘（第？？？？戦）を経てノーマルエンドへ直行する
+    startPartnerAdventure(() => {
+      if (adventureRunCount === 3 && !dreamRouteCompleted) {
+        startNormalEndBattleSequence();
       } else {
-        showAcknowledgementNotice('同僚に会いに行ったが、まだ本調子ではないようだ…', '#b0bec5', '',
-          () => finishRestDayAndAdvanceToMonday());
+        startDayTransition(jumpToNextMondayAndResetWeek);
       }
+    });
+  } else if (partnerLossReason === 'lifespan') {
+    // 寿命が尽きての離脱はもう戻らない。会いに行った虚しさで自機のSANが大きく削れる
+    san = Math.max(0, Math.floor(san * partnerLossGriefSanRatio));
+    checkVitalsGameOver();
+    showAcknowledgementNotice(
+      '同僚に会いに行った。……しかし、もうそこに同僚はいない。静かな部屋を前に、言葉を失う。 SANが半分になった',
+      '#78909c', '',
+      () => { if (!gameOver && !deathSequence) finishRestDayAndAdvanceToMonday(); }
+    );
+  } else if (partnerLossReason === 'san') {
+    if (Math.random() < partnerRevivalChance) {
+      partner.active = true;
+      partner.san = partnerRevivalSan;
+      partner.lifespan = Math.max(1, Math.floor(partnerLifespanAtLoss * partnerRevivalLifespanRatio));
+      partner.fatigue = 0;
+      partner.highFatigueTimerMs = 0;
+      partner.lowSanTimerMs = 0;
+      partner.fatigueResting = false;
+      partner.friendlyFireInvincibleTimer = 0;
+      partner.invincible = false;
+      partner.invincibleTimer = 0;
+      partner.wandering = false;
+      partner.wanderTimer = 1800 + Math.random() * 2200;
+      partner.fireTimer = partnerBaseFireRate;
+      partner.relationship = partnerRelationshipInitial;
+      partner.x = player.x + partnerFollowOffsetX;
+      partner.y = player.y + partnerFollowOffsetY;
+      partnerLossReason = null;
+      showAcknowledgementNotice('同僚に会いに行くと、元気を取り戻して戻ってきてくれた！', '#69f0ae', '',
+        () => finishRestDayAndAdvanceToMonday());
     } else {
-      showAcknowledgementNotice('同僚と遊び、関係が少し良くなった。', '#ffcc80', '',
+      showAcknowledgementNotice('同僚に会いに行ったが、まだ本調子ではないようだ…', '#b0bec5', '',
         () => finishRestDayAndAdvanceToMonday());
     }
-  } else if (choiceIndex === 2) {
-    fatigue = 0;
-    san = Math.min(maxSan, san + 25);
-    showAcknowledgementNotice('しっかり休息した！ 脳疲労が全回復 / SAN +25', '#80deea', '',
+  } else {
+    showAcknowledgementNotice('同僚と遊び、関係が少し良くなった。', '#ffcc80', '',
       () => finishRestDayAndAdvanceToMonday());
-  } else if (choiceIndex === 3) {
-    restStudyPending = true;
-    pendingSpecialSkillSelections = restStudyTotalPicks - 1;
-    openSpecialSkillSelection(`休日の勉強：特殊スキルを選択（1/${restStudyTotalPicks}）`);
   }
 }
 
@@ -3799,18 +3797,30 @@ function selectMode() {
 // これから始まるゲームの初期値に反映する。これらの値はスクリプト読み込み時に一度だけ計算されるため、
 // ゲーム開始直前に呼び直さないと、同じページを読み込んだままショップで変更した内容が実際のプレイに反映されないバグがあった
 function applyDreamMemoryUpgradesForNewGame() {
-  score = dreamMemorySave.upgrades.startScore * 20;
+  // 周回プレイの引き継ぎ：前回終了時のScoreに、初期スコア強化ぶんを上乗せする
+  score = (dreamMemorySave.carriedScore || 0) + dreamMemorySave.upgrades.startScore * 20;
   maxFatigue = 100 + dreamMemorySave.upgrades.fatigueCap * 10;
   baseBulletDamage = 2 + dreamMemorySave.upgrades.bulletDamage;
   maxSan = dreamMemorySave.upgrades.dreamCatcher >= 1 ? 25 : 100 + dreamMemorySave.upgrades.maxSan * 10;
-  san = maxSan;
   maxLifespan = 100 + dreamMemorySave.upgrades.maxLifespan * 10;
+  // 周回プレイの引き継ぎ：前回終了時の役職（ランク）・役職スキルを復元する（「クラウド」のSAN・寿命上限+10も再適用する）
+  rank = dreamMemorySave.carriedRank || 1;
+  rankSkillLevels.clear();
+  (dreamMemorySave.carriedRankSkillIds || []).forEach(id => {
+    rankSkillLevels.add(id);
+    if (id === 'cloud') {
+      maxSan += 10;
+      maxLifespan += 10;
+    }
+  });
+  san = maxSan;
   lifespan = maxLifespan;
   skillLevel = dreamMemorySave.upgrades.skillLevel;
   partnerRelationshipInitial = Math.min(partnerRelationshipMax, 50 + dreamMemorySave.upgrades.partnerBond * 5);
   weeklyQuotaEaseMultiplier = 1 - dreamMemorySave.upgrades.quotaEase * 0.03;
   partnerParryChance = Math.min(1, 0.3 + dreamMemorySave.upgrades.partnerAutoParry * 0.14);
   player.speed = 4 + dreamMemorySave.upgrades.moveSpeed * 0.3;
+  recomputeSpecialSkillEffects();
 }
 
 // 性別・アイコンの選択が完了した時点で、実際にゲームを開始する
@@ -3843,7 +3853,7 @@ function handleWeekendWorkChoice(choice) {
     const extraPenalty = Math.ceil(score * restEvaluationPenaltyRatio);
     score = Math.max(0, score - extraPenalty);
     showMessage(`評価ダウン… Score -${extraPenalty}`, 3000, '#ff8a65', '22px sans-serif');
-    openRestActivityChoice(['休日はどう過ごしますか？']);
+    applyRestActivity();
   }
 }
 
@@ -3913,16 +3923,6 @@ document.addEventListener("keydown", (event) => {
       handleWeekendWorkQuotaChoice(true);
     } else if (event.key === 'n') {
       handleWeekendWorkQuotaChoice(false);
-    }
-    return;
-  }
-  // 休日の過ごし方（1:同僚と遊ぶ 2:休息 3:勉強）を選ぶ
-  if (restActivityChoice) {
-    const choiceIndex = Number(event.key);
-    if (choiceIndex >= 1 && choiceIndex <= 3) {
-      restActivityChoice = false;
-      // 「勉強」以外は結果メッセージを確認後にランダムイベント＋週明けへ進む（勉強はスキル選択完了後に進む）
-      applyRestActivity(choiceIndex);
     }
     return;
   }
@@ -5048,8 +5048,8 @@ function fireIndestructibleBossBullet(hole) {
 // ノーマルルート共通のエンディング（黒背景に「{partner}を助けないと…」がフェードイン→フェードアウト→タイトルへ）
 function finishNormalEndSequence() {
   const endingId = getNormalEndingByRelationship();
-  const earnedDreamMemoryPoints = Math.floor(score / dreamMemoryScoreDivisor);
-  dreamMemorySave.points += earnedDreamMemoryPoints;
+  // 第3回アドベンチャーパートを経てノーマルエンドに至った場合は、夢の記憶ポイントが5貯まる
+  dreamMemorySave.points += dreamMemoryPointsForAdv3NormalEnd;
   dreamMemorySave.endingsCleared[endingId] = true;
   dreamMemorySave.lastRun = selectedPartnerIcon ? {
     playerGender: selectedGender,
@@ -5059,6 +5059,7 @@ function finishNormalEndSequence() {
     // 第3回アドベンチャーパートを経てノーマルエンドに至った場合だけ立てるフラグ（再会シーンの条件に使う）
     viaAdv3NormalEnd: true
   } : null;
+  saveCarriedProgressionForNextRun();
   saveDreamMemorySave();
   location.reload();
 }
@@ -5172,10 +5173,8 @@ function updateBossFinalSequence(dt) {
   // 'realWorldTime'・'clearMessageShown' はクリック待ちのため、ここでは時間経過だけでは進行しない
 }
 
-// 真エンドに到達した時点のScoreを夢の記憶ポイントへ変換し、クリア済フラグを保存してタイトルへ戻る
+// 真エンドに到達したので、クリア済フラグと役職・Scoreの引き継ぎを保存してタイトルへ戻る
 function finishBossTrueEnd() {
-  const earnedDreamMemoryPoints = Math.floor(score / dreamMemoryScoreDivisor);
-  dreamMemorySave.points += earnedDreamMemoryPoints;
   dreamMemorySave.trueEndCleared = true;
   // 前世記憶ルート（夢ルート）を完走していたかどうかに関わらず、ラスボス撃破自体は真エンド1/2に到達する。
   // 夢ルートを踏んでいたかは、別途 dreamRouteCompleted で参照できる（演出の出し分け用）
@@ -5187,6 +5186,7 @@ function finishBossTrueEnd() {
     relationship: partner.relationship,
     endingType: bossEndingId
   } : null;
+  saveCarriedProgressionForNextRun();
   saveDreamMemorySave();
   location.reload();
 }
@@ -5971,8 +5971,8 @@ function update() {
     return;
   }
 
-  // 週末の休日出勤選択・休日の過ごし方選択・休日出勤中の帰宅確認中は、ゲームの進行を止める
-  if (weekendWorkChoice || restActivityChoice || weekendWorkQuotaChoice) return;
+  // 週末の休日出勤選択・休日出勤中の帰宅確認中は、ゲームの進行を止める
+  if (weekendWorkChoice || weekendWorkQuotaChoice) return;
   // 「名状しがたきものの気配」の選択肢・再確認の表示中は、ゲームの進行を止める
   if (bossEncounterChoiceActive || bossEncounterConfirmActive) return;
 
@@ -6920,9 +6920,6 @@ function drawEndScreenButtons(baseY) {
   const btnW = 300, btnH = 48;
   const btnX = canvas.width / 2 - btnW / 2;
   drawUiButton(btnX, baseY, btnW, btnH, '・・・という夢をみました', () => {
-    // クリア・ゲームオーバーを問わず、Scoreの一部を夢の記憶ポイントとして持ち越し、次周のタイトル画面で使えるようにする
-    const earnedDreamMemoryPoints = Math.floor(score / dreamMemoryScoreDivisor);
-    dreamMemorySave.points += earnedDreamMemoryPoints;
     // 次に同じ自機・同僚で始めた時の再会シーンのため、今回の相手との関係を記録しておく
     dreamMemorySave.lastRun = selectedPartnerIcon ? {
       playerGender: selectedGender,
@@ -6937,6 +6934,8 @@ function drawEndScreenButtons(baseY) {
     if (endingType && dreamMemorySave.endingsCleared.hasOwnProperty(endingType)) {
       dreamMemorySave.endingsCleared[endingType] = true;
     }
+    // クリア・ゲームオーバーを問わず、役職（ランク）・役職スキル・Scoreは次周へそのまま引き継ぐ
+    saveCarriedProgressionForNextRun();
     saveDreamMemorySave();
     location.reload();
   });
@@ -7047,7 +7046,7 @@ function drawEndingScreen() {
   ctx.fillText(`Final Score: ${score}`, canvas.width / 2, canvas.height / 2 + 54);
   ctx.font = '15px sans-serif';
   ctx.fillStyle = '#ce93d8';
-  ctx.fillText(`「・・・という夢をみました」を選ぶと、夢の記憶ポイント +${Math.floor(score / dreamMemoryScoreDivisor)} を次周に持ち越せます`,
+  ctx.fillText(`「・・・という夢をみました」を選ぶと、役職「${rankNames[rank - 1]}」・Score・役職スキルを次周に引き継げます`,
     canvas.width / 2, canvas.height / 2 + 76);
   ctx.font = 'bold 26px sans-serif';
   ctx.fillStyle = cfg.labelColor;
@@ -9409,7 +9408,7 @@ function draw() {
   // 休日出勤中（土日）のみ表示する、切り上げて帰宅するためのボタン
   if ((currentDate.getDay() === 0 || currentDate.getDay() === 6) &&
       !gameOver && !gameClear && !dayTransitionPhase && !weekendWorkChoice &&
-      !restActivityChoice && !weekendWorkQuotaChoice && !acknowledgementNotice) {
+      !weekendWorkQuotaChoice && !acknowledgementNotice) {
     drawUiButton(canvas.width - 160, 100, 148, 40, '帰宅する (H)', goHomeFromWeekendWork,
       { fillStyle: 'rgba(84, 60, 30, 0.65)', strokeStyle: '#ffb74d', font: 'bold 15px sans-serif' });
   }
@@ -9582,36 +9581,6 @@ function draw() {
     drawUiButton(quotaBtnX, canvas.height / 2 + 54, quotaBtnW, quotaBtnH, 'いいえ・続ける (N)',
       () => handleWeekendWorkQuotaChoice(false), { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
   }
-  // 週末の過ごし方の選択画面（週間ノルマ達成後の休日、または休日出勤を断った場合）
-  if (restActivityChoice && !gameOver && !gameClear) {
-    ctx.fillStyle = 'rgba(0,0,0,0.7)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = 'white';
-    ctx.font = '26px sans-serif';
-    ctx.textAlign = 'center';
-    const extraOffset = (restActivityChoiceHeader.length - 1) * 34;
-    restActivityChoiceHeader.forEach((line, i) => {
-      ctx.fillText(line, canvas.width / 2, canvas.height / 2 - 90 - extraOffset + i * 34);
-    });
-    ctx.textAlign = 'left';
-
-    const btnW = 460, btnH = 44;
-    const btnX = canvas.width / 2 - btnW / 2;
-    const optionBaseY = canvas.height / 2 - 30 + extraOffset;
-    const optionLabels = [
-      '同僚と遊ぶ (アドベンチャーパートへ)',
-      '休息 (脳疲労が全回復 / SAN +25)',
-      'スキル選択・勉強 (特殊スキルを1つ選ぶ)'
-    ];
-    optionLabels.forEach((label, i) => {
-      const choiceIndex = i + 1;
-      drawUiButton(btnX, optionBaseY + i * 52, btnW, btnH, `${choiceIndex}. ${label}`, () => {
-        restActivityChoice = false;
-        applyRestActivity(choiceIndex);
-      });
-    });
-  }
-
   // ラスボス出現条件を満たした瞬間の選択肢：「名状しがたきものの気配がする……」
   if (bossEncounterChoiceActive && !gameOver && !gameClear) {
     ctx.fillStyle = 'rgba(0,0,0,0.8)';
