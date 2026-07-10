@@ -3219,13 +3219,22 @@ function getDefaultSpecialSkillEffects() {
     teamworkParryChance: 0,
     mealOrderVisible: false,
     // コミュニケーション能力：同僚の弾をパリィした時／同僚が自機の弾をパリィした時に、レベルごとに追加で上がる関係性の量
-    communicationParryRelationshipBonus: 0
+    communicationParryRelationshipBonus: 0,
+    // 継続力：自機の弾の飛距離の倍率（レベルごとに1.2倍）
+    bulletDistanceMultiplier: 1,
+    // マルチタスクB：正面から90度ずつ回転させた計4方向へ同時発射する
+    quadShotActive: false
   };
 }
 const specialSkillEffects = getDefaultSpecialSkillEffects();
 
 const specialSkills = [
-  { id: 'dual-shot', name: 'マルチタスク', description: 'レベルごとに同時発射する弾が1発増える。追加の弾は正面から±20度以内のランダムな方向へ飛ぶ', maxLevel: 1 },
+  { id: 'dual-shot', name: 'マルチタスクA', description: 'レベルごとに同時発射する弾が1発増える。追加の弾は正面から±20度以内のランダムな方向へ飛ぶ', maxLevel: 1 },
+  {
+    id: 'dual-shot-b', name: 'マルチタスクB',
+    description: '正面と、そこから90度ずつ回転させた計4方向に同時発射する（各弾の飛距離は単発時の80%）。マルチタスクAとは同時に習得できない',
+    maxLevel: 1
+  },
   { id: 'speed-up', name: 'フットワーク', description: '移動速度が上がる（Lv1:1.1倍 → Lv5:2.0倍）', maxLevel: 5 },
   { id: 'fatigue-save', name: '脳疲労耐性', description: '時間経過による脳疲労の蓄積を軽減する（Lv1:-35% → Lv5:-50%）', maxLevel: 5 },
   { id: 'rapid-fire', name: '処理速度A', description: '発射間隔を短縮する（Lv1:当初の75% → Lv5:当初の30%）', maxLevel: 5 },
@@ -3241,8 +3250,15 @@ const specialSkills = [
   },
   { id: 'teamwork', name: 'チームワーク', description: '自分と同僚、お互いの弾が着弾しそうな時（敵からの弾を除く）、お互いパリィが発動しやすくなる（Lv5で発動率80%）', maxLevel: 5 },
   { id: 'meal-foresight', name: '食通', description: '昼食に登場する料理に、出現する順番の番号が表示されるようになる（習得は1回のみ）', maxLevel: 1 },
-  { id: 'auto-parry', name: 'オートパリィ', description: '敵（ラスボス・中ボス・固定敵）からの弾を被弾しそうな時、レベルごとに10%の確率で自動的にパリィする（Lv5で50%）', maxLevel: 5 }
+  { id: 'auto-parry', name: 'オートパリィ', description: '敵（ラスボス・中ボス・固定敵）からの弾を被弾しそうな時、レベルごとに10%の確率で自動的にパリィする（Lv5で50%）', maxLevel: 5 },
+  { id: 'persistence', name: '継続力', description: '自機の弾の飛距離が、レベルごとに1.2倍になる（Lv1:1.2倍 → Lv5:約2.49倍）', maxLevel: 5 }
 ];
+
+// 同時に習得できない組み合わせ（片方を取ると、もう片方は未取得の状態に戻り、再度選択肢に表示されるようになる）
+const mutuallyExclusiveSkillIds = {
+  'dual-shot': 'dual-shot-b',
+  'dual-shot-b': 'dual-shot'
+};
 
 // スキルIDと取得レベルを対応させて保存する（これが唯一の正となる状態）
 const specialSkillLevels = new Map();
@@ -3257,8 +3273,12 @@ let pendingSpecialSkillSelections = 0;
 function applySkillEffectForLevel(skillId, level) {
   switch (skillId) {
     case 'dual-shot':
-      // マルチタスク：追加弾のランダムな方向は発射処理側で決めるため、ここでは段数だけを反映する
+      // マルチタスクA：追加弾のランダムな方向は発射処理側で決めるため、ここでは段数だけを反映する
       specialSkillEffects.multiTaskLevel = level;
+      break;
+    case 'dual-shot-b':
+      // マルチタスクB：4方向同時発射の有効化（実際の発射方向・飛距離補正は発射処理側で行う）
+      specialSkillEffects.quadShotActive = true;
       break;
     case 'speed-up': {
       // フットワーク：Lv1=1.1倍 → Lv5=2.0倍
@@ -3318,6 +3338,10 @@ function applySkillEffectForLevel(skillId, level) {
     case 'auto-parry':
       // オートパリィ：敵（ラスボス・中ボス・固定敵）の弾に対する自動パリィ確率。Lv5で50%
       specialSkillEffects.autoParryChance = 0.10 * Math.min(level, 5);
+      break;
+    case 'persistence':
+      // 継続力：自機の弾の飛距離が、レベルごとに1.2倍になる
+      specialSkillEffects.bulletDistanceMultiplier = Math.pow(1.2, level);
       break;
   }
 }
@@ -3386,6 +3410,9 @@ function chooseSpecialSkill(choiceIndex) {
     ? Math.min(skill.maxLevel, (specialSkillLevels.get(skill.id) || 0) + 1)
     : (specialSkillLevels.get(skill.id) || 0) + 1;
   specialSkillLevels.set(skill.id, newSkillLevel);
+  // 同時に習得できないスキル（マルチタスクA/B）：片方を取ったら、もう片方は未取得の状態に戻す
+  const exclusiveWithId = mutuallyExclusiveSkillIds[skill.id];
+  if (exclusiveWithId) specialSkillLevels.delete(exclusiveWithId);
   recomputeSpecialSkillEffects();
   recordSkillAcquiredForStats(`${skill.name} Lv.${newSkillLevel}`);
   showMessage(
@@ -7139,16 +7166,22 @@ function update() {
             baseBulletDamage * conditionRatio * damageBonus * specialSkillEffects.damageMultiplier * invincibleDamageMultiplier
           ));
 
-          // 「マルチタスク」：レベルごとに追加の弾が1発増える。追加弾は正面から±20度以内のランダムな方向へ飛ぶ
-          const multiTaskLevel = specialSkillEffects.multiTaskLevel;
-          const multitaskRandomSpreadDegrees = 20;
-          const shotOffsets = [0];
-          for (let extraShot = 0; extraShot < multiTaskLevel; extraShot++) {
-            shotOffsets.push((Math.random() * 2 - 1) * multitaskRandomSpreadDegrees);
+          // 「マルチタスクA」：レベルごとに追加の弾が1発増える。追加弾は正面から±20度以内のランダムな方向へ飛ぶ
+          // 「マルチタスクB」：正面と、そこから90度ずつ回転させた計4方向に同時発射する（各弾の飛距離は単発時の80%）
+          let shots;
+          if (specialSkillEffects.quadShotActive) {
+            shots = [0, 90, 180, 270].map(angleOffsetDeg => ({ angleOffsetDeg, distanceRatio: 0.8 }));
+          } else {
+            const multiTaskLevel = specialSkillEffects.multiTaskLevel;
+            const multitaskRandomSpreadDegrees = 20;
+            shots = [{ angleOffsetDeg: 0, distanceRatio: 1 }];
+            for (let extraShot = 0; extraShot < multiTaskLevel; extraShot++) {
+              shots.push({ angleOffsetDeg: (Math.random() * 2 - 1) * multitaskRandomSpreadDegrees, distanceRatio: 1 });
+            }
           }
 
-          for (const offsetDegrees of shotOffsets) {
-            const bulletAngle = shotAngle + offsetDegrees * Math.PI / 180;
+          for (const shot of shots) {
+            const bulletAngle = shotAngle + shot.angleOffsetDeg * Math.PI / 180;
             bullets.push({
               x: player.x + Math.cos(bulletAngle) * player.radius,
               y: player.y + Math.sin(bulletAngle) * player.radius,
@@ -7158,7 +7191,9 @@ function update() {
               damage,
               bounces: specialSkillEffects.bulletBounceCount,
               owner: 'player',
-              distanceTraveled: 0
+              distanceTraveled: 0,
+              // 「継続力」：習得レベルに応じて、この弾自体の最大飛距離を伸ばす（マルチタスクBの弾はさらに80%になる）
+              maxDistance: playerBulletMaxDistance * specialSkillEffects.bulletDistanceMultiplier * shot.distanceRatio
             });
           }
         }
@@ -7232,11 +7267,11 @@ function update() {
     const b = bullets[i];
     b.x += b.vx;
     b.y += b.vy;
-    // 自機の弾は、発射地点からの累計移動距離が一定値（戦闘画面の横幅の60%）に達すると消滅する。
-    // パリィされた弾は owner が 'deflected' に変わるため、この判定の対象外になる
+    // 自機の弾は、発射地点からの累計移動距離が一定値（戦闘画面の横幅の60%。「継続力」習得時はさらに伸びる）に
+    // 達すると消滅する。パリィされた弾は owner が 'deflected' に変わるため、この判定の対象外になる
     if (b.owner === 'player') {
       b.distanceTraveled = (b.distanceTraveled || 0) + Math.hypot(b.vx, b.vy);
-      if (b.distanceTraveled >= playerBulletMaxDistance) {
+      if (b.distanceTraveled >= (b.maxDistance || playerBulletMaxDistance)) {
         bullets.splice(i, 1);
         continue;
       }
@@ -10070,6 +10105,19 @@ function draw() {
       }
       continue;
     }
+    // 敵性体（ラスボス・中ボス・固定敵）からの弾は、自機・同僚の弾（白い円）と見分けやすいよう、
+    // 赤みのあるオレンジ色の「ひし形」で描く（色だけでなく形も変えることで、ひと目で区別できるようにする）
+    if (b.owner === 'boss' || b.owner === 'midBoss' || b.owner === 'fixedEnemy' || b.owner === 'fixedEnemyDisguise') {
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.rotate(Math.PI / 4);
+      ctx.fillStyle = '#ff6e40';
+      ctx.shadowColor = '#ff6e40';
+      ctx.shadowBlur = 8;
+      ctx.fillRect(-b.radius, -b.radius, b.radius * 2, b.radius * 2);
+      ctx.restore();
+      continue;
+    }
     ctx.save();
     if (b.owner === 'deflected') {
       ctx.fillStyle = '#ffd54f';
@@ -10080,9 +10128,6 @@ function draw() {
       ctx.fillStyle = '#ff1744';
       ctx.shadowColor = '#ff1744';
       ctx.shadowBlur = 10;
-    } else if (b.owner === 'midBoss') {
-      // 「大規模プロジェクト」の弾は、通常のラスボス弾（白）と見分けやすいよう少しオレンジがかった色にする
-      ctx.fillStyle = '#ffccbc';
     } else {
       ctx.fillStyle = 'white';
     }
