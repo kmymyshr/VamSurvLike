@@ -4318,6 +4318,8 @@ const bossRegenGraceMs = 1500;
 const bossRegenPerSec = 3;
 // 第1段階（視野狭窄）：個別に破壊しても、この時間が経つと体力半分の状態で復活する（全て同時に破壊しないと突破できない）
 const bossReviveDelayMs = 4000;
+// 救済措置：1つの穴につき10回復活したら、以降は復活せずそのまま倒したものとして扱う
+const bossHoleMaxRevives = 10;
 // 段階ごとに、窓の下のガラス面へうっすらと表示する解説文（[見出し, 説明1, 説明2]）。無い段階は表示しない
 const bossStageGlassTexts = {
   1: { title: '視野狭窄', lines: ['全体が見えず、一部だけに意識が固定される。', '全体をバランスよく攻撃する必要がある。'] },
@@ -4456,7 +4458,7 @@ function generateBossHoles(stage) {
         hitsTaken: 0, destroyed: false, flashTimerMs: 0, maxHits: def.hitsPerHole,
         // 発射口ごとにランダムな初期位相を持たせ、全ての穴が同時に発射しないようにする
         fireTimerMs: Math.random() * bossFireIntervalMs,
-        revive: true, showHealthBar: true
+        revive: true, showHealthBar: true, reviveCount: 0
       });
     }
     return holes;
@@ -4606,12 +4608,14 @@ function updateBossEvent(dt) {
     if (hole.flashTimerMs > 0) hole.flashTimerMs = Math.max(0, hole.flashTimerMs - dt * 1000);
     if (hole.approvalHealFlashMs > 0) hole.approvalHealFlashMs = Math.max(0, hole.approvalHealFlashMs - dt * 1000);
     if (hole.destroyed) {
-      // 第1段階「視野狭窄」：個別に破壊されても、一定時間後に体力半分の状態で復活する
-      if (hole.revive) {
+      // 第1段階「視野狭窄」：個別に破壊されても、一定時間後に体力半分の状態で復活する。
+      // 救済措置：1つの穴につき10回復活したら、以降は復活せずそのまま倒したものとして扱う
+      if (hole.revive && (hole.reviveCount || 0) < bossHoleMaxRevives) {
         hole.reviveTimerMs -= dt * 1000;
         if (hole.reviveTimerMs <= 0) {
           hole.destroyed = false;
           hole.hitsTaken = hole.maxHits / 2;
+          hole.reviveCount = (hole.reviveCount || 0) + 1;
         }
       }
       continue;
@@ -4727,7 +4731,8 @@ function autoParryByBossHole(bullet) {
 // 通常の被弾だけでなく、第6段階「内的葛藤」の内輪もめによる破壊（自爆含む）からも呼ばれる共通処理
 function finalizeBossHoleDestruction(hole) {
   hole.destroyed = true;
-  if (hole.revive) hole.reviveTimerMs = bossReviveDelayMs;
+  // 救済措置：既に10回復活済みなら、以降は復活タイマーをセットしない（そのまま倒したものとして扱う）
+  if (hole.revive && (hole.reviveCount || 0) < bossHoleMaxRevives) hole.reviveTimerMs = bossReviveDelayMs;
   if (!bossEvent.holes.every(h => h.destroyed)) return;
   if (bossEvent.stage < bossStageDefs.length) {
     bossEvent.stage++;
@@ -5518,13 +5523,13 @@ function finishMidBossEvent() {
 // ===== 援護弾（ボスが倒せない時の救済措置） =====
 // 「大規模プロジェクト」・ラスボス戦（ノーマルルート終了時の負けイベント戦闘は除く）中、
 // ゲーム内時間で3時間経過するごとに50%の確率で発生する。自機から最も遠い画面端から、
-// ゆっくり左右に振動しながら自機へ飛来する。パリィすると、雷のような一撃が今対応すべき部位へ飛び、一撃で破壊する
+// 自機に向かってまっすぐ飛んでくる。パリィすると、雷のような一撃が今対応すべき部位へ飛び、一撃で破壊する。
+// 何もされなければ、そのまま画面の反対側へ通り過ぎて消える
 const supportBulletCheckIntervalMs = hourMs * 3; // ゲーム内3時間ごとに判定する
 const supportBulletSpawnChance = 0.5;
-const supportBulletSpeed = 0.6; // ゆっくり飛来する
-const supportBulletWobbleStrength = 0.8; // 左右に振動する幅
-const supportBulletRadius = 10;
-const supportBulletMaxTravelMs = 20000; // これだけ飛び続けても自機に届かない・パリィされない場合は、諦めて消える
+const supportBulletSpeed = 1.6;
+const supportBulletRadius = 16;
+const supportBulletOffscreenMargin = 60; // これだけ画面の外へ出たら、通り過ぎたものとして消える
 let supportBulletCheckAccumMs = 0;
 
 // 援護弾を発生させられる状況（イベント戦は除く）かどうか
@@ -5548,13 +5553,12 @@ function spawnSupportBullet() {
   bullets.push({
     x, y, vx: Math.cos(angle) * supportBulletSpeed, vy: Math.sin(angle) * supportBulletSpeed,
     radius: supportBulletRadius, owner: 'support', damage: 0,
-    baseAngle: angle, wobbleSeed: Math.random() * Math.PI * 2, travelMs: 0,
     sourceContext: bossEvent ? 'boss' : 'midBoss'
   });
-  showMessage('……何かが、ゆっくりとこちらへ近づいてくる……パリィで迎え撃てるかもしれない', 3400, '#b39ddb', '20px sans-serif');
+  showMessage('援護弾が飛んでくる！ パリィで迎え撃てるかもしれない', 3400, '#ce93d8', '20px sans-serif');
 }
 
-// 援護弾の発生判定・飛来中の振動する動きを処理する
+// 援護弾の発生判定・画面を通り過ぎて消える処理を行う
 function updateSupportBulletSystem(dt) {
   if (!isRescueEligibleBattleActive()) {
     supportBulletCheckAccumMs = 0;
@@ -5566,19 +5570,12 @@ function updateSupportBulletSystem(dt) {
   }
   const existing = bullets.find(b => b.owner === 'support');
   if (existing) {
-    existing.travelMs += dt * 1000;
-    if (existing.travelMs >= supportBulletMaxTravelMs) {
-      // 自機の移動で軌道が逸れ、いつまで経っても届かない場合は諦めて消える（無限に漂い続けるのを防ぐ）
+    // 何もされないまま画面の反対側まで通り過ぎたら、そのまま消える
+    if (existing.x < -supportBulletOffscreenMargin || existing.x > canvas.width + supportBulletOffscreenMargin ||
+        existing.y < -supportBulletOffscreenMargin || existing.y > canvas.height + supportBulletOffscreenMargin) {
       const idx = bullets.indexOf(existing);
       if (idx >= 0) bullets.splice(idx, 1);
-      return;
     }
-    const forwardX = Math.cos(existing.baseAngle);
-    const forwardY = Math.sin(existing.baseAngle);
-    const perpX = -forwardY, perpY = forwardX;
-    const wobble = Math.sin(existing.travelMs / 300 + existing.wobbleSeed) * supportBulletWobbleStrength;
-    existing.vx = forwardX * supportBulletSpeed + perpX * wobble;
-    existing.vy = forwardY * supportBulletSpeed + perpY * wobble;
     return; // 飛来中は次の出現判定を行わない
   }
   supportBulletCheckAccumMs += dt * 1000;
@@ -7554,6 +7551,12 @@ function drawBossEvent() {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.restore();
 
+  // 通常のラスボス戦（ノーマルルート終了時の負けイベント戦闘は除く）は、さらに画面全体を暗くする
+  if (!(normalEndSequence && normalEndSequence.phase === 'battle')) {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
   // 特定の段階限定：窓の下のガラス部分あたりに、うっすらと解説文を表示する（背景より前、ラスボスより後ろ）
   const stageGlassText = bossStageGlassTexts[bossEvent.stage];
   if (stageGlassText) {
@@ -7618,12 +7621,17 @@ function drawBossEvent() {
           ctx.strokeStyle = 'rgba(90, 90, 90, 0.6)';
           ctx.lineWidth = 2;
           ctx.stroke();
-          // 第1段階「視野狭窄」：復活までの残り時間を表示する
-          if (hole.revive && hole.reviveTimerMs > 0) {
-            ctx.fillStyle = '#eeeeee';
+          // 第1段階「視野狭窄」：復活までの残り時間を表示する（10回復活済みなら、もう復活しない旨を表示する）
+          if (hole.revive) {
             ctx.font = 'bold 12px sans-serif';
             ctx.textAlign = 'center';
-            ctx.fillText((hole.reviveTimerMs / 1000).toFixed(1), hx, hy + 4);
+            if ((hole.reviveCount || 0) >= bossHoleMaxRevives) {
+              ctx.fillStyle = '#69f0ae';
+              ctx.fillText('撃破済み', hx, hy + 4);
+            } else if (hole.reviveTimerMs > 0) {
+              ctx.fillStyle = '#eeeeee';
+              ctx.fillText((hole.reviveTimerMs / 1000).toFixed(1), hx, hy + 4);
+            }
             ctx.textAlign = 'left';
           }
           continue;
@@ -9195,17 +9203,31 @@ function draw() {
 
   // プレイヤーが発射した弾を描く（弾き返した弾は金色に光らせて見分けられるようにする）
   for (const b of bullets) {
+    if (b.owner === 'support') {
+      // 援護弾：ひときわ目立つよう、大きく明るい紫の本体＋パルスする外周リングで描く
+      const pulse = 0.5 + 0.5 * Math.sin(gameClockMs / 160);
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.radius + 8 + pulse * 6, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(225, 190, 231, ${0.5 + pulse * 0.4})`;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.restore();
+      ctx.save();
+      ctx.fillStyle = '#f3e5f5';
+      ctx.shadowColor = '#ce93d8';
+      ctx.shadowBlur = 20 + pulse * 12;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      continue;
+    }
     ctx.save();
     if (b.owner === 'deflected') {
       ctx.fillStyle = '#ffd54f';
       ctx.shadowColor = '#fff176';
       ctx.shadowBlur = 10;
-    } else if (b.owner === 'support') {
-      // 援護弾：紫色にゆっくり明滅させ、ただの弾ではないことを伝える
-      const pulse = 0.5 + 0.5 * Math.sin(gameClockMs / 200);
-      ctx.fillStyle = '#ce93d8';
-      ctx.shadowColor = '#b39ddb';
-      ctx.shadowBlur = 10 + pulse * 8;
     } else {
       ctx.fillStyle = 'white';
     }
