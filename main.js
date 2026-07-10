@@ -448,8 +448,8 @@ spawnWave();
 // ===== 弾・スコア・ゲーム状態 =====
 // プレイヤーが発射した弾を保存する配列
 const bullets = [];
-// 自機の弾は、発射地点からこの距離（戦闘画面の横幅の60%）だけ進むと消滅する（パリィされた弾は対象外）
-const playerBulletMaxDistance = canvas.width * 0.6;
+// 自機の弾は、発射地点からこの距離だけ進むと消滅する（パリィされた弾は対象外）
+const playerBulletMaxDistance = 320;
 
 // ===== 敵に弾が命中した瞬間の弾けるようなヒットエフェクト =====
 const hitSparks = [];
@@ -3378,7 +3378,7 @@ const specialSkills = [
   { id: 'teamwork', name: 'チームワーク', description: '自分と同僚、お互いの弾が着弾しそうな時（敵からの弾を除く）、お互いパリィが発動しやすくなる（Lv5で発動率80%）', maxLevel: 5 },
   { id: 'meal-foresight', name: '食通', description: '昼食に登場する料理に、出現する順番の番号が表示されるようになる（習得は1回のみ）', maxLevel: 1 },
   { id: 'auto-parry', name: 'オートパリィ', description: '敵（ラスボス・中ボス・固定敵）からの弾を被弾しそうな時、レベルごとに10%の確率で自動的にパリィする（Lv5で50%）', maxLevel: 5 },
-  { id: 'persistence', name: '継続力', description: '自機の弾の飛距離が、レベルごとに1.2倍になる（Lv1:1.2倍 → Lv5:約2.49倍）', maxLevel: 5 },
+  { id: 'persistence', name: '継続力', description: '自機の弾の飛距離が、レベルごとに1.4倍になる（Lv1:1.4倍 → Lv5:約5.38倍）', maxLevel: 5 },
   {
     id: 'encourage-a', name: '激励A',
     description: '同僚からの弾を被弾すると脳疲労が減少する（ゲーム内3時間に1回まで。Lv1:-10 → Lv2:-15 → Lv3:-25、Lv3ではさらに被弾してもSAN値が低下しなくなる）',
@@ -3477,8 +3477,8 @@ function applySkillEffectForLevel(skillId, level) {
       specialSkillEffects.autoParryChance = 0.10 * Math.min(level, 5);
       break;
     case 'persistence':
-      // 継続力：自機の弾の飛距離が、レベルごとに1.2倍になる
-      specialSkillEffects.bulletDistanceMultiplier = Math.pow(1.2, level);
+      // 継続力：自機の弾の飛距離が、レベルごとに1.4倍になる
+      specialSkillEffects.bulletDistanceMultiplier = Math.pow(1.4, level);
       break;
   }
 }
