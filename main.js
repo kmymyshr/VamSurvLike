@@ -7082,10 +7082,11 @@ function shouldShowAfterNormalEndTitleBackground() {
   return !!lastRun.lostToBossBeforeAdv3;
 }
 
-// モード選択・性別選択・同僚選択の各画面の背景を描く（画像＋文字を読みやすくする暗いオーバーレイ）。
-// タイトル画面自体（startScreen）だけは、条件を満たす場合に背景画像を差し替える
-function drawSetupBackground() {
-  const useAfterNormalEndBg = startScreen && shouldShowAfterNormalEndTitleBackground();
+// モード選択・性別選択・同僚選択・アイコン挨拶・再会シーンなどの背景を描く（画像＋読みやすくする暗いオーバーレイ）。
+// 条件を満たす場合は背景画像をafter_normalENDに差し替え、不規則な明滅・小さな振動を重ねる。
+// allowAfterNormalEnd=falseを渡した画面（強化画面・エンディングリストなど）は対象外にする
+function drawSetupBackground(allowAfterNormalEnd = true) {
+  const useAfterNormalEndBg = allowAfterNormalEnd && shouldShowAfterNormalEndTitleBackground();
   const bgImage = useAfterNormalEndBg ? afterNormalEndBackgroundImage : startScreenBackgroundImage;
   if (bgImage.complete && bgImage.naturalWidth > 0) {
     ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height);
@@ -7095,6 +7096,33 @@ function drawSetupBackground() {
   }
   ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (useAfterNormalEndBg) {
+    // 不規則にゆっくり明度が落ちて戻ったり、時々小さく画面が振動したりする、不穏な演出を重ねる
+    const t = Date.now() / 1000;
+    // 周期の異なる2つの波を掛け合わせ、周期的すぎない「不規則にゆっくり」な明滅にする
+    const dim = Math.max(0, Math.sin(t * 0.11) * 0.5 + 0.5) * Math.max(0, Math.sin(t * 0.047 + 1.7) * 0.5 + 0.5);
+    ctx.fillStyle = `rgba(0, 0, 0, ${dim * 0.4})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // 数秒に一度、短い間だけ小さく振動する
+    const shakeCycleMs = 4200;
+    const cycleIndex = Math.floor(Date.now() / shakeCycleMs);
+    const cyclePos = Date.now() % shakeCycleMs;
+    const shakeWindowMs = 380;
+    const shakeRoll = titleGlitchPseudoRandom(cycleIndex * 31 + 5);
+    if (shakeRoll < 0.4 && cyclePos < shakeWindowMs) {
+      const shakeProgress = 1 - cyclePos / shakeWindowMs;
+      const mag = 3 * shakeProgress;
+      const shakeX = (titleGlitchPseudoRandom(cycleIndex * 53 + Math.floor(cyclePos / 40)) - 0.5) * mag;
+      const shakeY = (titleGlitchPseudoRandom(cycleIndex * 71 + Math.floor(cyclePos / 40)) - 0.5) * mag;
+      canvas.style.transform = `translate(${shakeX}px, ${shakeY}px)`;
+    } else {
+      canvas.style.transform = '';
+    }
+  } else {
+    canvas.style.transform = '';
+  }
 }
 
 // 朝・昼・夕方・夜の背景画像を読み込んでおく
@@ -8281,7 +8309,7 @@ function draw() {
   }
 
   if (dreamMemoryShopActive) {
-    drawSetupBackground();
+    drawSetupBackground(false);
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ffd54f';
     ctx.font = 'bold 24px sans-serif';
@@ -8396,7 +8424,7 @@ function draw() {
   }
 
   if (endingListActive) {
-    drawSetupBackground();
+    drawSetupBackground(false);
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ffd54f';
     ctx.font = 'bold 24px sans-serif';
@@ -8454,35 +8482,6 @@ function draw() {
 
   if (startScreen) {
     drawSetupBackground();
-
-    // after_normalENDの背景を使っている間だけ：不規則にゆっくり明度が落ちて戻ったり、
-    // 時々小さく画面が振動したりする、不穏な演出を重ねる
-    if (shouldShowAfterNormalEndTitleBackground()) {
-      const t = Date.now() / 1000;
-      // 周期の異なる2つの波を掛け合わせ、周期的すぎない「不規則にゆっくり」な明滅にする
-      const dim = Math.max(0, Math.sin(t * 0.11) * 0.5 + 0.5) * Math.max(0, Math.sin(t * 0.047 + 1.7) * 0.5 + 0.5);
-      ctx.fillStyle = `rgba(0, 0, 0, ${dim * 0.4})`;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      // 数秒に一度、短い間だけ小さく振動する
-      const shakeCycleMs = 4200;
-      const cycleIndex = Math.floor(Date.now() / shakeCycleMs);
-      const cyclePos = Date.now() % shakeCycleMs;
-      const shakeWindowMs = 380;
-      const shakeRoll = titleGlitchPseudoRandom(cycleIndex * 31 + 5);
-      if (shakeRoll < 0.4 && cyclePos < shakeWindowMs) {
-        const shakeProgress = 1 - cyclePos / shakeWindowMs;
-        const mag = 3 * shakeProgress;
-        const shakeX = (titleGlitchPseudoRandom(cycleIndex * 53 + Math.floor(cyclePos / 40)) - 0.5) * mag;
-        const shakeY = (titleGlitchPseudoRandom(cycleIndex * 71 + Math.floor(cyclePos / 40)) - 0.5) * mag;
-        canvas.style.transform = `translate(${shakeX}px, ${shakeY}px)`;
-      } else {
-        canvas.style.transform = '';
-      }
-    } else {
-      canvas.style.transform = '';
-    }
-
     ctx.save();
     ctx.font = 'bold 38px "Comic Sans MS", "Chalkboard SE", "Marker Felt", cursive, sans-serif';
     ctx.textAlign = 'center';
