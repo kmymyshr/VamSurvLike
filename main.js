@@ -774,7 +774,6 @@ function spawnEnergyDrink() {
 // クリック／タップ、または完全オートモードで取得された時に呼ばれる
 function consumeEnergyDrink() {
   energyDrinkDailyCount++;
-  energyDrinkTotalCount++;
   const isSecondOrLater = energyDrinkDailyCount >= 2;
   const isCrossDrink = coffeeBuffTimerMs > 0;
   const totalLifespanCost = energyDrinkLifespanCost +
@@ -813,60 +812,6 @@ let coffeeDailyCount = 0; // 本日すでに飲んだコーヒーの本数。日
 let coffeeStunImmunityCharges = 0; // コーヒー1杯につき1回分。脳疲労が100になってもstunを回避できる（その日のうちのみ）
 let coffeeStunImmunityTimerMs = 0; // stunを回避している間、通常通り行動できる残り時間
 
-// ===== カフェイン（栄養ドリンク・コーヒー）過剰摂取イベント =====
-// プレイ全体を通した通算本数で判定する（日ごとにはリセットしない）
-const caffeineOverdoseThreshold = 10; // 通算本数がこれを超えると、倒れる可能性が生じる
-const caffeineOverdoseBaseChance = 0.1; // 超過1本目の基本確率
-const caffeineOverdoseChancePerExtra = 0.02; // 通算本数が1本増えるごとに加算する確率
-const caffeineOverdoseMaxChance = 0.9; // 確率の上限（倍率がかかった場合も含む）
-const caffeineHeavyDayThreshold = 5; // 一日の合計摂取本数がこれ以上だと「飲みすぎた日」とみなす
-let energyDrinkTotalCount = 0; // 栄養ドリンクの通算摂取本数（リセットしない）
-let coffeeTotalCount = 0; // コーヒーの通算摂取本数（リセットしない）
-let caffeineHeavyDayDoubleChance = false; // 前日が「飲みすぎた日」だった場合、翌朝の判定だけ確率を倍にする
-
-// 新しい日が始まるタイミングで呼び出す。通算本数が閾値を超えていれば、
-// 超過量に応じた確率（前日に飲みすぎていた場合は倍率）で「倒れる」イベントを発生させる
-function checkCaffeineOverdoseAtDayStart() {
-  const totalSoFar = energyDrinkTotalCount + coffeeTotalCount;
-  const doubled = caffeineHeavyDayDoubleChance;
-  caffeineHeavyDayDoubleChance = false;
-  if (totalSoFar <= caffeineOverdoseThreshold) return;
-  const extra = totalSoFar - caffeineOverdoseThreshold;
-  let chance = caffeineOverdoseBaseChance + (extra - 1) * caffeineOverdoseChancePerExtra;
-  if (doubled) chance *= 2;
-  chance = Math.min(caffeineOverdoseMaxChance, chance);
-  if (Math.random() < chance) {
-    triggerCaffeineCollapse();
-  }
-}
-
-// 「カフェインの摂り過ぎで倒れる」イベント：寿命・SAN・同僚のSANを半分にし、丸一日休みにする
-function triggerCaffeineCollapse() {
-  lifespan = Math.max(0, Math.floor(lifespan / 2));
-  san = Math.max(0, Math.floor(san / 2));
-  if (partner.active) partner.san = Math.max(0, Math.floor(partner.san / 2));
-  checkVitalsGameOver();
-  showAcknowledgementNotice(
-    'カフェインの摂り過ぎで倒れた…',
-    '#ff8a65',
-    '丸一日、休むことになった。（寿命・SAN低下）',
-    () => { if (!gameOver && !deathSequence) skipCollapseRestDay(); }
-  );
-}
-
-// 倒れて休んだ分、さらにもう1日だけ日付を進める（この日は稼働日として扱わない）
-function skipCollapseRestDay() {
-  clearRemainingItemsAndBulletsForNewDay();
-  currentDate.setDate(currentDate.getDate() + 1);
-  dayNumber++;
-  resetPlayerAndPartnerPositionForNewDay();
-  if (currentDate.getDay() === 1) {
-    startNewWeek();
-  }
-  lastUpdate = Date.now();
-  checkCaffeineOverdoseAtDayStart();
-}
-
 // コーヒーによる移動速度の倍率
 function getCoffeeMoveSpeedMultiplier() {
   return coffeeBuffTimerMs > 0 ? coffeeMoveSpeedBuffMultiplier : 1;
@@ -899,7 +844,6 @@ function spawnCoffee() {
 // クリック／タップ、または完全オートモードで取得された時に呼ばれる
 function consumeCoffee() {
   coffeeDailyCount++;
-  coffeeTotalCount++;
   coffeeStunImmunityCharges++;
   const isCrossDrink = energyDrinkBuffTimerMs > 0;
   const totalLifespanCost = coffeeLifespanCost + (isCrossDrink ? coffeeCrossDrinkLifespanCost : 0);
@@ -3531,10 +3475,6 @@ function autoAdvanceDay() {
   currentDate.setDate(currentDate.getDate() + 1);
   applyDayEndRecovery();
   resetPlayerAndPartnerPositionForNewDay();
-  // 終わった一日に5本以上飲んでいたら、翌朝（＝今から始まる日）の判定だけ確率を倍にする
-  if (energyDrinkDailyCount + coffeeDailyCount >= caffeineHeavyDayThreshold) {
-    caffeineHeavyDayDoubleChance = true;
-  }
   dayStartTime = gameClockMs;
   lastHourTime = gameClockMs;
   currentHour = dayStartHour;
@@ -3550,7 +3490,6 @@ function autoAdvanceDay() {
     startNewWeek();
   }
   lastUpdate = Date.now();
-  checkCaffeineOverdoseAtDayStart();
 }
 
 // 週末（土日祝日）を飛ばして次の月曜から新しい週を始める
@@ -3559,10 +3498,6 @@ function jumpToNextMondayAndResetWeek() {
   currentDate = nextMonday(currentDate);
   eveningDrinkRecoveryPenalty = false; // 休日を挟むため、このペナルティは持ち越さない
   resetPlayerAndPartnerPositionForNewDay();
-  // 終わった一日に5本以上飲んでいたら、翌朝（＝今から始まる日）の判定だけ確率を倍にする
-  if (energyDrinkDailyCount + coffeeDailyCount >= caffeineHeavyDayThreshold) {
-    caffeineHeavyDayDoubleChance = true;
-  }
   dayStartTime = gameClockMs;
   lastHourTime = gameClockMs;
   currentHour = dayStartHour;
@@ -3576,7 +3511,6 @@ function jumpToNextMondayAndResetWeek() {
   if (partner.active) partner.chocolateDailyCount = 0;
   startNewWeek();
   lastUpdate = Date.now();
-  checkCaffeineOverdoseAtDayStart();
 }
 
 // 週の終わりを迎えたときに表示する、ノルマ達成時のフレーバーテキスト
