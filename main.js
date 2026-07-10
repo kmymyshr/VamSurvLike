@@ -6919,7 +6919,10 @@ function drawEndScreenButtons(baseY) {
       playerGender: selectedGender,
       partnerIcon: selectedPartnerIcon,
       relationship: partner.relationship,
-      endingType: endingType
+      endingType: endingType,
+      // 第3回アドベンチャーパートを経る前に、通常のラスボス遭遇イベントに負けた場合だけ立てるフラグ
+      // （タイトル画面の背景切り替えに使う。ADV3経由のノーマルエンドはfinishNormalEndSequence側で判定する）
+      lostToBossBeforeAdv3: !!bossEvent && adventureRunCount < 3
     } : null;
     // 到達したエンディングを、タイトル画面のエンディングリストに記録する
     if (endingType && dreamMemorySave.endingsCleared.hasOwnProperty(endingType)) {
@@ -7063,11 +7066,29 @@ const startScreenBackgroundImage = (() => {
   img.src = 'images/background/start_01.png';
   return img;
 })();
+// 直前のプレイがノーマルエンドだった場合・第3回アドベンチャーパートを経る前に
+// 通常のラスボス遭遇イベントに負けた場合だけ、タイトル画面の背景をこちらに差し替える
+const afterNormalEndBackgroundImage = (() => {
+  const img = new Image();
+  img.src = 'images/background/after_normalEND.png';
+  return img;
+})();
 
-// モード選択・性別選択・同僚選択の各画面の背景を描く（画像＋文字を読みやすくする暗いオーバーレイ）
+// タイトル画面の背景を、直前のプレイ内容に応じて切り替えるべきかどうかを判定する
+function shouldShowAfterNormalEndTitleBackground() {
+  const lastRun = dreamMemorySave.lastRun;
+  if (!lastRun) return false;
+  if (typeof lastRun.endingType === 'string' && lastRun.endingType.startsWith('normal')) return true;
+  return !!lastRun.lostToBossBeforeAdv3;
+}
+
+// モード選択・性別選択・同僚選択の各画面の背景を描く（画像＋文字を読みやすくする暗いオーバーレイ）。
+// タイトル画面自体（startScreen）だけは、条件を満たす場合に背景画像を差し替える
 function drawSetupBackground() {
-  if (startScreenBackgroundImage.complete && startScreenBackgroundImage.naturalWidth > 0) {
-    ctx.drawImage(startScreenBackgroundImage, 0, 0, canvas.width, canvas.height);
+  const useAfterNormalEndBg = startScreen && shouldShowAfterNormalEndTitleBackground();
+  const bgImage = useAfterNormalEndBg ? afterNormalEndBackgroundImage : startScreenBackgroundImage;
+  if (bgImage.complete && bgImage.naturalWidth > 0) {
+    ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height);
   } else {
     ctx.fillStyle = 'black';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
