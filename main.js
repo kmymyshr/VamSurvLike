@@ -317,8 +317,18 @@ const enemyTypeIcons = ['📞', '🛠️', '📝', '📐', '🐛', '🚨', '🗄
 
 // 後ろの強い敵ほど出現率が低くなるよう、等比数列で重みを付ける
 const rarityRatio = 0.6; // 0～1の値。小さいほど強い敵が出にくい
-const typeWeights = enemyTypeNames.map((_, i) => Math.pow(rarityRatio, i));
-const totalWeight = typeWeights.reduce((a, b) => a + b, 0);
+
+// 第2回のアドベンチャーパート以降は、この比率が徐々に上がっていき、強い敵ほど出やすく（弱い敵ほど出にくく）なる
+const enemyBiasRampDays = 15; // この日数をかけて、比率がenemyBiasMaxRatioまで徐々に上がっていく
+const enemyBiasMaxRatio = 1.5; // 1を超えると、後ろの（強い）敵の方がむしろ出現率が高くなる
+let adv2CompletedAtDay = null; // 第2回のアドベンチャーパートを終えた時点の日数（このタイミングからバイアスをかけ始める）
+
+function getEnemyTypeEffectiveRatio() {
+  if (adv2CompletedAtDay === null) return rarityRatio;
+  const daysSince = Math.max(0, dayNumber - adv2CompletedAtDay);
+  const progress = Math.min(1, daysSince / enemyBiasRampDays);
+  return rarityRatio + (enemyBiasMaxRatio - rarityRatio) * progress;
+}
 
 // 敵の初期生成より前に参照できるよう、ランクをここで宣言する
 let rank = 1;
@@ -330,8 +340,10 @@ let dayNumber = 1; // 実際に稼働した日数（1始まり）
 function chooseEnemyTypeIndex() {
   // 現在のランクに応じて、出現可能な敵の上限を決める
   const maxIdx = getAllowedMaxTypeIndexByRank();
-  // 出現可能な敵だけに絞って重みの合計を計算する
-  const truncated = typeWeights.slice(0, maxIdx + 1);
+  // 出現可能な敵だけに絞って重み（第2回のアドベンチャーパート以降は徐々に強い敵寄りに偏る）の合計を計算する
+  const effectiveRatio = getEnemyTypeEffectiveRatio();
+  const truncated = [];
+  for (let i = 0; i <= maxIdx; i++) truncated.push(Math.pow(effectiveRatio, i));
   const sum = truncated.reduce((a, b) => a + b, 0);
   let r = Math.random() * sum;
   for (let i = 0; i < truncated.length; i++) {
@@ -366,6 +378,10 @@ function setEnemyStats(e, typeIndex) {
 
 // ===== 敵の生成と管理 =====
 const enemies = [];
+// 小型敵（mini）はウェーブ制の対象外なので、通常のウェーブ全滅判定では除外して数える
+function countActiveWorkEnemies() {
+  return enemies.reduce((sum, en) => sum + (en.mini ? 0 : 1), 0);
+}
 const maxEnemies = 3; // 1ウェーブで同時に出現する敵（仕事）の数
 const waveCooldownDelayMs = 900; // ウェーブを全滅させてから次のウェーブが出るまでの間
 const enemyCollisionRadius = 32;
@@ -374,7 +390,19 @@ const maxDeadlineMs = 30000; // 納期の最長時間（30秒）
 let specialDeadlineMultiplier = 1;
 let waveCooldownMs = 0; // 次のウェーブ出現までの残り時間
 
-function spawnEnemy(typeIndex) {
+// 第2回のアドベンチャーパートを終えてから第3回に入るまでの間だけ出現する、小型の敵
+const miniEnemyMaxConcurrent = 3;
+const miniEnemySizeRatio = 0.6; // 通常の敵の60%のサイズ
+const miniEnemySpeedMultiplier = 1.5; // 移動速度は通常の1.5倍
+const miniEnemySpawnIntervalAvgMs = 6000; // 現実の時間で平均6秒に1件、ランダムなタイミングで出現する
+const miniEnemySpawnIntervalMinMs = 1200;
+let miniEnemySpawnTimerMs = 0;
+function getRandomMiniEnemySpawnIntervalMs() {
+  return Math.max(miniEnemySpawnIntervalMinMs, -Math.log(1 - Math.random()) * miniEnemySpawnIntervalAvgMs);
+}
+
+function spawnEnemy(typeIndex, isMini = false) {
+  const radius = isMini ? enemyCollisionRadius * miniEnemySizeRatio : enemyCollisionRadius;
   // 既存の敵やプレイヤーと重ならない位置を探す
   let attempts = 0;
   let p;
@@ -384,11 +412,12 @@ function spawnEnemy(typeIndex) {
     // 画面端の同じ位置に固まらないよう、少しだけランダムにずらす
     p.x += (Math.random() - 0.5) * 40;
     p.y += (Math.random() - 0.5) * 40;
-    const tooClose = enemies.some(en => Math.hypot(en.x - p.x, en.y - p.y) < (en.radius + enemyCollisionRadius + 20)) || Math.hypot(player.x - p.x, player.y - p.y) < 150;
+    const tooClose = enemies.some(en => Math.hypot(en.x - p.x, en.y - p.y) < (en.radius + radius + 20)) || Math.hypot(player.x - p.x, player.y - p.y) < 150;
     if (!tooClose) break;
   } while (attempts < 18);
-  const e = { x: p.x, y: p.y, radius: enemyCollisionRadius };
+  const e = { x: p.x, y: p.y, radius, mini: isMini };
   setEnemyStats(e, typeIndex);
+  if (isMini) e.speed *= miniEnemySpeedMultiplier;
   e.touched = false;
   // 敵ごとに5～30秒のランダムな納期を設定する
   e.deadlineMs = (
@@ -401,6 +430,21 @@ function spawnEnemy(typeIndex) {
 // 現在の仕事（敵）を全て片付けるまで、次のウェーブは出現しない
 function spawnWave(count = maxEnemies) {
   for (let i = 0; i < count; i++) spawnEnemy();
+}
+
+// 第2回のアドベンチャーパートを終えた後、第3回に入るまでの間だけ、小型の敵を並行して出現させ続ける
+function updateMiniEnemySpawning(dt) {
+  if (adventureRunCount !== 2) return;
+  miniEnemySpawnTimerMs -= dt * 1000;
+  const currentMiniCount = enemies.reduce((sum, en) => sum + (en.mini ? 1 : 0), 0);
+  let spawnGuard = 0;
+  let remaining = miniEnemyMaxConcurrent - currentMiniCount;
+  while (miniEnemySpawnTimerMs <= 0 && remaining > 0 && spawnGuard < miniEnemyMaxConcurrent) {
+    spawnEnemy(undefined, true);
+    miniEnemySpawnTimerMs += getRandomMiniEnemySpawnIntervalMs();
+    remaining--;
+    spawnGuard++;
+  }
 }
 
 // ゲーム開始時の最初のウェーブを生成する
@@ -444,7 +488,7 @@ const slashEffectRangeRad = (270 * Math.PI) / 180;
 function spawnSlashEffect(x, y, angle, entityRadius) {
   slashEffect = { x, y, angle, radius: entityRadius, timer: slashEffectDurationMs };
 }
-const baseFireRate = 350; // 基本の発射間隔（従来の半分、ミリ秒）
+const baseFireRate = 175; // 基本の発射間隔（ミリ秒。以前の設定からさらに半分に短縮）
 let lastFire = 0;
 let score = 0;
 let gameOver = false;
@@ -648,7 +692,7 @@ const stunRecoveryPerSec = 18; // 行動不能中は脳疲労を回復する（�
 const fireRateMultiplier = 1.5; // 疲労が多いほど発射間隔を延ばす倍率
 // 朝から夜にかけて時間が経つほど、同僚の自律攻撃の間隔が伸びる（パフォーマンス低下の表現。脳疲労の値自体には影響しない）
 const timeOfDayFatigueMultiplierMax = 1.8; // 終業時刻ごろに到達する最大倍率
-let baseBulletDamage = 2; // 疲労がないときの基本攻撃力
+let baseBulletDamage = 20; // 疲労がないときの基本攻撃力（以前の設定の10倍）
 
 // ===== 回復アイテム（チョコレート） =====
 const chocolateLifetimeMs = 10000; // 出現してから消えるまでの時間（10秒）
@@ -911,7 +955,7 @@ function consumeHeartWall() {
 
 // ===== ゲーム内の時刻・一日進行システム =====
 const hourMs = 5000; // 現実の5秒をゲーム内の1時間として扱う
-const dayStartHour = 9;
+const dayStartHour = 8; // 8時始業（以前の9時から1時間繰り上げ、その分だけ稼働時間が延びる）
 const dayEndHour = 18;
 // 定時報告が残っている場合、終業時刻を過ぎても最大この時刻まで残業として居残れる
 const maxOvertimeHour = 24;
@@ -1079,15 +1123,26 @@ function pushEntityOutsideScheduledReport(entity) {
 
 // ===== 固定敵（IT用語モチーフの特殊な出現敵） =====
 // 現実の経過時間で平均30秒に1件ほど、ランダムなタイミングでマップ上に出現する、移動しない特殊な敵。
-// ゲーム内時間（時刻・日数）の進行状況やラスボス・中ボスの有無に関わらず出現し続け、最大5体まで同時に存在できる。
+// ゲーム内時間（時刻・日数）の進行状況やラスボス・中ボスの有無に関わらず出現し続け、最大5体まで同時に存在できる
+// （ただし第1回のアドベンチャーパートに入るまでは、頻度・同時数ともかなり控えめにする）。
 // 名称はIT・セキュリティ用語から取り、現実の攻撃内容にちなんだ攻撃パターン・被弾時の悪影響を持つ。
-const fixedEnemyMaxConcurrent = 5;
+const fixedEnemyMaxConcurrentDefault = 5;
+// 第1回のアドベンチャーパートに入るまでの間は、固定敵の出現をかなり控えめにする
+const fixedEnemyMaxConcurrentEarly = 2;
+function getFixedEnemyMaxConcurrent() {
+  return adventureRunCount === 0 ? fixedEnemyMaxConcurrentEarly : fixedEnemyMaxConcurrentDefault;
+}
 const fixedEnemyDurabilityMultiplier = 3; // 耐久力（HP）を全体的に3倍にする
 const fixedEnemySpawnIntervalAvgMs = 30000; // 現実の時間で平均30秒に1件（指数分布でかなりばらつかせる）
+// 第1回のアドベンチャーパートに入るまでの間は、平均間隔をこの倍率まで伸ばし、出現頻度をかなり下げる
+const fixedEnemySpawnIntervalEarlyMultiplier = 3;
 const fixedEnemySpawnIntervalMinMs = 500; // 連続発生時でも、これより短い間隔にはしない
 function getRandomFixedEnemySpawnIntervalMs() {
   // 指数分布：平均が上の定数になるようにしつつ、運が悪いと連続発生し得るほどのばらつきを持たせる
-  return Math.max(fixedEnemySpawnIntervalMinMs, -Math.log(1 - Math.random()) * fixedEnemySpawnIntervalAvgMs);
+  const avgMs = adventureRunCount === 0
+    ? fixedEnemySpawnIntervalAvgMs * fixedEnemySpawnIntervalEarlyMultiplier
+    : fixedEnemySpawnIntervalAvgMs;
+  return Math.max(fixedEnemySpawnIntervalMinMs, -Math.log(1 - Math.random()) * avgMs);
 }
 const fixedEnemyBulletSpeed = 5;
 const fixedEnemyBulletRadius = 6;
@@ -1364,7 +1419,7 @@ function applyFixedEnemyEffect(effect, target = 'player') {
 }
 
 function spawnFixedEnemy() {
-  if (fixedEnemies.length >= fixedEnemyMaxConcurrent) return;
+  if (fixedEnemies.length >= getFixedEnemyMaxConcurrent()) return;
   const def = fixedEnemyDefs[Math.floor(Math.random() * fixedEnemyDefs.length)];
   const radius = def.radius;
   let position;
@@ -1599,7 +1654,8 @@ function updateFixedEnemy(dt) {
   if (!setupStep && !startScreen && !gameOver && !gameClear) {
     fixedEnemySpawnTimerMs -= realDtMs;
     let spawnGuard = 0; // 万一の無限ループを避ける安全弁
-    while (fixedEnemySpawnTimerMs <= 0 && fixedEnemies.length < fixedEnemyMaxConcurrent && spawnGuard < fixedEnemyMaxConcurrent) {
+    const currentFixedEnemyMax = getFixedEnemyMaxConcurrent();
+    while (fixedEnemySpawnTimerMs <= 0 && fixedEnemies.length < currentFixedEnemyMax && spawnGuard < currentFixedEnemyMax) {
       spawnFixedEnemy();
       fixedEnemySpawnTimerMs += getRandomFixedEnemySpawnIntervalMs();
       spawnGuard++;
@@ -3677,6 +3733,10 @@ function startPartnerAdventure(onComplete) {
       dreamMemorySave.points += dreamMemoryPointsForAdv1Or2;
       saveDreamMemorySave();
     }
+    if (completedRun === 2) {
+      // 第2回のアドベンチャーパートを終えて職場に戻った日から、強い敵寄りのバイアスをかけ始める
+      adv2CompletedAtDay = dayNumber;
+    }
     if (onComplete) onComplete();
   };
   const category = getRelationshipCategory(partner.relationship);
@@ -3904,7 +3964,7 @@ function explodeEnemy(enemyIndex) {
   explosionShakeTimer = explosionEffectDuration;
   showMessage(`納期経過！ SAN -${explosionDamage}`, 1200, '#ff5252', '28px sans-serif');
 
-  if (!gameOver && enemies.length === 0) {
+  if (!gameOver && countActiveWorkEnemies() === 0) {
     waveCooldownMs = waveCooldownDelayMs;
   }
 }
@@ -3923,7 +3983,7 @@ function defeatEnemyInstantly(enemyIndex) {
   weeklyKills++;
   weeklyScoreGained += pts;
   checkEarlyQuotaAchievement();
-  if (enemies.length === 0) waveCooldownMs = waveCooldownDelayMs;
+  if (countActiveWorkEnemies() === 0) waveCooldownMs = waveCooldownDelayMs;
 }
 
 // ===== 各種選択の実行処理（キーボード・タップ両方から呼ばれる） =====
@@ -3985,7 +4045,7 @@ function applyDreamMemoryUpgradesForNewGame() {
   // 周回プレイの引き継ぎ：前回終了時のScoreをそのまま初期値にする
   score = dreamMemorySave.carriedScore || 0;
   maxFatigue = 100;
-  baseBulletDamage = 2;
+  baseBulletDamage = 20;
   maxSan = dreamMemorySave.upgrades.dreamCatcher >= 1 ? 25 : 100;
   maxLifespan = 100;
   // 周回プレイの引き継ぎ：前回終了時の役職（ランク）・役職スキルを復元する（「クラウド」のSAN・寿命上限+10も再適用する）
@@ -4026,6 +4086,10 @@ function beginGameplay() {
   if (shouldShowReunionScene()) {
     partner.relationship = Math.min(120, dreamMemorySave.lastRun.relationship + 20);
   }
+  // 同僚の挨拶が終わった直後は、いきなり操作可能にせず、他の日と同様にまず「DAY 1」の
+  // クリック待ち画面を表示してからゲームを始める（暗転からのフェードアウトは不要なので、直接waitingにする）
+  dayTransitionPhase = 'waiting';
+  dayTransitionWaitingTimerMs = 0;
 }
 
 // 週間ノルマ未達成時：休日出勤するか休むかを処理する
@@ -5956,7 +6020,7 @@ function damageEnemyDirectByParry(en) {
   weeklyKills++;
   weeklyScoreGained += pts;
   checkEarlyQuotaAchievement();
-  if (enemies.length === 0) waveCooldownMs = waveCooldownDelayMs;
+  if (countActiveWorkEnemies() === 0) waveCooldownMs = waveCooldownDelayMs;
 }
 function attemptDeflectPartnerBullet() {
   if (stunned) return;
@@ -6628,12 +6692,16 @@ function update() {
 
   // 全滅したら少し間を置いて次のウェーブ（仕事）を出す。
   // 「大規模プロジェクト」が出ている間は、通常の敵は一切出現しない。定時報告が出ている間は、同時出現数を1体にする
-  if (!midBossEvent && enemies.length === 0) {
+  if (!midBossEvent && countActiveWorkEnemies() === 0) {
     if (waveCooldownMs > 0) {
       waveCooldownMs -= dt * 1000;
     } else {
       spawnWave(scheduledReport ? 1 : maxEnemies);
     }
+  }
+  // 第2回のアドベンチャーパートを終えた後だけ、通常のウェーブとは別に小型の敵も並行して出現させる
+  if (!midBossEvent) {
+    updateMiniEnemySpawning(dt);
   }
   }
 
@@ -7314,7 +7382,7 @@ function update() {
           weeklyKills++;
           weeklyScoreGained += pts;
           checkEarlyQuotaAchievement();
-          if (enemies.length === 0) waveCooldownMs = waveCooldownDelayMs;
+          if (countActiveWorkEnemies() === 0) waveCooldownMs = waveCooldownDelayMs;
         }
         break;
       }
@@ -7410,7 +7478,7 @@ function update() {
       weeklyKills++;
       weeklyScoreGained += pts;
       checkEarlyQuotaAchievement();
-      if (enemies.length === 0) waveCooldownMs = waveCooldownDelayMs;
+      if (countActiveWorkEnemies() === 0) waveCooldownMs = waveCooldownDelayMs;
     }
     if (gameOver) break;
   }
