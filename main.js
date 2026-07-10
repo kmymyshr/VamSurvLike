@@ -9323,7 +9323,7 @@ function draw() {
     ctx.shadowOffsetY = 2;
     ctx.lineWidth = 4;
     ctx.strokeStyle = titleStrokeColor;
-    const subtitleText = useMinchoTitle ? 'Walkin’ UnDead' : 'Workin’ FunDead';
+    const subtitleText = useMinchoTitle ? 'Wakin’ UnDead' : 'Workin’ FunDead';
     ctx.strokeText(subtitleText, canvas.width / 2, canvas.height / 2 - 118);
     ctx.fillStyle = titleFillColor;
     ctx.fillText(subtitleText, canvas.width / 2, canvas.height / 2 - 118);
