@@ -5937,6 +5937,8 @@ canvas.addEventListener('click', (event) => {
     dayTransitionPhase = 'in';
     dayTransitionTimer = dayTransitionDurationMs;
     lastUpdate = Date.now();
+    // 前日中に表示されていた一時メッセージは、翌日の「DAY〇〇」画面には持ち越さず消す
+    messages.length = 0;
     return;
   }
   // 真エンド（同僚生存）限定：現実の日時を表示する画面・クリアメッセージ画面は、クリックで次へ進む
