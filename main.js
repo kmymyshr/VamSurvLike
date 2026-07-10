@@ -5980,7 +5980,8 @@ function computeFullAutoEnemyAvoidanceVector() {
 // 完全オートモード中の移動方向（-1〜1に正規化済み）を、優先度順に1つだけ選んで決める
 // （複数の意図を混ぜず、優先度が高いものだけに従うことで振動を防ぐ）
 // 優先度1: 同僚弾の回避 → 優先度2: 近い敵からの回避 → 優先度3: 同僚との距離を置く
-// （食事・チョコレート・ファイヤーウォールは着地と同時に自動取得するため、拾いに行く移動は行わない）
+// （チョコレート・栄養ドリンク・コーヒー・ファイヤーウォールは、自機が実際にその場へ来ない限り取得されないため、
+// 　完全オートモード中はクリック操作がない以上これらを取得できない。食事だけは例外的に自動取得する）
 // 敵の反発がほぼ打ち消し合って板挟みになった時、振動せずランダムな方向へ抜け出すための状態
 const fullAutoStuckVectorThreshold = 0.15; // 合成ベクトルの大きさがこれ未満なら「板挟み」とみなす
 const fullAutoEscapeDurationMs = 500; // 一度ランダムな方向へ逃げ始めたら、この間は同じ方向を保つ
@@ -6511,11 +6512,9 @@ function update() {
     }
   } else if (chocolate) {
     chocolate.remainingMs -= dt * 1000;
-    // 完全オートモード中は、クリック操作を挟まず着地後すぐに自動で取得する
-    if (fullAutoModeEnabled) {
-      consumeChocolate();
-      if (gameOver || deathSequence) return;
-    } else if (chocolate.remainingMs <= 0) {
+    // 完全オートモード中も、自機がその場まで移動したわけではないので自動取得はしない
+    // （取得するにはクリック／タップが必要。取得されないまま時間切れになれば消える）
+    if (chocolate.remainingMs <= 0) {
       chocolate = null;
       chocolateSpawnTimerMs = getRandomChocolateSpawnDelay();
     }
@@ -6547,13 +6546,8 @@ function update() {
       energyDrink.landed = true;
     }
   } else if (energyDrink) {
-    // 出現直後の猶予時間が残っている間は、フルオートモードでも取得しない
+    // 出現直後の猶予時間を減らす（完全オートモード中も、自機が移動したわけではないので自動取得はしない）
     if (energyDrink.graceMs > 0) energyDrink.graceMs = Math.max(0, energyDrink.graceMs - dt * 1000);
-    // 完全オートモード中は、猶予時間が終わり次第、クリック操作を挟まず自動で取得する
-    if (fullAutoModeEnabled && energyDrink.graceMs <= 0) {
-      consumeEnergyDrink();
-      if (gameOver || deathSequence) return;
-    }
   } else {
     energyDrinkSpawnTimerMs -= dt * 1000;
     if (energyDrinkSpawnTimerMs <= 0) {
@@ -6576,13 +6570,8 @@ function update() {
       coffee.landed = true;
     }
   } else if (coffee) {
-    // 出現直後の猶予時間が残っている間は、フルオートモードでも取得しない
+    // 出現直後の猶予時間を減らす（完全オートモード中も、自機が移動したわけではないので自動取得はしない）
     if (coffee.graceMs > 0) coffee.graceMs = Math.max(0, coffee.graceMs - dt * 1000);
-    // 完全オートモード中は、猶予時間が終わり次第、クリック操作を挟まず自動で取得する
-    if (fullAutoModeEnabled && coffee.graceMs <= 0) {
-      consumeCoffee();
-      if (gameOver || deathSequence) return;
-    }
   } else {
     coffeeSpawnTimerMs -= dt * 1000;
     if (coffeeSpawnTimerMs <= 0) {
@@ -6601,10 +6590,8 @@ function update() {
     }
   } else if (heartWall) {
     heartWall.remainingMs -= dt * 1000;
-    // 完全オートモード中は、クリック操作を挟まず着地後すぐに自動で取得する
-    if (fullAutoModeEnabled) {
-      consumeHeartWall();
-    } else if (heartWall.remainingMs <= 0) {
+    // 完全オートモード中も、自機がその場まで移動したわけではないので自動取得はしない
+    if (heartWall.remainingMs <= 0) {
       heartWall = null;
       heartWallSpawnTimerMs = getRandomHeartWallSpawnDelay();
     }
