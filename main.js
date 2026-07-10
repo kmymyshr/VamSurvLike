@@ -1501,6 +1501,7 @@ function defeatFixedEnemy(fx) {
   checkEarlyQuotaAchievement();
   showMessage(`${def.name} を撃退！ Score +${reward}`, 2500, '#69f0ae', '23px sans-serif');
   fixedEnemyDefeatInfoDisplay = { name: def.name, info: def.info, elapsedMs: 0 };
+  recordFixedEnemyDefeatForStats(def.name);
   if (def.persistAfterDefeat) {
     // バックドア設置：撃破後もしばらくすると同じ場所から不意打ちの一発が飛んでくる
     const shots = 1 + Math.floor(Math.random() * 2);
@@ -3306,6 +3307,7 @@ function chooseSpecialSkill(choiceIndex) {
     : (specialSkillLevels.get(skill.id) || 0) + 1;
   specialSkillLevels.set(skill.id, newSkillLevel);
   recomputeSpecialSkillEffects();
+  recordSkillAcquiredForStats(`${skill.name} Lv.${newSkillLevel}`);
   showMessage(
     `特殊スキル「${skill.name}」Lv.${newSkillLevel}！`,
     2500,
@@ -3405,10 +3407,12 @@ function applyRankSkillEffect(id) {
 
 // ランクが上がった瞬間、そのランクに紐づく役職スキルをすべて自動的に習得させる
 function grantRankSkillsForRank(newRank) {
+  recordPromotionForStats(`${newRank} ${rankNames[newRank - 1]}`);
   const skillsForRank = rankSkillDefs.filter(s => s.rank === newRank);
   if (skillsForRank.length === 0) return;
   skillsForRank.forEach(skill => {
     rankSkillLevels.add(skill.id);
+    recordSkillAcquiredForStats(skill.name);
     if (skill.id === 'cloud') {
       // クラウド：器そのものが大きくなるイメージで、上限に直接+10する（一度だけ）
       maxSan += 10;
@@ -3604,6 +3608,55 @@ function recordAdv1Choice(choice) { adv1Choice = choice; }
 function recordAdv2Choice(choice) { adv2Choice = choice; }
 function markDreamRouteCompleted() { dreamRouteCompleted = true; }
 
+// ===== アドベンチャーパートに入る前に表示する「統計情報」画面の集計 =====
+// 前回のアドベンチャーパートが終わってから（初回は初日から）、今回のアドベンチャーパートに入るまでの間に
+// 起きたことを蓄積しておき、会話へ進む直前に一覧表示する。表示後、次の期間のために集計をリセットする
+function createEmptyAdventureStatsTracker() {
+  return {
+    jobsDefeated: {}, // 撃破した「仕事」（通常の敵）の名前 → 件数
+    fixedEnemiesDefeated: {}, // 撃退した固定敵（脅威）の名前 → 件数
+    skillsAcquired: [], // 習得した特殊スキル・役職スキルの表示名（取得順）
+    promotions: [] // 昇進した役職名（昇進順）
+  };
+}
+let adventureStatsTracker = createEmptyAdventureStatsTracker();
+function resetAdventureStatsTracker() {
+  adventureStatsTracker = createEmptyAdventureStatsTracker();
+}
+function recordJobDefeatForStats(name) {
+  if (!name) return;
+  adventureStatsTracker.jobsDefeated[name] = (adventureStatsTracker.jobsDefeated[name] || 0) + 1;
+}
+function recordFixedEnemyDefeatForStats(name) {
+  if (!name) return;
+  adventureStatsTracker.fixedEnemiesDefeated[name] = (adventureStatsTracker.fixedEnemiesDefeated[name] || 0) + 1;
+}
+function recordSkillAcquiredForStats(label) {
+  if (!label) return;
+  adventureStatsTracker.skillsAcquired.push(label);
+}
+function recordPromotionForStats(rankName) {
+  if (!rankName) return;
+  adventureStatsTracker.promotions.push(rankName);
+}
+
+// アドベンチャーパートに入る直前に呼ぶ：これまでの集計を一覧表示し、
+// 「会話に進む」が押されたら集計をリセットしてから実際にアドベンチャーパートを開始する
+let adventureStatsSummaryActive = false;
+let adventureStatsSummaryOnProceed = null;
+function showAdventureStatsSummary(onProceed) {
+  adventureStatsSummaryActive = true;
+  adventureStatsSummaryOnProceed = onProceed;
+}
+function proceedFromAdventureStatsSummary() {
+  if (!adventureStatsSummaryActive) return;
+  adventureStatsSummaryActive = false;
+  const onProceed = adventureStatsSummaryOnProceed;
+  adventureStatsSummaryOnProceed = null;
+  resetAdventureStatsTracker();
+  if (onProceed) onProceed();
+}
+
 // 夢フラグ＝前世の関係性が良好・同じ組み合わせで2周目以降・ADV1〜3突入時すべて関係性良好、の全てを満たす場合のみ成立する
 function isDreamFlagEligible() {
   const lastRun = dreamMemorySave.lastRun;
@@ -3719,20 +3772,22 @@ function chooseAdventureOption(choiceIndex) {
 
 // 休日は必ず「同僚と遊ぶ」（アドベンチャーパート）に入る（休息・勉強の選択肢は廃止した）
 function applyRestActivity() {
-  // 万一、既にアドベンチャーパート中／その暗転演出中に二重に呼ばれても、二重に開始しないようにする
-  if (adventureState || setupFadePhase) return;
+  // 万一、既にアドベンチャーパート中／その暗転演出・統計情報画面中に二重に呼ばれても、二重に開始しないようにする
+  if (adventureState || setupFadePhase || adventureStatsSummaryActive) return;
   if (partner.active) {
     // アドベンチャーパート自体がこの日の出来事なので、通常のランダムイベントは発生させず週明けへ進む。
     // ただし、ADV3をノーマルルート（夢ルートではない）で終えた場合は、これが最終日として
     // 特別な「負けイベント」戦闘（第？？？？戦）を経てノーマルエンドへ直行する
-    // アドベンチャーパートに入る前に、一度画面を暗転させてから切り替える
+    // アドベンチャーパートに入る前に、一度画面を暗転させ、これまでの統計情報を確認してから切り替える
     startSetupFadeOut(() => {
-      startPartnerAdventure(() => {
-        if (adventureRunCount === 3 && !dreamRouteCompleted) {
-          startNormalEndBattleSequence();
-        } else {
-          startDayTransition(jumpToNextMondayAndResetWeek);
-        }
+      showAdventureStatsSummary(() => {
+        startPartnerAdventure(() => {
+          if (adventureRunCount === 3 && !dreamRouteCompleted) {
+            startNormalEndBattleSequence();
+          } else {
+            startDayTransition(jumpToNextMondayAndResetWeek);
+          }
+        });
       });
     });
   } else if (partnerLossReason === 'lifespan') {
@@ -3891,6 +3946,7 @@ function defeatEnemyInstantly(enemyIndex) {
   exp += en.type * 5 * specialSkillEffects.expGainMultiplier;
   updateSkillEffects();
   spawnHitSpark(en.x, en.y, true);
+  recordJobDefeatForStats(en.text);
   enemies.splice(enemyIndex, 1);
   weeklyKills++;
   weeklyScoreGained += pts;
@@ -5786,6 +5842,7 @@ function damageEnemyDirectByParry(en) {
     showRandomPartnerSpeechBubbleIfFriendly(partnerThanksLines, '#69f0ae', partnerThanksStressedLines);
     if (Math.random() < partnerThanksRelationshipChance) adjustPartnerRelationship(1);
   }
+  recordJobDefeatForStats(en.text);
   const idx = enemies.indexOf(en);
   if (idx >= 0) enemies.splice(idx, 1);
   weeklyKills++;
@@ -6038,8 +6095,6 @@ canvas.addEventListener('click', (event) => {
     dayTransitionPhase = 'in';
     dayTransitionTimer = dayTransitionDurationMs;
     lastUpdate = Date.now();
-    // 前日中に表示されていた一時メッセージは、翌日の「DAY〇〇」画面には持ち越さず消す
-    messages.length = 0;
     return;
   }
   // 真エンド（同僚生存）限定：現実の日時を表示する画面・クリアメッセージ画面は、クリックで次へ進む
@@ -6130,6 +6185,11 @@ function update() {
     return;
   }
   gameClockMs = now;
+
+  // アドベンチャーパートに入る前の統計情報画面：「会話に進む」が押されるまで、他の一切を停止する
+  if (adventureStatsSummaryActive) {
+    return;
+  }
 
   // セットアップ画面の切り替え演出：暗転しきったら次の画面へ進む（3倍加速の影響を受けない）
   if (setupFadePhase === 'out') {
@@ -6283,6 +6343,8 @@ function update() {
       dayTransitionAdvanceFn = null;
       if (advanceFn) advanceFn();
       if (gameOver || gameClear) return;
+      // 前日中に表示されていた一時メッセージ（イベント結果など）は、翌日の「DAY〇〇」画面には持ち越さず消す
+      messages.length = 0;
       dayTransitionPhase = 'waiting';
     } else if (dayTransitionPhase === 'in' && dayTransitionTimer <= 0) {
       dayTransitionPhase = null;
@@ -7108,6 +7170,7 @@ function update() {
               adjustPartnerRelationship(1);
             }
           }
+          recordJobDefeatForStats(en.text);
           enemies.splice(j, 1);
           weeklyKills++;
           weeklyScoreGained += pts;
@@ -7213,6 +7276,7 @@ function update() {
       score += pts;
       exp += en.type * 5 * specialSkillEffects.expGainMultiplier;
       updateSkillEffects();
+      recordJobDefeatForStats(en.text);
       enemies.splice(j, 1);
       weeklyKills++;
       weeklyScoreGained += pts;
@@ -7276,6 +7340,35 @@ function drawUiButton(x, y, w, h, label, action, options = {}) {
   ctx.fillText(label, x + w / 2, y + h / 2);
   ctx.restore();
   uiButtons.push({ x, y, w, h, action });
+}
+
+// アドベンチャーパートに入る前の統計情報画面：見出し付きのリストを1つ描く共通処理。
+// 行数が多い場合は途中で「……ほかN件」と省略し、次のセクションを描き始めるY座標を返す
+const adventureStatsSectionMaxLines = 8;
+function drawAdventureStatsSection(x, y, title, lines, accentColor) {
+  ctx.textAlign = 'left';
+  ctx.fillStyle = accentColor;
+  ctx.font = 'bold 16px sans-serif';
+  ctx.fillText(title, x, y);
+  ctx.fillStyle = '#eceff1';
+  ctx.font = '13px sans-serif';
+  let ly = y + 22;
+  if (lines.length === 0) {
+    ctx.fillStyle = '#78909c';
+    ctx.fillText('（なし）', x, ly);
+    return ly + 26;
+  }
+  const shown = lines.slice(0, adventureStatsSectionMaxLines);
+  shown.forEach(line => {
+    ctx.fillText(line, x, ly);
+    ly += 18;
+  });
+  if (lines.length > adventureStatsSectionMaxLines) {
+    ctx.fillStyle = '#78909c';
+    ctx.fillText(`……ほか${lines.length - adventureStatsSectionMaxLines}件`, x, ly);
+    ly += 18;
+  }
+  return ly + 8;
 }
 
 // ゲーム終了画面（Game Over / Game Clear）共通の再挑戦・終了ボタン
@@ -8610,6 +8703,50 @@ function draw() {
     return;
   }
 
+  // アドベンチャーパートに入る前に一度だけ表示する統計情報画面：前回のアドベンチャーパートが終わってから
+  // （初回は初日から）今回に入るまでの、昇進・習得スキル・倒した脅威（固定敵）・倒した仕事を一覧表示する。
+  // 「会話に進む」を押すとアドベンチャーパート本編（会話）が始まる
+  if (adventureStatsSummaryActive) {
+    drawSetupBackground();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const upcomingRunNumber = adventureRunCount + 1;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffe082';
+    ctx.font = 'bold 28px sans-serif';
+    ctx.fillText('統計情報', canvas.width / 2, 42);
+    ctx.fillStyle = '#cfd8dc';
+    ctx.font = '15px sans-serif';
+    const periodLabel = upcomingRunNumber === 1
+      ? '（初日から今回のアドベンチャーパートに入るまでの記録）'
+      : `（前回のアドベンチャーパートから、第${upcomingRunNumber}回のアドベンチャーパートに入るまでの記録）`;
+    ctx.fillText(periodLabel, canvas.width / 2, 66);
+    ctx.textAlign = 'left';
+
+    const colLeftX = 50, colRightX = 420;
+    let leftY = 104, rightY = 104;
+
+    leftY = drawAdventureStatsSection(colLeftX, leftY, '■ 昇進の状況',
+      adventureStatsTracker.promotions, '#ffd54f') + 18;
+    const fixedEnemyLines = Object.entries(adventureStatsTracker.fixedEnemiesDefeated)
+      .map(([name, count]) => `${name} ×${count}`);
+    drawAdventureStatsSection(colLeftX, leftY, '■ 倒した脅威（固定敵）', fixedEnemyLines, '#ff8a65');
+
+    rightY = drawAdventureStatsSection(colRightX, rightY, '■ 習得したスキル',
+      adventureStatsTracker.skillsAcquired, '#ce93d8') + 18;
+    const jobEntries = Object.entries(adventureStatsTracker.jobsDefeated);
+    const totalJobsDefeated = jobEntries.reduce((sum, [, count]) => sum + count, 0);
+    const jobLines = jobEntries.map(([name, count]) => `${name} ×${count}`);
+    drawAdventureStatsSection(colRightX, rightY, `■ 倒した仕事（合計 ${totalJobsDefeated} 件）`, jobLines, '#69f0ae');
+
+    const btnW = 240, btnH = 50;
+    drawUiButton(canvas.width / 2 - btnW / 2, canvas.height - 80, btnW, btnH,
+      '会話に進む', proceedFromAdventureStatsSummary,
+      { fillStyle: 'rgba(74, 20, 140, 0.6)', strokeStyle: '#ce93d8', font: 'bold 18px sans-serif' });
+    return;
+  }
+
   // 前回と同じ自機・同僚で始めた時、DAY1が始まる前に挟む短い再会シーン
   // （同僚アイコンが暗くなる演出 → 地の文（1行ずつ）→ 自機のセリフ → 締めの地の文（1行ずつ）、の順に進む）
   if (reunionSceneActive) {
@@ -9074,6 +9211,33 @@ function draw() {
           ctx.lineTo(px, py);
           ctx.stroke();
           prevX = px; prevY = py;
+        }
+      }
+
+      // 鉛筆でぐしゃぐしゃと二重線を引いて打ち消したような、ほぼ水平のランダムな線も、爪痕と同じ色で重ねる
+      const pencilLineCount = 2;
+      for (let p = 0; p < pencilLineCount; p++) {
+        const baseY = titleY - 12 + p * 9 + (titleGlitchPseudoRandom(p * 53 + 7) - 0.5) * 6;
+        const angleDeg = (titleGlitchPseudoRandom(p * 61 + 19) - 0.5) * 8; // ほぼ水平
+        const angle = angleDeg * Math.PI / 180;
+        const startX = targetLeftX - 6 - titleGlitchPseudoRandom(p * 11 + 2) * 4;
+        const length = targetWidth + 12 + titleGlitchPseudoRandom(p * 23 + 9) * 10;
+        const endX = startX + Math.cos(angle) * length;
+        const endY = baseY + Math.sin(angle) * length;
+        const perpAngle = angle + Math.PI / 2;
+        const segs = 10;
+        let prevPX = startX, prevPY = baseY;
+        ctx.lineWidth = 2;
+        for (let s = 1; s <= segs; s++) {
+          const t = s / segs;
+          const jag = (titleGlitchPseudoRandom(p * 97 + s * 17 + 31) - 0.5) * 4;
+          const px = startX + (endX - startX) * t + Math.cos(perpAngle) * jag;
+          const py = baseY + (endY - baseY) * t + Math.sin(perpAngle) * jag;
+          ctx.beginPath();
+          ctx.moveTo(prevPX, prevPY);
+          ctx.lineTo(px, py);
+          ctx.stroke();
+          prevPX = px; prevPY = py;
         }
       }
       ctx.restore();
@@ -10231,10 +10395,6 @@ function draw() {
     }
     ctx.fillStyle = `rgba(0, 0, 0, ${alpha})`;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    // 暗転で隠れてしまった一時メッセージ（イベント結果など）を、タップされるまで読めるよう上から描き直す
-    if (dayTransitionPhase === 'waiting') {
-      drawPendingMessages();
-    }
     if (alpha > 0.6) {
       ctx.fillStyle = `rgba(255, 255, 255, ${dayTransitionPhase === 'waiting' ? 1 : (alpha - 0.6) / 0.4})`;
       ctx.font = '36px sans-serif';
