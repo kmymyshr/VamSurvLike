@@ -602,10 +602,13 @@ function updatePassiveFatigueGain(dt) {
   const energyDrinkMultiplier = energyDrinkBuffTimerMs > 0 ? energyDrinkFatigueGainMultiplier : 1;
   const ratePerHour = getPassiveFatigueRatePerHour(isAutoFiring) *
     specialSkillEffects.firingFatigueMultiplier * energyDrinkMultiplier;
-  applyFatigueGain((ratePerHour / 3600) * dt);
+  // ratePerHourは「ゲーム内1時間あたり」の蓄積量。ゲーム内1時間＝現実hourMs（5000）msなので、
+  // dt（現実の経過秒数）に応じた分だけ蓄積させるには、3600ではなくhourMs / 1000で割る
+  const realSecondsPerGameHour = hourMs / 1000;
+  applyFatigueGain((ratePerHour / realSecondsPerGameHour) * dt);
   if (partner.active) {
     const partnerRatePerHour = getPassiveFatigueRatePerHour(true);
-    partner.fatigue = Math.min(maxFatigue, partner.fatigue + (partnerRatePerHour / 3600) * dt);
+    partner.fatigue = Math.min(maxFatigue, partner.fatigue + (partnerRatePerHour / realSecondsPerGameHour) * dt);
   }
 }
 
