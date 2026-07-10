@@ -133,7 +133,8 @@ const endingListDefs = [
   { id: 'normal3', icon: '🌧️', label: 'END（悪い）', hint: '月末を迎え、同僚との関係性が悪い状態で一区切りをつける' },
   { id: 'bad-san', icon: '🌀', label: 'END（心）', hint: 'SANが0になる' },
   { id: 'bad-lifespan', icon: '⚰️', label: 'END（寿命）', hint: '寿命が0になる' },
-  { id: 'bad-partner-shot', icon: '💔', label: 'END（同僚）', hint: '同僚の誤射でとどめを刺される' }
+  { id: 'bad-partner-shot', icon: '💔', label: 'END（同僚）', hint: '同僚の誤射でとどめを刺される' },
+  { id: 'bad-lonely', icon: '🗂️', label: 'END（孤独）', hint: '同僚がいないまま、第3回のアドベンチャーパートに入るべき日を迎える' }
 ];
 
 function loadDreamMemorySave() {
@@ -1871,9 +1872,13 @@ function answerQuiz(answerIndex) {
   if (Date.now() < quizAnswerUnlockAt) return;
   const correct = answerIndex === quizState.correctIndex;
   if (correct) {
-    adjustPartnerRelationship(5);
-    showMessage('クイズ正解！ IT知識が上昇し、同僚の好感度が上がりました', 2200, '#69f0ae', '22px sans-serif');
-    if (partner.active) showRandomPartnerSpeechBubbleIfFriendly(partnerQuizCorrectLines, '#69f0ae', partnerQuizCorrectStressedLines);
+    if (partner.active) {
+      adjustPartnerRelationship(5);
+      showMessage('クイズ正解！ IT知識が上昇し、同僚の好感度が上がりました', 2200, '#69f0ae', '22px sans-serif');
+      showRandomPartnerSpeechBubbleIfFriendly(partnerQuizCorrectLines, '#69f0ae', partnerQuizCorrectStressedLines);
+    } else {
+      showMessage('ITの知識が向上した！', 2200, '#69f0ae', '22px sans-serif');
+    }
   } else {
     adjustPartnerRelationship(-1);
     showMessage('クイズ不正解…', 2200, '#ef9a9a', '22px sans-serif');
@@ -1937,6 +1942,7 @@ function endWorkday() {
   daysFoughtSinceLastAdventure++;
   if (daysFoughtSinceLastAdventure >= adventurePartDayInterval) {
     daysFoughtSinceLastAdventure = 0;
+    adventureCheckpointCount++;
     if (partner.active) {
       // アドベンチャーパートに入る前に、一度画面を暗転させ、これまでの統計情報を確認してから切り替える
       startSetupFadeOut(() => {
@@ -1955,7 +1961,14 @@ function endWorkday() {
       });
       return;
     }
-    // 同僚がいない（不在・離脱済み）場合は、アドベンチャーパートを挟まずそのまま翌日へ進む
+    // 同僚がいない（未選択・離脱済み）場合は、アドベンチャーパートを挟まずそのまま翌日へ進む。
+    // ただし、第3回目のアドベンチャーパートに入るべきタイミングを同僚不在のまま迎えた場合は、孤独ENDへ至る
+    if (adventureCheckpointCount >= adventureCheckpointCountForLonelyEnd) {
+      gameOver = true;
+      endingType = 'bad-lonely';
+      sendScore(score);
+      return;
+    }
   }
   // 週の最終稼働日なら週次ノルマを判定し、それ以外は自動的に翌日へ進む
   if (isWeekEndDay(currentDate)) {
@@ -3654,6 +3667,11 @@ function getRelationshipCategory(relationship) {
 // この日数に達するたびに、その日の終業時に発生する
 const adventurePartDayInterval = 5;
 let daysFoughtSinceLastAdventure = 0;
+// 同僚が不在（未選択・離脱済み）の間は、上の判定タイミングが来てもアドベンチャーパートには入らない。
+// その代わり、この判定タイミングを迎えた回数（アドベンチャーパートが実際に発生したかどうかに関わらず数える）を数えておき、
+// 第3回目のアドベンチャーパートに入るべきタイミングでも同僚が不在のままなら、孤独ENDへ至る
+let adventureCheckpointCount = 0;
+const adventureCheckpointCountForLonelyEnd = 3;
 
 // ===== アドベンチャーパートの分岐状態（エンディング分岐は、好感度とアドベンチャーの選択肢だけで決まる） =====
 let adventureRunCount = 0; // 「同僚と遊ぶ」を選んだ回数（ADV1・ADV2・ADV3・それ以降）
@@ -4630,6 +4648,7 @@ let bossEncounterChoiceActive = false; // 「名状しがたきものの気配�
 let bossEncounterConfirmActive = false; // 「本当に現実を直視しますか？」の再確認を表示中
 
 // 「現実から目をそらす」：自分・同僚ともSANを回復し、ラスボスの発生を見送る
+// （この選択肢自体、同僚が離脱している間は発生しないため、常に同僚も在籍している前提でよい）
 function chooseBossEncounterAvoid() {
   san = Math.min(maxSan, san + bossEncounterAvoidSanRecovery);
   partner.san = Math.min(maxSan, partner.san + bossEncounterAvoidSanRecovery);
@@ -7762,6 +7781,15 @@ const endingConfig = {
     description: [
       '同僚の一撃が、最後の引き金になってしまった。',
       'どこかで関係性を誤ってしまったのだろうか。'
+    ]
+  },
+  'bad-lonely': {
+    icon: '🗂️',
+    label: 'END',
+    labelColor: '#90a4ae',
+    bgColor: 'rgba(10, 10, 10, 0.92)',
+    description: [
+      '（仮）誰かと言葉を交わすこともなく、ただひたすらに仕事をした。',
     ]
   }
 };
