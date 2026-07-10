@@ -374,8 +374,8 @@ function spawnSynergyBeam(x1, y1, x2, y2) {
 // ===== 同僚弾を弾き返した瞬間の「カキーン」エフェクト =====
 const deflectEffects = [];
 const deflectEffectDurationMs = 300;
-function spawnDeflectEffect(x, y) {
-  deflectEffects.push({ x, y, timer: deflectEffectDurationMs });
+function spawnDeflectEffect(x, y, isAuto = false) {
+  deflectEffects.push({ x, y, timer: deflectEffectDurationMs, isAuto });
 }
 
 // ===== パリィを振った瞬間の、剣で切ったような扇状のワイプエフェクト =====
@@ -1583,7 +1583,6 @@ function finishLunchAtDayEnd() {
 const quizHours = [10, 15];
 const quizChancePerOpportunity = 0.3; // 従来比150%
 const maxWeeklyQuizCount = 2;
-const quizAnswerRadius = 23;
 const quizAnswerLockDurationMs = 1500; // 出現直後に誤って踏んで回答してしまわないための猶予時間
 const quizTimeLimitMs = 10000; // 出現から回答しないまま消えるまでの実時間（3倍加速の影響を受けない）
 let weeklyQuizCount = 0;
@@ -1659,39 +1658,23 @@ function startQuizEvent() {
   // 正解位置が固定化しないよう選択肢を並べ替える
   const shuffled = source.choices.map((text, index) => ({ text, correct: index === source.correct }))
     .sort(() => Math.random() - 0.5);
-  const answerTokens = [];
-  shuffled.forEach((choice, index) => {
-    let position;
-    let attempts = 0;
-    do {
-      position = getRandomEventPosition(quizAnswerRadius);
-      attempts++;
-    } while (attempts < 20 && answerTokens.some(token =>
-      Math.hypot(token.x - position.x, token.y - position.y) < 90));
-    answerTokens.push({
-      ...position,
-      radius: quizAnswerRadius,
-      number: index + 1,
-      correct: choice.correct
-    });
-  });
   quizState = {
     category: source.category,
     text: source.text,
     choices: shuffled.map(choice => choice.text),
-    answerTokens
+    correctIndex: shuffled.findIndex(choice => choice.correct)
   };
   weeklyQuizCount++;
   quizAnswerUnlockAt = Date.now() + quizAnswerLockDurationMs;
   quizExpireAt = Date.now() + quizTimeLimitMs;
-  showMessage('突発クイズ！ マップ上の番号を取って回答', 2800, '#90caf9', '22px sans-serif');
+  showMessage('突発クイズ！ ①②③のボタンをタップして回答', 2800, '#90caf9', '22px sans-serif');
 }
 
 function answerQuiz(answerIndex) {
   if (!quizState) return;
-  const answer = quizState.answerTokens[answerIndex];
-  if (!answer) return;
-  if (answer.correct) {
+  if (Date.now() < quizAnswerUnlockAt) return;
+  const correct = answerIndex === quizState.correctIndex;
+  if (correct) {
     adjustPartnerRelationship(5);
     showMessage('クイズ正解！ IT知識が上昇し、同僚の好感度が上がりました', 2200, '#69f0ae', '22px sans-serif');
     if (partner.active) showRandomPartnerSpeechBubbleIfFriendly(partnerQuizCorrectLines, '#69f0ae', partnerQuizCorrectStressedLines);
@@ -4037,7 +4020,7 @@ function findNearestEnemyToPlayer() {
 
 // パリィで弾いた弾を、指定した地点から見て最も近い敵へ向け直し、ダメージを2倍にする共通処理
 const parryBulletSpeedMultiplier = 1.5; // パリィした弾は、パリィ前の速度の150%になる
-function performBulletParry(bullet, fromX, fromY, actorAngle) {
+function performBulletParry(bullet, fromX, fromY, actorAngle, isAuto = false) {
   const speed = (Math.hypot(bullet.vx, bullet.vy) || 6) * parryBulletSpeedMultiplier;
   let angle;
   if (bullet.stage3Reflected) {
@@ -4080,7 +4063,7 @@ function performBulletParry(bullet, fromX, fromY, actorAngle) {
   // 同僚・自機どちらにも当たり判定を持たせず素通りさせ、敵にだけ通常の2倍のダメージを与える
   bullet.owner = 'deflected';
   bullet.damage = Math.max(1, Math.round((bullet.damage || 1) * deflectDamageMultiplier));
-  spawnDeflectEffect(bullet.x, bullet.y);
+  spawnDeflectEffect(bullet.x, bullet.y, isAuto);
 }
 
 // ===== ラスボス（自機・同僚のSANが同時に20を切ると出現する、名状しがたい巨大な敵） =====
@@ -5530,7 +5513,7 @@ function computeFullAutoDodgeVector(dt) {
   return { x: vx / len, y: vy / len };
 }
 
-// 優先度3〜6：食事（近い順）→チョコレート→ファイヤーウォール→クイズの回答（ランダムに選んだもの）の順で、拾いに行く対象を返す
+// 優先度3〜5：食事（近い順）→チョコレート→ファイヤーウォールの順で、拾いに行く対象を返す
 function findFullAutoSeekTarget() {
   if (lunchState && lunchState.items.length > 0) {
     return lunchState.items.reduce((closest, item) => {
@@ -5543,15 +5526,6 @@ function findFullAutoSeekTarget() {
   }
   if (heartWall && heartWall.landed) {
     return { x: heartWall.x, y: heartWall.y };
-  }
-  if (quizState && Date.now() >= quizAnswerUnlockAt && quizState.answerTokens.length > 0) {
-    if (fullAutoQuizChoiceIndex === null || fullAutoQuizChoiceIndex >= quizState.answerTokens.length) {
-      fullAutoQuizChoiceIndex = Math.floor(Math.random() * quizState.answerTokens.length);
-    }
-    const token = quizState.answerTokens[fullAutoQuizChoiceIndex];
-    if (token) return { x: token.x, y: token.y };
-  } else {
-    fullAutoQuizChoiceIndex = null;
   }
   return null;
 }
@@ -5576,8 +5550,8 @@ function computeFullAutoEnemyAvoidanceVector() {
 
 // 完全オートモード中の移動方向（-1〜1に正規化済み）を、優先度順に1つだけ選んで決める
 // （複数の意図を混ぜず、優先度が高いものだけに従うことで振動を防ぐ）
-// 優先度1: 同僚弾の回避 → 優先度2: 近い敵からの回避 → 優先度3〜6: 食事・チョコレート・ファイヤーウォール・クイズ
-// → 優先度7: 同僚との距離を置く
+// 優先度1: 同僚弾の回避 → 優先度2: 近い敵からの回避 → 優先度3〜5: 食事・チョコレート・ファイヤーウォール
+// → 優先度6: 同僚との距離を置く
 // 敵の反発がほぼ打ち消し合って板挟みになった時、振動せずランダムな方向へ抜け出すための状態
 const fullAutoStuckVectorThreshold = 0.15; // 合成ベクトルの大きさがこれ未満なら「板挟み」とみなす
 const fullAutoEscapeDurationMs = 500; // 一度ランダムな方向へ逃げ始めたら、この間は同じ方向を保つ
@@ -5619,7 +5593,7 @@ function computeFullAutoMoveVector(dt) {
   }
   fullAutoEscapeTimerMs = 0;
 
-  // 優先度3〜6：避けるべきものがなければ、食事・チョコレート・ファイヤーウォール・クイズの順で拾いに行く
+  // 優先度3〜5：避けるべきものがなければ、食事・チョコレート・ファイヤーウォールの順で拾いに行く
   const seekTarget = findFullAutoSeekTarget();
   if (seekTarget) {
     const dx = seekTarget.x - player.x;
@@ -6253,15 +6227,14 @@ function update() {
     if (partner.active) showRandomPartnerSpeechBubble(partnerQuizTimeoutLines, '#ffb74d');
   }
 
-  // マップ上の番号アイコンへ触れるとクイズへ回答する（出現直後の誤回答を防ぐため、少しの間は反応しない）
-  if (quizState && Date.now() >= quizAnswerUnlockAt) {
-    for (let i = quizState.answerTokens.length - 1; i >= 0; i--) {
-      const token = quizState.answerTokens[i];
-      if (Math.hypot(player.x - token.x, player.y - token.y) <= player.radius + token.radius) {
-        answerQuiz(i);
-        break;
-      }
+  // 完全オートモード中は、出現から少し待ってから①②③のいずれかをランダムに選んで自動回答する
+  if (quizState && fullAutoModeEnabled && Date.now() >= quizAnswerUnlockAt) {
+    if (fullAutoQuizChoiceIndex === null || fullAutoQuizChoiceIndex >= quizState.choices.length) {
+      fullAutoQuizChoiceIndex = Math.floor(Math.random() * quizState.choices.length);
     }
+    answerQuiz(fullAutoQuizChoiceIndex);
+  } else if (!quizState) {
+    fullAutoQuizChoiceIndex = null;
   }
 
   if (stunned) {
@@ -6516,7 +6489,7 @@ function update() {
         Math.hypot(b.x - player.x, b.y - player.y) <= deflectRange + b.radius) {
       b.autoParryChecked = true;
       if (Math.random() < specialSkillEffects.autoParryChance) {
-        performBulletParry(b, player.x, player.y, player.angle);
+        performBulletParry(b, player.x, player.y, player.angle, true);
         spawnSlashEffect(player.x, player.y, player.angle, player.radius);
         showMessage('オートパリィ発動！', 1400, '#fff176');
         continue;
@@ -6533,7 +6506,7 @@ function update() {
         ? Math.min(1, partnerBulletParryChance * 2)
         : partnerBulletParryChance;
       if (Math.random() < effectivePartnerParryChance) {
-        performBulletParry(b, partner.x, partner.y, partner.angle);
+        performBulletParry(b, partner.x, partner.y, partner.angle, true);
         spawnSlashEffect(partner.x, partner.y, partner.angle, partner.radius);
         showMessage('同僚がパリィ！', 1400, '#80deea');
         showRandomPartnerSpeechBubbleIfFriendly(partnerParryLines, '#80deea');
@@ -6568,7 +6541,7 @@ function update() {
       // 特殊スキル「チームワーク」：自分と同僚の誤射に限り、パリィ発動率が高くなる
       // （「オートパリィ」は敵からの弾に対してのみ発動するため、ここでは対象外）
       if (Math.random() < specialSkillEffects.teamworkParryChance) {
-        performBulletParry(b, player.x, player.y, player.angle);
+        performBulletParry(b, player.x, player.y, player.angle, true);
         spawnSlashEffect(player.x, player.y, player.angle, player.radius);
         showMessage('パリィ成功！', 1400, '#fff176');
         continue;
@@ -6581,7 +6554,7 @@ function update() {
         Math.hypot(b.x - partner.x, b.y - partner.y) <= b.radius + partner.radius) {
       // 同僚のオートパリィ（デフォルト30%、夢の記憶ポイントで最大100%まで強化可能）
       if (Math.random() < partnerParryChance) {
-        performBulletParry(b, partner.x, partner.y, partner.angle);
+        performBulletParry(b, partner.x, partner.y, partner.angle, true);
         spawnSlashEffect(partner.x, partner.y, partner.angle, partner.radius);
         showMessage('同僚がパリィ！', 1400, '#80deea');
         showRandomPartnerSpeechBubbleIfFriendly(partnerParryLines, '#80deea');
@@ -6594,7 +6567,7 @@ function update() {
         Math.hypot(b.x - player.x, b.y - player.y) <= b.radius + player.radius) {
       // 特殊スキル「オートパリィ」：ラスボス弾に対しても被弾しそうな瞬間に自動でパリィする
       if (Math.random() < specialSkillEffects.autoParryChance) {
-        performBulletParry(b, player.x, player.y, player.angle);
+        performBulletParry(b, player.x, player.y, player.angle, true);
         spawnSlashEffect(player.x, player.y, player.angle, player.radius);
         showMessage('オートパリィ発動！', 1400, '#fff176');
         continue;
@@ -6607,7 +6580,7 @@ function update() {
         Math.hypot(b.x - partner.x, b.y - partner.y) <= b.radius + partner.radius) {
       // 同僚のオートパリィ（「巨大案件」の弾に対しても同じ確率で発動する）
       if (Math.random() < partnerParryChance) {
-        performBulletParry(b, partner.x, partner.y, partner.angle);
+        performBulletParry(b, partner.x, partner.y, partner.angle, true);
         spawnSlashEffect(partner.x, partner.y, partner.angle, partner.radius);
         showMessage('同僚がパリィ！', 1400, '#80deea');
         showRandomPartnerSpeechBubbleIfFriendly(partnerParryLines, '#80deea');
@@ -6620,7 +6593,7 @@ function update() {
         Math.hypot(b.x - player.x, b.y - player.y) <= b.radius + player.radius) {
       // 特殊スキル「オートパリィ」：「巨大案件」の弾に対しても同様に自動でパリィする
       if (Math.random() < specialSkillEffects.autoParryChance) {
-        performBulletParry(b, player.x, player.y, player.angle);
+        performBulletParry(b, player.x, player.y, player.angle, true);
         spawnSlashEffect(player.x, player.y, player.angle, player.radius);
         showMessage('オートパリィ発動！', 1400, '#fff176');
         continue;
@@ -6633,7 +6606,7 @@ function update() {
         Math.hypot(b.x - partner.x, b.y - partner.y) <= b.radius + partner.radius) {
       // なりすまし・中間者攻撃：自機の弾に見せかけて同僚を狙う。同僚のオートパリィも同確率で発動する
       if (Math.random() < partnerParryChance) {
-        performBulletParry(b, partner.x, partner.y, partner.angle);
+        performBulletParry(b, partner.x, partner.y, partner.angle, true);
         spawnSlashEffect(partner.x, partner.y, partner.angle, partner.radius);
         showMessage('同僚がパリィ！', 1400, '#80deea');
         showRandomPartnerSpeechBubbleIfFriendly(partnerParryLines, '#80deea');
@@ -6647,7 +6620,7 @@ function update() {
         Math.hypot(b.x - player.x, b.y - player.y) <= b.radius + player.radius) {
       // 特殊スキル「オートパリィ」：固定敵の弾に対しても同様に自動でパリィする
       if (Math.random() < specialSkillEffects.autoParryChance) {
-        performBulletParry(b, player.x, player.y, player.angle);
+        performBulletParry(b, player.x, player.y, player.angle, true);
         spawnSlashEffect(player.x, player.y, player.angle, player.radius);
         showMessage('オートパリィ発動！', 1400, '#fff176');
         continue;
@@ -8867,9 +8840,9 @@ function draw() {
     const radius = 10 + 22 * progress;
     ctx.save();
     ctx.globalAlpha = alpha;
-    ctx.strokeStyle = '#fff176';
+    ctx.strokeStyle = effect.isAuto ? '#80deea' : '#fff176';
     ctx.lineWidth = 3;
-    ctx.shadowColor = '#ffd54f';
+    ctx.shadowColor = effect.isAuto ? '#4dd0e1' : '#ffd54f';
     ctx.shadowBlur = 10;
     for (let i = 0; i < 6; i++) {
       const angle = (Math.PI / 3) * i + Math.PI / 6;
@@ -9229,53 +9202,46 @@ function draw() {
     }
   }
 
-  // クイズ回答用の番号アイコンと設問
+  // クイズの設問と、①②③のタップ回答ボタン
   if (quizState) {
     const quizAnswerLocked = Date.now() < quizAnswerUnlockAt;
-    const numberIcons = ['1️⃣', '2️⃣', '3️⃣'];
-    for (const token of quizState.answerTokens) {
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(token.x, token.y, token.radius, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(66, 165, 245, 0.3)';
-      ctx.fill();
-      ctx.strokeStyle = '#90caf9';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      ctx.font = '31px "Segoe UI Emoji", sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(numberIcons[token.number - 1], token.x, token.y);
-      ctx.restore();
-
-      // 出現直後は、点滅する矢印で選択肢の位置を知らせるだけにして誤って踏まないようにする
-      if (quizAnswerLocked && Math.floor(Date.now() / 250) % 2 === 0) {
-        ctx.save();
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'alphabetic';
-        ctx.font = 'bold 26px sans-serif';
-        ctx.fillStyle = '#fff59d';
-        ctx.fillText('↓', token.x, token.y - token.radius - 10);
-        ctx.restore();
-      }
-    }
+    const numberGlyphs = ['①', '②', '③'];
+    const panelX = 400, panelY = 45, panelW = 388;
+    const choiceBtnH = 34, choiceBtnGap = 8;
+    const choiceAreaTop = panelY + 46;
+    const panelH = 46 + quizState.choices.length * (choiceBtnH + choiceBtnGap);
 
     ctx.save();
     ctx.fillStyle = 'rgba(8, 18, 35, 0.86)';
-    ctx.fillRect(400, 45, 388, 112);
+    ctx.fillRect(panelX, panelY, panelW, panelH);
     ctx.strokeStyle = '#64b5f6';
-    ctx.strokeRect(400, 45, 388, 112);
+    ctx.strokeRect(panelX, panelY, panelW, panelH);
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
     ctx.fillStyle = '#bbdefb';
     ctx.font = 'bold 14px sans-serif';
-    ctx.fillText(`QUIZ: ${quizState.text}`, 412, 66);
-    ctx.font = '12px sans-serif';
-    ctx.fillStyle = 'white';
-    quizState.choices.forEach((choice, index) => {
-      ctx.fillText(`${index + 1}. ${choice}`, 416, 88 + index * 22);
-    });
+    ctx.fillText(`QUIZ: ${quizState.text}`, panelX + 12, panelY + 22);
     ctx.restore();
+
+    quizState.choices.forEach((choice, index) => {
+      const by = choiceAreaTop + index * (choiceBtnH + choiceBtnGap);
+      drawUiButton(panelX + 10, by, panelW - 20, choiceBtnH, `${numberGlyphs[index]} ${choice}`,
+        () => answerQuiz(index),
+        quizAnswerLocked
+          ? { fillStyle: 'rgba(60, 60, 60, 0.5)', strokeStyle: '#78909c', font: 'bold 13px sans-serif', textColor: '#b0bec5' }
+          : { fillStyle: 'rgba(66, 165, 245, 0.35)', strokeStyle: '#90caf9', font: 'bold 13px sans-serif', textColor: 'white' });
+    });
+
+    // 出現直後は少しの間、タップしても回答にならない旨を示す
+    if (quizAnswerLocked) {
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.fillStyle = '#fff59d';
+      ctx.fillText('まもなく回答できます…', panelX + panelW / 2, panelY + panelH + 16);
+      ctx.textAlign = 'left';
+      ctx.restore();
+    }
   }
 
   // ここまでの前景要素の影を解除する（HUDパネル等には不要なため）
