@@ -514,6 +514,23 @@ function resetAllProgressAndReload() {
   location.reload();
 }
 
+// デバッグ用「Waking Nightmare」ボタン：ランダムな自機・同僚が関係性100の状態で
+// いずれかのノーマルエンドを経た直後、という状態を疑似的に作り出す。
+// 通常のノーマルエンド到達時と異なり、エンディングリストへの記録（クリア済扱い）は一切行わない
+function triggerWakingNightmareDebug() {
+  const genderId = genderChoices[Math.floor(Math.random() * genderChoices.length)].id;
+  const partnerIcon = partnerIconChoices[Math.floor(Math.random() * partnerIconChoices.length)];
+  dreamMemorySave.lastRun = {
+    playerGender: genderId,
+    partnerIcon: partnerIcon,
+    relationship: 100,
+    endingType: 'normal1',
+    viaAdv3NormalEnd: true
+  };
+  saveDreamMemorySave();
+  location.reload();
+}
+
 // ===== アイコン選択後のひとことメッセージ演出（表示→フェードアウトして次の画面へ） =====
 const playerIconGreetingLines = [
   '今日も一つずつ覚えていこう！',
@@ -9568,6 +9585,10 @@ function draw() {
     // 左上に小さく、全ての引き継ぎ状態をリセットするボタンを配置する
     drawUiButton(10, 10, 74, 24, 'リセット', () => { titleResetConfirmActive = true; },
       { fillStyle: 'rgba(60, 20, 20, 0.55)', strokeStyle: '#ef9a9a', font: 'bold 12px sans-serif' });
+    // 右上に小さく、デバッグ用の「Waking Nightmare」ボタンを配置する
+    // （ランダムな自機・同僚・関係性100・ノーマルエンド直後、という状態を疑似的に作るだけで、エンディング記録には残さない）
+    drawUiButton(canvas.width - 10 - 130, 10, 130, 24, 'Waking Nightmare', triggerWakingNightmareDebug,
+      { fillStyle: 'rgba(20, 20, 60, 0.55)', strokeStyle: '#9fa8da', font: 'bold 11px sans-serif' });
     // after_normalEND使用時は、タイトル画面の文字をすべて明朝体系フォントにし、彩度・明度を少し落とした配色にする
     const useMinchoTitle = shouldShowAfterNormalEndTitleBackground();
     const titleFontFamily = useMinchoTitle
