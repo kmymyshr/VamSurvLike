@@ -5410,8 +5410,9 @@ function attemptDeflectPartnerBullet() {
     const d = Math.hypot(b.x - player.x, b.y - player.y);
     return d <= deflectRange + b.radius;
   });
-  // パリィの効果範囲に本体が重なっている敵は、弾の有無に関わらず直接攻撃の対象にする
-  const meleeTargets = enemies.filter(en => Math.hypot(en.x - player.x, en.y - player.y) <= deflectRange + en.radius);
+  // パリィの効果範囲に本体が重なっている敵は、弾の有無に関わらず直接攻撃の対象にする。
+  // 同僚（partner）はenemies配列に含まれないため、直接攻撃の対象には含まれない（同僚弾のはじき返しのみ引き続き有効）
+  const meleeTargets = enemies.filter(en => en !== partner && Math.hypot(en.x - player.x, en.y - player.y) <= deflectRange + en.radius);
   if (targets.length === 0 && meleeTargets.length === 0) return;
 
   // パリィ（弾のはじき返し、または直接攻撃）に成功した時だけ、脳疲労が1蓄積する
