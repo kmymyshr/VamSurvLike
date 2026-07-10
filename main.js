@@ -92,7 +92,7 @@ const dreamMemoryUpgradeDefs = [
   },
   {
     id: 'prayerGuard', label: '祈る',
-    describeLevel: () => 'SANが0になるダメージを受けてもSAN1で耐え、SAN20まで回復する。回復後5秒間はSANが減らない',
+    describeLevel: () => 'SANが0になるダメージでもSAN1で耐え、SAN20まで回復する。回復後5秒間はSANが減らない',
     maxLevel: 1
   },
   {
@@ -114,12 +114,12 @@ function dreamMemoryUpgradeCost(currentLevel) {
 
 // ===== エンディングリスト（タイトル画面から確認できる、到達済みエンディングの一覧） =====
 const endingListDefs = [
-  { id: 'true1', icon: '👁️', label: '目覚めエンド', hint: 'ラスボスを撃破し、同僚が生存している状態で終える' },
-  { id: 'true2', icon: '🖤', label: '再び悪夢エンド', hint: 'ラスボスを撃破するが、同僚を失っている' },
-  { id: 'true', icon: '🌟', label: 'TRUE END', hint: 'ランク7に到達し、特殊な選択を全て正しく行い、同僚を失わずに完走する' },
-  { id: 'normal1', icon: '🌤️', label: 'NORMAL END（良好）', hint: '月末を迎え、同僚との関係性が良好な状態で一区切りをつける' },
-  { id: 'normal2', icon: '🏁', label: 'NORMAL END（普通）', hint: '月末を迎え、同僚との関係性が普通の状態で一区切りをつける' },
-  { id: 'normal3', icon: '🌧️', label: 'NORMAL END（悪い）', hint: '月末を迎え、同僚との関係性が悪い状態で一区切りをつける' },
+  { id: 'true1', icon: '👁️', label: '目覚めエンド', hint: '？？？を撃破し、同僚が生存している状態で終える' },
+  { id: 'true2', icon: '🖤', label: '再び悪夢エンド', hint: '？？？を撃破するが、同僚を失っている' },
+  { id: 'true', icon: '🌟', label: 'END', hint: 'ランク7に到達し、特殊な選択を全て正しく行い、同僚を失わずに完走する' },
+  { id: 'normal1', icon: '🌤️', label: 'END（良好）', hint: '月末を迎え、同僚との関係性が良好な状態で一区切りをつける' },
+  { id: 'normal2', icon: '🏁', label: 'END（普通）', hint: '月末を迎え、同僚との関係性が普通の状態で一区切りをつける' },
+  { id: 'normal3', icon: '🌧️', label: 'END（悪い）', hint: '月末を迎え、同僚との関係性が悪い状態で一区切りをつける' },
   { id: 'bad-san', icon: '🌀', label: 'END（心）', hint: 'SANが0になる' },
   { id: 'bad-lifespan', icon: '⚰️', label: 'END（寿命）', hint: '寿命が0になる' },
   { id: 'bad-partner-shot', icon: '💔', label: 'END（同僚）', hint: '同僚の誤射でとどめを刺される' }
@@ -271,7 +271,7 @@ function spawnEnemyOffscreen() {
 // ===== 敵の種類と能力値 =====
 // 敵の名前を弱い順から強い順に並べる
 const enemyTypeNames = [
-  '問い合わせ対応',
+  '問合せ対応',
   '軽微な修正依頼',
   '改善要望',
   '仕様変更対応',
@@ -440,20 +440,22 @@ function resetAllProgressAndReload() {
 
 // ===== アイコン選択後のひとことメッセージ演出（表示→フェードアウトして次の画面へ） =====
 const playerIconGreetingLines = [
-  'よし、今日も気合入れていくぞ！',
-  '負けてられない、やってやるぞ！',
-  '今日も一日、全力でいこう！'
+  '今日も一つずつ覚えていこう！'
+  '焦らず、素直に聞いていこう！'
+  '今日も前向きに一歩進もう！'
+  '確認しながら丁寧にやろう！'
+  '元気に挨拶して、学んでいこう！'
 ];
 // 同僚アイコンの性別に応じて、口調の異なる「はじめまして」を含む挨拶からランダムで選ぶ
 const partnerIconGreetingLinesFemale = [
   'はじめまして。よろしくお願いします、一緒に頑張りましょうね！',
-  'はじめまして！至らないところもあると思いますが、どうぞよろしくお願いします！',
+  'はじめまして！どうぞよろしくお願いします！',
   'はじめまして。精一杯がんばりますね！'
 ];
 const partnerIconGreetingLinesMale = [
   'はじめまして。よろしく頼む、一緒に頑張ろう！',
-  'はじめまして！俺も気合入れていくから、よろしくな！',
-  'はじめまして。頼りにしてくれ、全力でサポートするぞ！'
+  'はじめまして！気合入れていくから、よろしくな！',
+  'はじめまして。全力でサポートするぞ！'
 ];
 const iconGreetingHoldMs = 1400; // 全文表示後、フェードアウトを始めるまで待つ時間
 const iconGreetingFadeMs = 500; // フェードアウトにかける時間
@@ -816,9 +818,9 @@ function triggerCaffeineCollapse() {
   if (partner.active) partner.san = Math.max(0, Math.floor(partner.san / 2));
   checkVitalsGameOver();
   showAcknowledgementNotice(
-    'カフェインの摂り過ぎで倒れてしまった…',
+    'カフェインの摂り過ぎで倒れた…',
     '#ff8a65',
-    '丸一日、休むことになった。寿命・SANが半分に、同僚のSANも半分になってしまった。',
+    '丸一日、休むことになった。（寿命・SAN低下）',
     () => { if (!gameOver && !deathSequence) skipCollapseRestDay(); }
   );
 }
@@ -1691,7 +1693,7 @@ function collectLunchItem(itemIndex) {
     partner.lifespan = Math.min(maxLifespan, partner.lifespan + 4 * bonusMultiplier * lunchPartnerShareRatio);
     partner.fatigue = Math.max(0, partner.fatigue - 15 * bonusMultiplier * lunchPartnerShareRatio);
     showMessage(
-      lunchState.orderMistake ? '昼食完了。順番違いでボーナス半減' : '昼食を順番どおり完食！ フルボーナス',
+      lunchState.orderMistake ? '昼食完了。' : '昼食を順番どおり完食！ フルボーナス',
       3000,
       lunchState.orderMistake ? '#ffb74d' : '#69f0ae',
       '22px sans-serif'
@@ -1827,7 +1829,7 @@ function processTimedHourEvents(previousHour, newHour) {
   const lastEventHour = Math.min(newHour, dayEndHour);
   for (let hour = previousHour + 1; hour <= lastEventHour; hour++) {
     if (hour === lunchWarningHour) {
-      showMessage('もうすぐ12時。昼食の順番を覚える準備をしよう', 3000, '#ffe082', '21px sans-serif');
+      showMessage('もうすぐ12時。', 3000, '#ffe082', '21px sans-serif');
     }
     if (hour === lunchHour) startLunchEvent();
     if (hour === lunchExpirationHour) beginLunchExpiration();
@@ -1854,8 +1856,14 @@ function resolveTimedSystemsAtDayEnd() {
   fixedEnemyOvertimeConfirmed = false;
 }
 
+// endWorkdayは複数の経路（終業時刻の通常判定・定時報告解決・大規模プロジェクト撃破・
+// 固定敵の残業確認など）から呼ばれ得るため、同じ日について二重に実行されないよう防ぐ
+let lastEndWorkdayForDay = -1;
+
 // 一日の終了処理（終業時刻・残業の限界時刻・定時報告を残業中に片付けた場合のいずれからも呼ばれる）
 function endWorkday() {
+  if (lastEndWorkdayForDay === dayNumber) return;
+  lastEndWorkdayForDay = dayNumber;
   resolveTimedSystemsAtDayEnd();
   if (gameOver || deathSequence) return;
   // 一日の終わりに、同僚との関係性が少し回復する
@@ -2045,41 +2053,43 @@ const reunionSceneIntroLines = [
   '同僚は何も覚えていない。',
   'だから主人公は、ただ静かに名刺を差し出す。'
 ];
+// 各段階の「line」は、地の文（reunionSceneIntroLines）を全て表示し終えた後に見せる自機のセリフ。
+// 「paragraph」は、そのセリフの後に続けて1行ずつ表示する締めの地の文（tierごとに内容が異なる）
 const reunionSceneTiers = {
   1: { // とても良い関係（関係性80〜100）＝前世での好感度：良好
     line: '「はじめまして」',
-    paragraph: reunionSceneIntroLines.concat([
+    paragraph: [
       '口にした瞬間、胸が痛んだ。',
       '君をまた失う未来だけは、もう繰り返したくない。'
-    ])
+    ]
   },
   2: { // 良い関係（関係性60〜79）＝前世での好感度：良好
     line: '「はじめまして」',
-    paragraph: reunionSceneIntroLines.concat([
+    paragraph: [
       '口にした瞬間、胸が痛んだ。',
       '君をまた失う未来だけは、もう繰り返したくない。'
-    ])
+    ]
   },
   3: { // 普通の関係（関係性40〜59）＝前世での好感度：普通
     line: '「はじめまして」',
-    paragraph: reunionSceneIntroLines.concat([
+    paragraph: [
       'と笑った。けれど{player}は知っている。',
       '君と{player}は、あの黒い夜を一度だけ共有している。'
-    ])
+    ]
   },
   4: { // 悪い関係（関係性0〜39）＝前世での好感度：悪い
     line: '「はじめまして」',
-    paragraph: reunionSceneIntroLines.concat([
+    paragraph: [
       'と言う声が少し濁った。',
       '最後までわかり合えなかった君と、また隣になるなんて。'
-    ])
+    ]
   },
   5: { // とても悪い関係（関係性20以下、かつ前回同僚の攻撃でENDになった場合）＝前世での好感度：悪い
     line: '「はじめまして」',
-    paragraph: reunionSceneIntroLines.concat([
+    paragraph: [
       'と言う声が少し濁った。',
       '最後までわかり合えなかった君と、また隣になるなんて。'
-    ])
+    ]
   }
 };
 
@@ -2120,22 +2130,34 @@ function shouldShowReunionScene() {
 }
 
 let reunionSceneActive = false;
-// 'dim'（同僚アイコンが関係性に応じて輝く／暗く沈む演出）→ 'line'（自機のセリフ、1文字ずつ表示）→ 'paragraph'（地の文）の順に進む
+// 'dim'（同僚アイコンが関係性に応じて輝く／暗く沈む演出）→ 'intro'（地の文を1行ずつ表示）
+// → 'line'（自機のセリフ）→ 'paragraph'（締めの地の文を1行ずつ表示）の順に進む
 let reunionScenePhase = null;
 const reunionSceneDimDurationMs = 2000; // アイコンの演出（輝き／暗転）がかかりきるまでの時間
 let reunionSceneDimTimer = 0;
 let reunionSceneToneDirection = 'none'; // 'bright' / 'none' / 'dark'
 let reunionSceneToneIntensity = 0;
-let reunionSceneLine = '';
-let reunionSceneLineRevealedCount = 0; // 'line'フェーズ中、セリフを何文字目まで表示しているか
-let reunionSceneLineTypeTimerMs = 0;
-let reunionSceneParagraph = [];
+let reunionSceneTierLine = ''; // tierごとの自機のセリフ（'line'フェーズで表示）
+let reunionSceneTierParagraph = []; // tierごとの締めの地の文（'paragraph'フェーズで1行ずつ表示）
+let reunionSceneIntroIndex = 0; // 'intro'フェーズ中、reunionSceneIntroLinesの何行目を表示しているか
+let reunionSceneParagraphIndex = 0; // 'paragraph'フェーズ中、reunionSceneTierParagraphの何行目を表示しているか
+// 現在画面に表示している1行分のテキストと、その何文字目まで表示し終えたか（タイプライター演出）
+let reunionSceneCurrentText = '';
+let reunionSceneCurrentRevealedCount = 0;
+let reunionSceneCurrentTypeTimerMs = 0;
 let reunionSceneOnComplete = null;
 
 // 自機が女性の場合、セリフの語尾を「だよな」→「だよね」「だな」→「だね」に和らげる
 function applyFemaleLineTone(text, gender) {
   if (gender !== 'female') return text;
   return text.replace(/だよな/g, 'だよね').replace(/だな/g, 'だね');
+}
+
+// 'intro'/'line'/'paragraph'フェーズで、次に表示する1行を画面にセットし、タイプライター表示をやり直す
+function setReunionSceneCurrentLine(text) {
+  reunionSceneCurrentText = text;
+  reunionSceneCurrentRevealedCount = 0;
+  reunionSceneCurrentTypeTimerMs = 0;
 }
 
 function openReunionScene(onComplete) {
@@ -2146,31 +2168,52 @@ function openReunionScene(onComplete) {
   reunionSceneToneIntensity = tone.intensity;
   const playerPronoun = getPlayerPronoun(selectedGender);
   const partnerPronoun = getPartnerPronoun(selectedPartnerIcon);
-  reunionSceneLine = applyFemaleLineTone(
+  reunionSceneTierLine = applyFemaleLineTone(
     fillReunionTemplate(data.line, playerPronoun, partnerPronoun),
     selectedGender
   );
-  reunionSceneLineRevealedCount = 0;
-  reunionSceneLineTypeTimerMs = 0;
-  reunionSceneParagraph = data.paragraph.map(t => fillReunionTemplate(t, playerPronoun, partnerPronoun));
+  reunionSceneTierParagraph = data.paragraph.map(t => fillReunionTemplate(t, playerPronoun, partnerPronoun));
+  reunionSceneIntroIndex = 0;
+  reunionSceneParagraphIndex = 0;
+  setReunionSceneCurrentLine('');
   reunionSceneActive = true;
   reunionScenePhase = 'dim';
   reunionSceneDimTimer = reunionSceneDimDurationMs;
   reunionSceneOnComplete = onComplete;
 }
 
-// 暗転中はクリックを無視し、セリフ表示中（タイプ中なら先に全文表示）→地の文表示中の順に、クリック／タップで進める
+// 暗転中はクリックを無視する。タイプ中なら先に全文表示するだけにとどめ、
+// 表示しきっている時だけ次の行（intro→line→paragraphの順）へ進める
 function advanceReunionScene() {
   if (reunionScenePhase === 'dim') return;
-  if (reunionScenePhase === 'line') {
-    if (reunionSceneLineRevealedCount < reunionSceneLine.length) {
-      reunionSceneLineRevealedCount = reunionSceneLine.length;
-      return;
-    }
-    reunionScenePhase = 'paragraph';
+  if (reunionSceneCurrentRevealedCount < reunionSceneCurrentText.length) {
+    reunionSceneCurrentRevealedCount = reunionSceneCurrentText.length;
     return;
   }
-  closeReunionScene();
+  if (reunionScenePhase === 'intro') {
+    reunionSceneIntroIndex++;
+    if (reunionSceneIntroIndex < reunionSceneIntroLines.length) {
+      setReunionSceneCurrentLine(reunionSceneIntroLines[reunionSceneIntroIndex]);
+    } else {
+      reunionScenePhase = 'line';
+      setReunionSceneCurrentLine(reunionSceneTierLine);
+    }
+    return;
+  }
+  if (reunionScenePhase === 'line') {
+    reunionScenePhase = 'paragraph';
+    reunionSceneParagraphIndex = 0;
+    setReunionSceneCurrentLine(reunionSceneTierParagraph[0] || '');
+    return;
+  }
+  if (reunionScenePhase === 'paragraph') {
+    reunionSceneParagraphIndex++;
+    if (reunionSceneParagraphIndex < reunionSceneTierParagraph.length) {
+      setReunionSceneCurrentLine(reunionSceneTierParagraph[reunionSceneParagraphIndex]);
+      return;
+    }
+    closeReunionScene();
+  }
 }
 
 function closeReunionScene() {
@@ -2286,7 +2329,7 @@ const partnerRelationshipZeroCommentIntervalMs = 6000;
 let partnerRelationshipZeroCommentTimerMs = 0;
 const partnerRelationshipZeroLines = [
   'もう許せない！',
-  'この会社辞めて下さい！',
+  'いなくなって下さい！',
   '近づかないで下さい！！'
 ];
 
@@ -2408,7 +2451,7 @@ let partnerStatusCommentTimerMs = 0;
 
 const partnerStatusSanLowLines = [
   'かなり疲れた顔してますよ…大丈夫ですか？',
-  'SAN、削れてきてませんか…？',
+  'メンタル、削れてきてませんか…？',
   '無理しすぎじゃないですか…心配です',
   '顔色悪いですよ、休めるときに休んでくださいね',
   'メンタル、もちますか…？',
@@ -2955,7 +2998,7 @@ function checkEarlyQuotaAchievement() {
   if (isWeekEndDay(currentDate)) return; // 最終日はresolveWeekEndで判定するため、ここでは扱わない
   if (weeklyKills >= weeklyKillQuota || weeklyScoreGained >= weeklyScoreQuota) {
     weeklyQuotaAchievedEarly = true;
-    showMessage('今週のノルマ達成！残りは易しい仕事だけになります', 3500, '#69f0ae', '22px sans-serif');
+    showMessage('今週のノルマ達成！', 3500, '#69f0ae', '22px sans-serif');
     // 休日出勤中にノルマを達成したら、そのまま帰るかどうかを選ばせる
     const isWeekendWorkDay = currentDate.getDay() === 0 || currentDate.getDay() === 6;
     if (isWeekendWorkDay) {
@@ -3007,13 +3050,13 @@ function sendScore(finalScore) {
 // ===== ランク・スキル・経験値システム =====
 // 「昇進」という選択イベントは廃止し、Scoreに応じて役職名・役職スキルが自動的・段階的に身につく
 const rankNames = [
-  '未経験 / 新人',
+  '新人',
   'PG',
   'SE',
   '上級SE / サブリーダー',
   'PL / プロジェクトリーダー',
   'PM / プロジェクトマネージャー',
-  '部長 / 事業責任者 / CTO'
+  'CTO'
 ];
 // rank変数は、敵生成時に使うためファイル前半で宣言済み
 // ミスなくほぼ完璧に立ち回った場合のみ最終ランクへ届く想定で、最終ランクだけ必要スコアを大きく跳ね上げてある
@@ -3468,9 +3511,9 @@ function jumpToNextMondayAndResetWeek() {
 
 // 週の終わりを迎えたときに表示する、ノルマ達成時のフレーバーテキスト
 const weekCompleteFlavorTexts = [
-  '一週間が終わった！ようやく休日だ…',
+  '一週間が終わった！ようやく休日…',
   '長い一週間だった…やっと休日だ。',
-  '今週も乗り切った！さて、休日は何をしよう。'
+  '今週も乗り切った！'
 ];
 
 // 週の最終稼働日（金曜相当）の終業処理。ノルマ達成の可否で分岐する
@@ -3560,6 +3603,8 @@ function getNormalEndingByRelationship() {
 // ADV1〜3は、これまでの選択（adv1Choice/adv2Choice）と、突入時点の関係性で入るシナリオが決まる。
 // ADV4以降は選択肢を出さず、現在の関係性でそのまま好感度ルート（⑨⑩⑪）へ直行する
 function startPartnerAdventure(onComplete) {
+  // 既に別のアドベンチャーパートが進行中なら、二重に開始しない（安全のための保険）
+  if (adventureState) return;
   adventureRunCount++;
   const completedRun = adventureRunCount;
   // 第1回・第2回のアドベンチャーパートを終えるごとに、夢の記憶ポイントが1貯まる
@@ -3644,6 +3689,8 @@ function chooseAdventureOption(choiceIndex) {
 
 // 休日は必ず「同僚と遊ぶ」（アドベンチャーパート）に入る（休息・勉強の選択肢は廃止した）
 function applyRestActivity() {
+  // 万一、既にアドベンチャーパート中／その暗転演出中に二重に呼ばれても、二重に開始しないようにする
+  if (adventureState || setupFadePhase) return;
   if (partner.active) {
     // アドベンチャーパート自体がこの日の出来事なので、通常のランダムイベントは発生させず週明けへ進む。
     // ただし、ADV3をノーマルルート（夢ルートではない）で終えた場合は、これが最終日として
@@ -3706,7 +3753,7 @@ const restRandomEvents = [
   { text: '燃え尽き気味で、覚えていたスキルを一つ忘れてしまった…', weight: 1, apply: () => forgetRandomSkill() },
   { text: '趣味に没頭してリフレッシュ。SAN +15', weight: 2, apply: () => { san = Math.min(maxSan, san + 15); } },
   { text: '休日出勤の夢を見てうなされた。SAN -12', weight: 1, apply: () => damageSan(12) },
-  { text: '何もせずボーッとしていたら、あっという間に休日が終わった。', weight: 3, apply: () => {} }
+  { text: 'ボーッとしていたら、あっという間に休日が終わった。', weight: 3, apply: () => {} }
 ];
 function triggerRandomRestEvent() {
   const total = restRandomEvents.reduce((a, ev) => a + ev.weight, 0);
@@ -3853,6 +3900,17 @@ function selectPartnerIcon(icon) {
 function selectMode() {
   gameTimeScale = threeXModeEnabled ? 3 : 1;
   startScreen = false;
+  setupStep = 'gender';
+}
+
+// 操作キャラ選択画面の「戻る」：タイトル画面に戻る
+function backToTitleFromGenderSelect() {
+  setupStep = null;
+  startScreen = true;
+}
+
+// 同僚選択画面の「戻る」：操作キャラ選択画面に戻る
+function backToGenderSelectFromPartnerSelect() {
   setupStep = 'gender';
 }
 
@@ -5060,6 +5118,10 @@ const normalEndPartnerLoseDelayMinMs = 12000; // 同僚が力尽きるまでの�
 const normalEndPartnerLoseDelayMaxMs = 18000;
 const normalEndFadeOutDurationMs = 1200;
 const normalEndScreenFadeOutDurationMs = 3000; // クリック後、文字も含め画面全体が白くフェードインしてタイトルへ戻るまでの時間
+const normalEndBgFadeInDurationMs = 2600; // 黒背景から、背景画像after_ENDがゆっくりフェードインしきるまでの時間
+const normalEndBgDimOverlayAlpha = 0.35; // 背景画像を通常より少し暗めに見せておくオーバーレイの濃さ
+const normalEndTextFadeDelayMs = 1000; // 背景画像のフェードイン開始から、文字が現れ始めるまでの間
+const normalEndTextFadeInDurationMs = 1600; // 文字がゆっくりフェードインしきるまでの時間
 let normalEndSequence = null; // null、または { phase, phaseTimerMs, battleTimerMs, partnerLoseAtMs, partnerLost }
 
 // 「同僚と遊ぶ」ADV3をノーマルルートで終えた直後に呼ばれる。この日が最終日として扱われる
@@ -5190,15 +5252,19 @@ function drawNormalEndEndingScreen() {
   ctx.fillStyle = 'black';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   if (normalEndSequence.phase === 'endScreen' || normalEndSequence.phase === 'endScreenFadeOut') {
-    const bgFadeInAlpha = Math.min(1, normalEndSequence.phaseTimerMs / 1000);
-    const contentAlpha = normalEndSequence.phase === 'endScreen'
-      ? bgFadeInAlpha
-      : 1;
+    const isFadingIn = normalEndSequence.phase === 'endScreen';
+    // 背景画像は黒からゆっくりフェードインし、フェードインが終わっても暗めのオーバーレイを重ねたままにする
+    const bgFadeInAlpha = isFadingIn ? Math.min(1, normalEndSequence.phaseTimerMs / normalEndBgFadeInDurationMs) : 1;
+    // 文字は、背景のフェードイン開始から1秒待ってから、改めてゆっくりフェードインする
+    const textElapsedMs = isFadingIn ? normalEndSequence.phaseTimerMs - normalEndTextFadeDelayMs : normalEndTextFadeInDurationMs;
+    const contentAlpha = Math.max(0, Math.min(1, textElapsedMs / normalEndTextFadeInDurationMs));
     ctx.save();
-    ctx.globalAlpha = normalEndSequence.phase === 'endScreen' ? bgFadeInAlpha : 1;
+    ctx.globalAlpha = bgFadeInAlpha;
     if (afterEndImage && afterEndImage.complete && afterEndImage.naturalWidth > 0) {
       ctx.drawImage(afterEndImage, 0, 0, canvas.width, canvas.height);
     }
+    ctx.fillStyle = `rgba(0, 0, 0, ${normalEndBgDimOverlayAlpha})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.restore();
     const pronoun = getPartnerPronoun(selectedPartnerIcon);
     ctx.save();
@@ -5523,7 +5589,7 @@ function finishMidBossEvent() {
 // ===== 援護弾（ボスが倒せない時の救済措置） =====
 // 「大規模プロジェクト」・ラスボス戦（ノーマルルート終了時の負けイベント戦闘は除く）中、
 // ゲーム内時間で3時間経過するごとに50%の確率で発生する。自機から最も遠い画面端から、
-// 自機に向かってまっすぐ飛んでくる。パリィすると、雷のような一撃が今対応すべき部位へ飛び、一撃で破壊する。
+// 自機に向かってまっすぐ飛んでくる。パリィすると、今対応すべき部位へ飛び、一撃で破壊する。
 // 何もされなければ、そのまま画面の反対側へ通り過ぎて消える
 const supportBulletCheckIntervalMs = hourMs * 3; // ゲーム内3時間ごとに判定する
 const supportBulletSpawnChance = 0.5;
@@ -5621,7 +5687,7 @@ function triggerSupportBulletRescue(bullet) {
   if (idx >= 0) bullets.splice(idx, 1);
   const target = getSupportBulletRescueTarget();
   if (!target) {
-    showMessage('援護弾をパリィしたが、狙うべき相手が見当たらない……', 2000, '#b39ddb');
+    showMessage('援護対象が見当たらない……', 2000, '#b39ddb');
     return;
   }
   spawnSynergyBeam(bullet.x, bullet.y, target.x, target.y);
@@ -5632,7 +5698,7 @@ function triggerSupportBulletRescue(bullet) {
     target.hole.hitsTaken = target.hole.maxHits;
     registerBossHoleHit(target.hole, target.x, target.y);
   }
-  showMessage('援護弾パリィ成功！ 雷のような一撃が急所を撃ち抜いた！', 2600, '#fff176', '22px sans-serif');
+  showMessage('援護が入り、業務が大幅に進んだ!', 2600, '#fff176', '22px sans-serif');
 }
 
 function damagePlayerByMidBossBullet() {
@@ -6091,19 +6157,19 @@ function update() {
     return;
   }
 
-  // 前回と同じ自機・同僚で始めた時の再会シーン：アイコンが暗くなりきったら自動でセリフへ進む（3倍加速の影響を受けない）
+  // 前回と同じ自機・同僚で始めた時の再会シーン：アイコンが暗くなりきったら自動で地の文へ進む（3倍加速の影響を受けない）
   if (reunionSceneActive) {
     if (reunionScenePhase === 'dim') {
       reunionSceneDimTimer -= rawDt * 1000;
       if (reunionSceneDimTimer <= 0) {
         reunionSceneDimTimer = 0;
-        reunionScenePhase = 'line';
-        reunionSceneLineRevealedCount = 0;
-        reunionSceneLineTypeTimerMs = 0;
+        reunionScenePhase = 'intro';
+        reunionSceneIntroIndex = 0;
+        setReunionSceneCurrentLine(reunionSceneIntroLines[0]);
       }
-    } else if (reunionScenePhase === 'line' && reunionSceneLineRevealedCount < reunionSceneLine.length) {
-      reunionSceneLineTypeTimerMs += rawDt * 1000;
-      reunionSceneLineRevealedCount = getTypewriterRevealedCount(reunionSceneLineTypeTimerMs, reunionSceneLine);
+    } else if (reunionSceneCurrentRevealedCount < reunionSceneCurrentText.length) {
+      reunionSceneCurrentTypeTimerMs += rawDt * 1000;
+      reunionSceneCurrentRevealedCount = getTypewriterRevealedCount(reunionSceneCurrentTypeTimerMs, reunionSceneCurrentText);
     }
     return;
   }
@@ -8505,7 +8571,7 @@ function draw() {
   }
 
   // 前回と同じ自機・同僚で始めた時、DAY1が始まる前に挟む短い再会シーン
-  // （同僚アイコンが暗くなる演出 → 自機のセリフ → 地の文、の順に進む）
+  // （同僚アイコンが暗くなる演出 → 地の文（1行ずつ）→ 自機のセリフ → 締めの地の文（1行ずつ）、の順に進む）
   if (reunionSceneActive) {
     drawSetupBackground();
     const imgSize = 150;
@@ -8542,21 +8608,20 @@ function draw() {
     }
 
     ctx.textAlign = 'center';
-    if (reunionScenePhase === 'line' || reunionScenePhase === 'paragraph') {
+    const currentDisplayText = reunionSceneCurrentText.slice(0, reunionSceneCurrentRevealedCount);
+    if (reunionScenePhase === 'line') {
+      // 自機のセリフだけは色を変えて強調する
       ctx.fillStyle = '#ffe082';
       ctx.font = 'bold 22px sans-serif';
-      ctx.fillText(reunionSceneLine.slice(0, reunionSceneLineRevealedCount), canvas.width / 2, 250);
-    }
-
-    if (reunionScenePhase === 'paragraph') {
+      ctx.fillText(currentDisplayText, canvas.width / 2, 270);
+    } else if (reunionScenePhase === 'intro' || reunionScenePhase === 'paragraph') {
+      // 地の文は1行だけを中央に表示し、クリックのたびに次の行へ切り替わる
       ctx.fillStyle = '#e0e0e0';
-      ctx.font = '15px sans-serif';
-      reunionSceneParagraph.forEach((line, i) => {
-        ctx.fillText(line, canvas.width / 2, 296 + i * 24);
-      });
+      ctx.font = '16px sans-serif';
+      ctx.fillText(currentDisplayText, canvas.width / 2, 270);
     }
 
-    if (reunionScenePhase === 'line' || reunionScenePhase === 'paragraph') {
+    if (reunionScenePhase === 'intro' || reunionScenePhase === 'line' || reunionScenePhase === 'paragraph') {
       ctx.fillStyle = '#cfd8dc';
       ctx.font = '14px sans-serif';
       ctx.fillText('クリック / タップで続ける', canvas.width / 2, canvas.height - 40);
@@ -8567,6 +8632,8 @@ function draw() {
 
   if (setupStep === 'gender') {
     drawSetupBackground();
+    drawUiButton(10, 10, 90, 32, '＜ 戻る', backToTitleFromGenderSelect,
+      { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae', font: 'bold 15px sans-serif' });
     ctx.fillStyle = 'white';
     ctx.font = 'bold 32px sans-serif';
     ctx.textAlign = 'center';
@@ -8577,10 +8644,12 @@ function draw() {
     const totalWidth = genderChoices.length * cardW + (genderChoices.length - 1) * gap;
     const startX = canvas.width / 2 - totalWidth / 2;
     const cardY = 170;
+    const lastRunForSelect = dreamMemorySave.lastRun;
     genderChoices.forEach((choice, i) => {
       const cardX = startX + i * (cardW + gap);
       const isHovered = mousePosition.x >= cardX && mousePosition.x <= cardX + cardW &&
         mousePosition.y >= cardY && mousePosition.y <= cardY + cardH;
+      const isLastPicked = !!(lastRunForSelect && lastRunForSelect.playerGender === choice.id);
       ctx.save();
       ctx.fillStyle = isHovered ? 'rgba(156, 107, 230, 0.55)' : 'rgba(103, 58, 183, 0.35)';
       ctx.fillRect(cardX, cardY, cardW, cardH);
@@ -8598,6 +8667,23 @@ function draw() {
       ctx.fillText(`${i + 1}. ${choice.label}`, cardX + cardW / 2, cardY + cardH - 20);
       ctx.textAlign = 'left';
       ctx.restore();
+      // 前回選んだキャラには、金色に淡く明滅する枠と「前回選択」の札を重ねて分かるようにする
+      if (isLastPicked) {
+        ctx.save();
+        const glow = 8 + Math.sin(Date.now() / 220) * 4;
+        ctx.shadowColor = '#ffd54f';
+        ctx.shadowBlur = glow;
+        ctx.strokeStyle = '#ffd54f';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(cardX - 3, cardY - 3, cardW + 6, cardH + 6);
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#ffd54f';
+        ctx.font = 'bold 13px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('前回選択', cardX + cardW / 2, cardY - 10);
+        ctx.textAlign = 'left';
+        ctx.restore();
+      }
       uiButtons.push({ x: cardX, y: cardY, w: cardW, h: cardH, action: () => selectGender(choice.id) });
     });
 
@@ -8620,6 +8706,8 @@ function draw() {
 
   if (setupStep === 'partner-icon') {
     drawSetupBackground();
+    drawUiButton(10, 10, 90, 32, '＜ 戻る', backToGenderSelectFromPartnerSelect,
+      { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae', font: 'bold 15px sans-serif' });
     ctx.fillStyle = 'white';
     ctx.font = 'bold 32px sans-serif';
     ctx.textAlign = 'center';
@@ -8632,6 +8720,7 @@ function draw() {
     const totalWidth = cols * cellSize + (cols - 1) * gap;
     const startX = canvas.width / 2 - totalWidth / 2;
     const startY = 140;
+    const lastRunForPartnerSelect = dreamMemorySave.lastRun;
     partnerIconChoices.forEach((id, i) => {
       const col = i % cols;
       const row = Math.floor(i / cols);
@@ -8639,6 +8728,7 @@ function draw() {
       const cellY = startY + row * (cellSize + gap);
       const isHovered = mousePosition.x >= cellX && mousePosition.x <= cellX + cellSize &&
         mousePosition.y >= cellY && mousePosition.y <= cellY + cellSize;
+      const isLastPicked = !!(lastRunForPartnerSelect && lastRunForPartnerSelect.partnerIcon === id);
       ctx.save();
       ctx.fillStyle = isHovered ? 'rgba(156, 107, 230, 0.55)' : 'rgba(103, 58, 183, 0.35)';
       ctx.fillRect(cellX, cellY, cellSize, cellSize);
@@ -8654,6 +8744,23 @@ function draw() {
       ctx.lineWidth = isHovered ? 3 : 2;
       ctx.strokeRect(cellX, cellY, cellSize, cellSize);
       ctx.restore();
+      // 前回選んだ同僚には、金色に淡く明滅する枠と星印を重ねて分かるようにする
+      if (isLastPicked) {
+        ctx.save();
+        const glow = 6 + Math.sin(Date.now() / 220) * 3;
+        ctx.shadowColor = '#ffd54f';
+        ctx.shadowBlur = glow;
+        ctx.strokeStyle = '#ffd54f';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(cellX - 3, cellY - 3, cellSize + 6, cellSize + 6);
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#ffd54f';
+        ctx.font = 'bold 16px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('★', cellX + cellSize / 2, cellY - 8);
+        ctx.textAlign = 'left';
+        ctx.restore();
+      }
       uiButtons.push({ x: cellX, y: cellY, w: cellSize, h: cellSize, action: () => selectPartnerIcon(id) });
     });
 
@@ -8881,8 +8988,8 @@ function draw() {
     ctx.fillText('ここで寝たらただのサラリーマン', canvas.width / 2, canvas.height / 2 - 154);
     ctx.restore();
 
-    // 二週目以降（過去にいずれかのエンディングに到達済み）：「サラリーマン」の部分を太い赤線のペンで打ち消し（固定表示）、
-    // 上に「自宅警備員」の文字を重ねる（同じフォント・サイズ、白地に黒縁。ゆっくりフェードイン・フェードアウトする）
+    // 二週目以降（過去にいずれかのエンディングに到達済み）：「サラリーマン」の部分を、
+    // 爪で引っかいたような暗い傷跡で打ち消す（固定表示。毎フレーム同じ形になる固定の乱数を使う）
     const hasPlayedBefore = Object.values(dreamMemorySave.endingsCleared).some(v => v);
     if (hasPlayedBefore) {
       ctx.save();
@@ -8896,55 +9003,39 @@ function draw() {
       const titleY = canvas.height / 2 - 154;
       const titleLeftX = canvas.width / 2 - fullWidth / 2;
       const targetLeftX = titleLeftX + prefixWidth;
-      const targetCenterX = targetLeftX + targetWidth / 2;
 
-      // ペンで打ち消したような、細めで色を弱めた赤の取り消し線（毎フレーム同じ形になる固定の乱数を使う）
-      ctx.strokeStyle = useMinchoTitle ? 'rgba(150, 100, 100, 0.5)' : 'rgba(213, 0, 0, 0.55)';
-      ctx.lineWidth = 4;
+      // 爪痕：暗い血のような色の斜めの傷を数本、それぞれジグザグに走らせ、中央が太く両端が細くなるようにする。
+      // 1本おきに逆方向の傷を重ねて交差させ、文字がずたずたに引き裂かれたように見せる
+      ctx.strokeStyle = 'rgba(28, 3, 3, 0.92)';
       ctx.lineCap = 'round';
-      const scribbleLineCount = 4;
-      for (let i = 0; i < scribbleLineCount; i++) {
-        const baseY = titleY - 20 + i * 7;
-        ctx.beginPath();
-        ctx.moveTo(targetLeftX - 4, baseY + (titleGlitchPseudoRandom(i * 31) - 0.5) * 6);
-        const segs = 5;
+      const clawCount = 5;
+      for (let c = 0; c < clawCount; c++) {
+        const crossing = c % 2 === 1;
+        const startX = targetLeftX - 8 + (targetWidth + 16) / (clawCount + 1) * (c + 0.55);
+        const startY = titleY - 26 + (titleGlitchPseudoRandom(c * 17 + 3) - 0.5) * 8;
+        const baseAngleDeg = crossing ? -28 : 28;
+        const angleDeg = baseAngleDeg + (titleGlitchPseudoRandom(c * 41 + 11) - 0.5) * 10;
+        const angle = angleDeg * Math.PI / 180;
+        const length = 34 + titleGlitchPseudoRandom(c * 29 + 5) * 10;
+        const endX = startX + Math.cos(angle) * length;
+        const endY = startY + Math.sin(angle) * length;
+        const perpAngle = angle + Math.PI / 2;
+        const segs = 6;
+        let prevX = startX, prevY = startY;
         for (let s = 1; s <= segs; s++) {
-          const sx = targetLeftX - 4 + (targetWidth + 8) * (s / segs);
-          const sy = baseY + (titleGlitchPseudoRandom(i * 31 + s) - 0.5) * 8;
-          ctx.lineTo(sx, sy);
+          const t = s / segs;
+          const jag = (titleGlitchPseudoRandom(c * 71 + s * 13) - 0.5) * 3;
+          const px = startX + (endX - startX) * t + Math.cos(perpAngle) * jag;
+          const py = startY + (endY - startY) * t + Math.sin(perpAngle) * jag;
+          // 中央が太く、両端にいくほど細くなる（爪で引っかいた時の力の抜け方をイメージ）
+          ctx.lineWidth = 1.5 + Math.sin(Math.PI * t) * 3.5;
+          ctx.beginPath();
+          ctx.moveTo(prevX, prevY);
+          ctx.lineTo(px, py);
+          ctx.stroke();
+          prevX = px; prevY = py;
         }
-        ctx.stroke();
       }
-
-      // 「自宅警備員」：少し小さめのフォントに、半文字ぶんの文字間隔を空け、弱めのコントラストで固定表示する
-      ctx.save();
-      ctx.translate(targetCenterX, titleY - 30);
-      ctx.rotate(-0.05);
-      const homeGuardFontSize = 28;
-      ctx.font = `bold ${homeGuardFontSize}px ${titleFontFamily}`;
-      const homeGuardChars = Array.from('自宅警備員');
-      const homeGuardLetterSpacing = homeGuardFontSize * 0.5;
-      const homeGuardCharWidths = homeGuardChars.map(c => ctx.measureText(c).width);
-      const homeGuardTotalWidth = homeGuardCharWidths.reduce((sum, w) => sum + w, 0) +
-        homeGuardLetterSpacing * (homeGuardChars.length - 1);
-      ctx.textAlign = 'center';
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
-      ctx.fillStyle = useMinchoTitle ? 'rgba(205, 200, 190, 0.5)' : 'rgba(255, 255, 255, 0.55)';
-      let homeGuardX = -homeGuardTotalWidth / 2;
-      homeGuardChars.forEach((c, i) => {
-        const charCenterX = homeGuardX + homeGuardCharWidths[i] / 2;
-        // 一文字ごとに、±10度ほどの範囲でランダムな傾きを付ける（毎フレーム同じ形になる固定の乱数を使う）
-        const tiltDeg = (titleGlitchPseudoRandom(i * 53 + 7) - 0.5) * 20;
-        ctx.save();
-        ctx.translate(charCenterX, 0);
-        ctx.rotate(tiltDeg * Math.PI / 180);
-        ctx.strokeText(c, 0, 0);
-        ctx.fillText(c, 0, 0);
-        ctx.restore();
-        homeGuardX += homeGuardCharWidths[i] + homeGuardLetterSpacing;
-      });
-      ctx.restore();
       ctx.restore();
     }
 

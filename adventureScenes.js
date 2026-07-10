@@ -112,7 +112,7 @@ Object.assign(partnerAdventureScenes, { adv1: buildAdvScene('adv1', [
 
 // ② ADV2-A（ADV1で「A：同僚を信じて踏み込む」を選んだ場合）
 Object.assign(partnerAdventureScenes, { adv2A: buildAdvScene('adv2A', [
-  'ADV1から一週間後。配置換えから二週間。\n' +
+  '一週間後。配置換えから二週間。\n' +
   '同僚「この二週間で、だいぶ連携しやすくなりましたね」\n' +
   '主人公「そうだな。資料で遭難する回数も減った」\n' +
   '同僚「資料で遭難する前提なんですか」\n' +
@@ -151,7 +151,7 @@ Object.assign(partnerAdventureScenes, { adv2A: buildAdvScene('adv2A', [
 
 // ③ ADV2-B（ADV1で「B：距離を取って様子を見る」を選んだ場合）
 Object.assign(partnerAdventureScenes, { adv2B: buildAdvScene('adv2B', [
-  'ADV1から一週間後。配置換えから二週間。\n' +
+  '一週間後。配置換えから二週間。\n' +
   '同僚「先週の資料、結局ひとりで進めてましたね」\n' +
   '主人公「悪かった。声をかけてくれたのに」\n' +
   '同僚「まだお互い探り探りですし、仕方ないです」\n' +
