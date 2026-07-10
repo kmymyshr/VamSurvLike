@@ -3335,7 +3335,7 @@ function recomputeSpecialSkillEffects() {
 
 const specialSkillSelectionLockDurationMs = 1000; // 表示直後の連続タップ／クリックによる誤選択を防ぐ猶予時間
 let specialSkillSelectionUnlockAt = 0; // この時刻（Date.now()基準）を過ぎるまで選択を受け付けない
-const specialSkillMaxRerolls = 3; // 1回のプレイ（ゲーム開始～終了）を通して選び直せる合計回数。選択のたびに回復はしない
+const specialSkillMaxRerolls = 1; // 1回のプレイ（ゲーム開始～終了）を通して選び直せる合計回数。選択のたびに回復はしない
 let specialSkillRerollsRemaining = specialSkillMaxRerolls;
 // 完全オートモード中、選択画面が表示されてからこの時間クリックがなければ、ランダムに1つ選んだ扱いにする
 const specialSkillSelectionAutoPickDelayMs = 3000;
@@ -3419,10 +3419,11 @@ function updateSkillEffects() {
     newLevel++;
   }
   if (newLevel > skillLevel) {
-    const specialSkillCount = Math.floor(newLevel / 5) - Math.floor(skillLevel / 5);
-    // 通常のレベルアップは表示せず、5レベルごとの特殊スキル習得のときだけ知らせる
+    const specialSkillMilestones = Math.floor(newLevel / 5) - Math.floor(skillLevel / 5);
+    // 通常のレベルアップは表示せず、5レベルごとの特殊スキル習得のときだけ知らせる。
+    // 一度に3つまで（1つ選ぶたびにまた3択が出る形で）選べるようにする
     skillLevel = newLevel;
-    queueSpecialSkillSelections(specialSkillCount);
+    queueSpecialSkillSelections(specialSkillMilestones * 3);
   }
 }
 
