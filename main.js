@@ -535,7 +535,8 @@ function triggerWakingNightmareDebug() {
     viaAdv3NormalEnd: true
   };
   saveDreamMemorySave();
-  location.reload();
+  // 即座に切り替えず、タイトル画面を暗転（フェードアウト）させてから画面遷移する
+  startSetupFadeOut(() => location.reload());
 }
 
 // ===== アイコン選択後のひとことメッセージ演出（表示→フェードアウトして次の画面へ） =====
@@ -4404,14 +4405,16 @@ function findNearestEnemyToPlayer() {
 }
 
 // パリィで弾いた弾を、指定した地点から見て最も近い敵へ向け直し、ダメージを2倍にする共通処理
-const parryBulletSpeedMultiplier = 1.5; // パリィした弾は、パリィ前の速度の150%になる
+const playerBaseBulletSpeed = 6; // 自機の弾発射速度の基本値（処理速度Bの効果は別途bulletSpeedMultiplierで乗算する）
+const parryBulletSpeedMultiplier = 3; // パリィ（オートパリィ含む）した弾は、元の速度に関係なく自機の弾発射速度の300%に固定する
 function performBulletParry(bullet, fromX, fromY, actorAngle, isAuto = false) {
   // 援護弾は、通常のパリィ（打ち返し）ではなく専用の救済処理へ振り分ける
   if (bullet.owner === 'support') {
     triggerSupportBulletRescue(bullet);
     return;
   }
-  const speed = (Math.hypot(bullet.vx, bullet.vy) || 6) * parryBulletSpeedMultiplier;
+  // 自機の弾発射速度（処理速度Bの効果を含む）を基準に、パリィした弾の速度を固定する
+  const speed = playerBaseBulletSpeed * specialSkillEffects.bulletSpeedMultiplier * parryBulletSpeedMultiplier;
   let angle;
   if (bullet.stage3Reflected) {
     // 第3段階「確証バイアス」に跳ね返された弾は、再度パリィしてもランダムな方向へ飛ぶ
@@ -7090,7 +7093,7 @@ function update() {
           // 第4段階「承認欲求」：狙って撃っただけで（当たらなくても）耐久力が少し回復してしまう
           checkApprovalSeekingFireHeal(player.x, player.y, shotAngle);
 
-          const speed = 6 * specialSkillEffects.bulletSpeedMultiplier;
+          const speed = playerBaseBulletSpeed * specialSkillEffects.bulletSpeedMultiplier;
           const damageBonus = 1 + skillLevel * 0.08;
           // 「無敵（テスト用）」「β版設定」：攻撃力が50倍になる
           const invincibleDamageMultiplier = isTestInvincibleUpgradeActive() ? 50 : 1;
@@ -9799,6 +9802,14 @@ function draw() {
       drawUiButton(confirmBtnX, canvas.height / 2 + 56, confirmBtnW, confirmBtnH, 'いいえ',
         () => { titleResetConfirmActive = false; },
         { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
+    }
+
+    // 「Waking Nightmare」などタイトル画面からの暗転演出：フェードアウトが終わるまでボタン操作を無効にする
+    if (setupFadePhase === 'out') {
+      uiButtons.length = 0;
+      const fadeAlpha = 1 - Math.max(0, Math.min(1, setupFadeTimer / setupFadeDurationMs));
+      ctx.fillStyle = `rgba(0, 0, 0, ${fadeAlpha})`;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
     return;
   }
