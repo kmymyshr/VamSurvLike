@@ -42,17 +42,20 @@ const dreamMemoryUpgradeMaxLevel = 5;
 const dreamMemoryUpgradeDefs = [
   {
     id: 'partnerAutoParry', label: '同僚のオートパリィレベル',
-    describeLevel: (lv) => `同僚が被弾しそうな時にパリィする確率が${30 + lv * 14}%になる（未強化時は30%）`
+    describeLevel: (lv) => `同僚が被弾しそうな時にパリィする確率が${30 + lv * 14}%になる（未強化時は30%）`,
+    preview: '同僚の弾よけ確率が上がる'
   },
   {
     id: 'dreamCatcher', label: 'DreamCatcher',
     describeLevel: () => '自機・同僚のSAN上限が25になる（ラスボスに遭遇しやすくなる）',
+    preview: 'SAN上限を下げてラスボス出現',
     maxLevel: 1,
     costOverride: 1
   },
   {
     id: 'invincibleTest', label: '無敵（テスト用）',
     describeLevel: () => '自分・同僚ともSAN・寿命が0にならず、脳疲労も常に0のまま、攻撃力が50倍になる（テスト用）',
+    preview: 'SAN・寿命固定＋攻撃力50倍',
     maxLevel: 1,
     costOverride: 1
   },
@@ -60,12 +63,14 @@ const dreamMemoryUpgradeDefs = [
     id: 'betaMode', label: 'β版設定',
     describeLevel: () => '「無敵（テスト用）」と全く同じ効果（SAN・寿命が0にならず、脳疲労も常に0のまま、攻撃力が50倍）に加えて、' +
       '中ボス・ラスボス戦（イベント戦は除く）では1発ごとに相手の耐久力の最大値の20%ぶんダメージを与え、最低5発で撃破できる',
+    preview: '無敵効果＋ボスを最速5発で撃破',
     maxLevel: 1,
     costOverride: 1
   },
   {
     id: 'unbreakableBond', label: '固い絆',
     describeLevel: () => '同僚との関係性が一切低下しなくなる（上昇する効果はこれまで通り発生する）',
+    preview: '同僚との関係性が下がらなくなる',
     maxLevel: 1,
     costOverride: 0
   },
@@ -73,41 +78,48 @@ const dreamMemoryUpgradeDefs = [
     id: 'selfSacrifice', label: '自己犠牲',
     describeLevel: () => '戦闘中、十字型のボタンから発動できる特殊行動。発動すると自分の寿命が半分になる代わりに、' +
       '同僚の寿命が100まで回復する（1周回につき1回のみ使用可）',
+    preview: '自分の寿命半分で同僚の寿命全回復',
     maxLevel: 1
   },
   {
     id: 'devotion', label: '献身',
     describeLevel: () => '戦闘中、十字型のボタンから発動できる特殊行動。発動すると自分のSANが半分になる代わりに、' +
       '同僚のSANが100まで回復する（1周回につき1回のみ使用可）',
+    preview: '自分のSAN半分で同僚のSAN全回復',
     maxLevel: 1
   },
   {
     id: 'eternalLifePlayer', label: '永遠の命（自分）',
     describeLevel: () => '自分の寿命が0にならなくなる',
+    preview: '自分の寿命が0にならなくなる',
     maxLevel: 1,
     costOverride: 0
   },
   {
     id: 'eternalLifePartner', label: '永遠の命（同僚）',
     describeLevel: () => '同僚の寿命が0にならなくなる',
+    preview: '同僚の寿命が0にならなくなる',
     maxLevel: 1,
     costOverride: 0
   },
   {
     id: 'hopePlayer', label: '希望（自分）',
     describeLevel: () => '自分のSAN値が0にならなくなる',
+    preview: '自分のSANが0にならなくなる',
     maxLevel: 1,
     costOverride: 0
   },
   {
     id: 'hopePartner', label: '希望（同僚）',
     describeLevel: () => '同僚のSAN値が0にならなくなる',
+    preview: '同僚のSANが0にならなくなる',
     maxLevel: 1,
     costOverride: 0
   },
   {
     id: 'awakening', label: '目覚め',
     describeLevel: () => '第3回のアドベンチャーパートで、これまでの選択・関係性によらず必ず夢ルートに入る（真エンドの条件を満たしていると判定される）',
+    preview: '第3回で必ず夢ルートに入る',
     maxLevel: 1,
     costOverride: 0
   }
@@ -1903,7 +1915,10 @@ function endWorkday() {
       startSetupFadeOut(() => {
         showAdventureStatsSummary(() => {
           startPartnerAdventure(() => {
-            if (adventureRunCount === 3 && !dreamRouteCompleted) {
+            if (adventureRunCount === 3 && dreamRouteCompleted) {
+              // 夢ルートを完走した場合：翌日の通常業務には入らず、「24:00」を経て特別なラスボス戦へ直行する
+              startDreamBossIntroSequence();
+            } else if (adventureRunCount === 3 && !dreamRouteCompleted) {
               startNormalEndBattleSequence();
             } else {
               startDayTransition(autoAdvanceDay);
@@ -4410,6 +4425,9 @@ function performBulletParry(bullet, fromX, fromY, actorAngle, isAuto = false) {
 // ===== ラスボス（自機・同僚のSANが同時に20を切ると出現する、名状しがたい巨大な敵） =====
 // 通常の敵は出現を止め、発射口だけが弱点になる特別な戦闘に切り替わる（通常弾・パリィで打ち返した弾のどちらも有効打）
 const bossImage = loadImage('images/dreamcatcher/last_boss_normal.png');
+// 「目覚め」で夢ルートに入り、ADV3を完走した直後に突入する特別なラスボス戦専用の見た目
+const dreamBossImage = loadImage('images/dreamcatcher/last_boss.png');
+let dreamBossActive = false; // この特別なラスボス戦が進行中かどうか（画像・背景・出現物の出し分けに使う）
 const bossSanTriggerThreshold = 20;
 const bossWidthRatio = 0.7; // 画面幅に対するラスボスの幅の割合
 const bossHeight = 210; // ラスボスが窓を覆う高さ
@@ -4751,6 +4769,71 @@ function startBossEvent() {
     moveTimerMs: 0
   };
   enemies.length = 0; // 通常の敵は一時的に退避させ、ラスボス戦の間は出現しない
+  showMessage('……何かが、近寄ってくる気配がする。', 3400, '#ff1744', '26px sans-serif');
+}
+
+// ===== 「目覚め」で夢ルートに入り、ADV3を完走した直後の特別なラスボス戦 =====
+// DAY〇〇の代わりに「24:00」を表示し、クリック待ちなしで自動的にフェードアウトしてから
+// 特別なラスボス戦（SAN20以下で出会うものと実質同じだが、専用の見た目・背景で、通常敵/固定敵/クイズは出さない）へ入る
+let dreamBossIntroSequence = null; // null、または { phase: 'clock' | 'fadeOut', phaseTimerMs }
+const dreamBossIntroClockDurationMs = 3000;
+const dreamBossIntroFadeOutDurationMs = 800;
+
+function startDreamBossIntroSequence() {
+  dreamBossIntroSequence = { phase: 'clock', phaseTimerMs: 0 };
+}
+
+function updateDreamBossIntroSequence(rawDt) {
+  dreamBossIntroSequence.phaseTimerMs += rawDt * 1000;
+  if (dreamBossIntroSequence.phase === 'clock' && dreamBossIntroSequence.phaseTimerMs >= dreamBossIntroClockDurationMs) {
+    dreamBossIntroSequence.phase = 'fadeOut';
+    dreamBossIntroSequence.phaseTimerMs = 0;
+  } else if (dreamBossIntroSequence.phase === 'fadeOut' &&
+      dreamBossIntroSequence.phaseTimerMs >= dreamBossIntroFadeOutDurationMs) {
+    dreamBossIntroSequence = null;
+    startDreamBossEvent();
+  }
+}
+
+function drawDreamBossIntroSequence() {
+  ctx.fillStyle = 'black';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const alpha = dreamBossIntroSequence.phase === 'fadeOut'
+    ? Math.max(0, 1 - dreamBossIntroSequence.phaseTimerMs / dreamBossIntroFadeOutDurationMs)
+    : 1;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = 'white';
+  ctx.font = 'bold 40px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('24:00', canvas.width / 2, canvas.height / 2);
+  ctx.restore();
+  ctx.textAlign = 'left';
+}
+
+// 「24:00」のフェードアウトが終わった瞬間に呼ばれ、特別なラスボス戦を実際に開始する
+function startDreamBossEvent() {
+  enemies.length = 0;
+  fixedEnemies.length = 0;
+  quizState = null;
+  lunchState = null;
+  scheduledReport = null;
+  dreamBossActive = true;
+  currentHour = maxOvertimeHour;
+  lastHourTime = gameClockMs;
+  bossEvent = {
+    phase: 'descending',
+    stage: 1,
+    holes: generateBossHoles(1),
+    totalHitsLanded: 0,
+    descendProgress: 0,
+    savedEnemies: [],
+    offsetX: 0,
+    offsetY: 0,
+    moveTargetX: 0,
+    moveTargetY: 0,
+    moveTimerMs: 0
+  };
   showMessage('……何かが、近寄ってくる気配がする。', 3400, '#ff1744', '26px sans-serif');
 }
 
@@ -5252,6 +5335,10 @@ const normalEndTextFadeDelayMs = normalEndBgFadeInDurationMs + normalEndTextFade
 const normalEndTextFadeInDurationMs = 2600; // 文字がゆっくりフェードインしきるまでの時間
 const normalEndTextFadeOutDurationMs = 2400; // クリック後、文字がゆっくりフェードアウトしきるまでの時間
 let normalEndSequence = null; // null、または { phase, phaseTimerMs, battleTimerMs, partnerLoseAtMs, partnerLost }
+// 「{partner}を助けないと…」画面表示直後、誤って（または残っていたクリックで）即座にタイトルへ
+// 進んでしまわないよう、この時刻を過ぎるまではクリックしてもタイトルへは移行しない
+const normalEndScreenClickLockDurationMs = 1000;
+let normalEndScreenClickUnlockAt = 0;
 
 // 「同僚と遊ぶ」ADV3をノーマルルートで終えた直後に呼ばれる。この日が最終日として扱われる
 function startNormalEndBattleSequence() {
@@ -5297,6 +5384,7 @@ function updateNormalEndSequence(rawDt) {
   } else if (normalEndSequence.phase === 'fadeOut' && normalEndSequence.phaseTimerMs >= normalEndFadeOutDurationMs) {
     normalEndSequence.phase = 'endScreen';
     normalEndSequence.phaseTimerMs = 0;
+    normalEndScreenClickUnlockAt = Date.now() + normalEndScreenClickLockDurationMs;
   } else if (normalEndSequence.phase === 'endScreenFadeOut' && normalEndSequence.phaseTimerMs >= normalEndScreenFadeOutDurationMs) {
     finishNormalEndSequence();
   }
@@ -5450,6 +5538,8 @@ function drawNormalEndEndingScreen() {
 }
 
 function startBossFinalSequence() {
+  // 「目覚め」経由の特別なラスボス戦はここで終了。以降は通常の撃破後演出（背景・画像とも）に戻す
+  dreamBossActive = false;
   // ラスボスを退けた瞬間の同僚の生死で、この先のエンディングの分岐を決めておく
   // 目覚めの一文も、撃破した瞬間の実際の時間帯で1つに固定しておく（表示のたびに変わらないように）
   bossFinalSequence = {
@@ -6184,8 +6274,10 @@ canvas.addEventListener('click', (event) => {
     bossFinalSequence.phaseTimerMs = 0;
     return;
   }
-  // ノーマルルート終了時の負けイベント戦闘：エンディング文がフェードイン表示中にクリックすると、フェードアウトしてタイトルへ
+  // ノーマルルート終了時の負けイベント戦闘：エンディング文がフェードイン表示中にクリックすると、フェードアウトしてタイトルへ。
+  // 画面が切り替わった直後の誤操作・残っていたクリックで即座にタイトルへ進まないよう、少しの間はクリックを無視する
   if (normalEndSequence && normalEndSequence.phase === 'endScreen') {
+    if (Date.now() < normalEndScreenClickUnlockAt) return;
     normalEndSequence.phase = 'endScreenFadeOut';
     normalEndSequence.phaseTimerMs = 0;
     return;
@@ -6281,6 +6373,12 @@ function update() {
       setupFadeOnComplete = null;
       if (onComplete) onComplete();
     }
+    return;
+  }
+
+  // 「目覚め」で夢ルートに入った直後の「24:00」演出中は、他の一切を停止する（3倍加速の影響を受けない）
+  if (dreamBossIntroSequence) {
+    updateDreamBossIntroSequence(rawDt);
     return;
   }
 
@@ -6458,9 +6556,12 @@ function update() {
     if (gameOver || deathSequence) return;
   }
 
-  // 固定敵（IT用語モチーフ）の進行を処理する。ラスボス・中ボスの有無や、ゲーム内時間の進行状況に関わらず並行して進む
-  updateFixedEnemy(dt);
-  if (gameOver || deathSequence) return;
+  // 固定敵（IT用語モチーフ）の進行を処理する。ラスボス・中ボスの有無や、ゲーム内時間の進行状況に関わらず並行して進む。
+  // ただし「目覚め」経由の特別なラスボス戦では、固定敵は一切出現させない
+  if (!dreamBossActive) {
+    updateFixedEnemy(dt);
+    if (gameOver || deathSequence) return;
+  }
 
   // 残業を承諾して固定敵を片付けている間、すべて排除できたらその場で自動的に一日を終了する
   if (fixedEnemyOvertimeConfirmed && currentHour >= dayEndHour && fixedEnemies.length === 0) {
@@ -7759,9 +7860,9 @@ const backgroundTimeKeyframes = [
 ];
 
 function drawBackground() {
-  // タイトル（オープニング）画面の背景がafter_normalENDになっている周回では、
-  // 戦闘画面も時間帯に応じた背景の代わりに、常にこの専用背景を使う
-  if (shouldShowAfterNormalEndTitleBackground()) {
+  // タイトル（オープニング）画面の背景がafter_normalENDになっている周回、および「目覚め」経由の
+  // 特別なラスボス戦の間は、戦闘画面も時間帯に応じた背景の代わりに、常にこの専用背景を使う
+  if (dreamBossActive || shouldShowAfterNormalEndTitleBackground()) {
     if (backgroundDreamcatcherImage.complete && backgroundDreamcatcherImage.naturalWidth > 0) {
       ctx.drawImage(backgroundDreamcatcherImage, 0, 0, canvas.width, canvas.height);
     } else {
@@ -7877,8 +7978,9 @@ function drawBossEvent() {
     const bodyX = geo.x + exitShakeX;
     const bodyY = geo.y + exitOffsetY;
     // 背景の塗りつぶしは行わない：透明部分は、そのまま背景が透けて見えるようにする。
-    // ノーマルルート終了時の負けイベント戦闘では、last_boss_normal.png を代わりに使う
-    const activeBossImage = bossEvent.useAltImage ? normalEndBossImage : bossImage;
+    // ノーマルルート終了時の負けイベント戦闘では、last_boss_normal.png を、
+    // 「目覚め」経由の特別なラスボス戦では last_boss.png を代わりに使う
+    const activeBossImage = dreamBossActive ? dreamBossImage : (bossEvent.useAltImage ? normalEndBossImage : bossImage);
     if (activeBossImage.complete && activeBossImage.naturalWidth > 0) {
       const scale = geo.width / activeBossImage.naturalWidth;
       const sourceHeight = Math.min(activeBossImage.naturalHeight, geo.height / scale);
@@ -8742,6 +8844,12 @@ function draw() {
   uiButtons = [];
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+  // 「目覚め」で夢ルートに入った直後の「24:00」演出中は、専用の画面のみを表示する
+  if (dreamBossIntroSequence) {
+    drawDreamBossIntroSequence();
+    return;
+  }
+
   // 力尽きた演出中は、通常のゲーム画面は描かず専用の演出画面のみを表示する
   if (deathSequence) {
     drawDeathSequenceScene();
@@ -9138,8 +9246,9 @@ function draw() {
       ctx.fillText(`${def.label}  Lv.${level}/${maxLevel}`, cellX + 10, cellY + 14);
       ctx.fillStyle = '#cfd8dc';
       ctx.font = '11px sans-serif';
-      // 現在のレベルに応じた「今の効果」を表示する（MAX後も、その時点の効果をそのまま表示し続ける）
-      const descText = level > 0 ? def.describeLevel(level) : '未強化（まだ効果なし）';
+      // 現在のレベルに応じた「今の効果」を表示する（MAX後も、その時点の効果をそのまま表示し続ける）。
+      // 未強化の間は、詳細な数値の代わりに「何がどう強化されるか」の簡単な説明を表示する
+      const descText = level > 0 ? def.describeLevel(level) : `未強化：${def.preview}`;
       const descLines = wrapTextToWidth(descText, textMaxWidth).slice(0, 2);
       descLines.forEach((line, i) => {
         ctx.fillText(line, cellX + 10, cellY + 27 + i * 12);
@@ -10005,8 +10114,13 @@ function draw() {
     const numberGlyphs = ['①', '②', '③'];
     const panelX = 400, panelY = 45, panelW = 388;
     const choiceBtnH = 34, choiceBtnGap = 8;
-    const choiceAreaTop = panelY + 46;
-    const panelH = 46 + quizState.choices.length * (choiceBtnH + choiceBtnGap);
+    const questionFont = 'bold 14px sans-serif';
+    const questionLineHeight = 18;
+    ctx.font = questionFont;
+    const questionLines = wrapTextToWidth(`QUIZ: ${quizState.text}`, panelW - 24);
+    const questionBlockHeight = 14 + questionLines.length * questionLineHeight;
+    const choiceAreaTop = panelY + questionBlockHeight + 10;
+    const panelH = questionBlockHeight + 10 + quizState.choices.length * (choiceBtnH + choiceBtnGap);
 
     ctx.save();
     ctx.fillStyle = 'rgba(8, 18, 35, 0.86)';
@@ -10016,8 +10130,10 @@ function draw() {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
     ctx.fillStyle = '#bbdefb';
-    ctx.font = 'bold 14px sans-serif';
-    ctx.fillText(`QUIZ: ${quizState.text}`, panelX + 12, panelY + 22);
+    ctx.font = questionFont;
+    questionLines.forEach((line, i) => {
+      ctx.fillText(line, panelX + 12, panelY + 22 + i * questionLineHeight);
+    });
     ctx.restore();
 
     quizState.choices.forEach((choice, index) => {
@@ -10525,28 +10641,66 @@ function draw() {
   }
 
   // 重要通知は最前面に表示し、クリック／タップされるまでゲームを停止する。
+  // 本文・詳細文とも、枠からはみ出さないよう幅に応じて折り返し、必要な行数ぶん枠の高さを広げる
   if (acknowledgementNotice) {
     ctx.fillStyle = 'rgba(0, 0, 0, 0.72)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    const noticeX = 130, noticeY = 175, noticeW = 540, noticeH = 210;
+
+    const noticeW = 560;
+    const noticePaddingX = 30;
+    const noticeTextMaxWidth = noticeW - noticePaddingX * 2;
+    const titleFont = 'bold 26px sans-serif';
+    const titleLineHeight = 32;
+    const detailFont = '15px sans-serif';
+    const detailLineHeight = 20;
+    const topPadding = 30;
+    const gapAfterTitle = 12;
+    const gapBeforePrompt = 22;
+    const promptLineHeight = 20;
+    const bottomPadding = 22;
+
+    ctx.textAlign = 'center';
+    ctx.font = titleFont;
+    const titleLines = wrapTextToWidth(acknowledgementNotice.text, noticeTextMaxWidth);
+    let detailLines = [];
+    if (acknowledgementNotice.detail) {
+      ctx.font = detailFont;
+      detailLines = wrapTextToWidth(acknowledgementNotice.detail, noticeTextMaxWidth);
+    }
+
+    const noticeH = Math.max(210, topPadding + titleLines.length * titleLineHeight +
+      (detailLines.length > 0 ? gapAfterTitle + detailLines.length * detailLineHeight : 0) +
+      gapBeforePrompt + promptLineHeight + bottomPadding);
+    const noticeX = canvas.width / 2 - noticeW / 2;
+    const noticeY = Math.max(20, (canvas.height - noticeH) / 2);
+
     ctx.fillStyle = 'rgba(12, 20, 34, 0.96)';
     ctx.fillRect(noticeX, noticeY, noticeW, noticeH);
     ctx.strokeStyle = acknowledgementNotice.color;
     ctx.lineWidth = 3;
     ctx.strokeRect(noticeX, noticeY, noticeW, noticeH);
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+
+    ctx.textBaseline = 'top';
+    let cursorY = noticeY + topPadding;
     ctx.fillStyle = acknowledgementNotice.color;
-    ctx.font = 'bold 30px sans-serif';
-    ctx.fillText(acknowledgementNotice.text, canvas.width / 2, noticeY + 68);
-    if (acknowledgementNotice.detail) {
+    ctx.font = titleFont;
+    titleLines.forEach(line => {
+      ctx.fillText(line, canvas.width / 2, cursorY);
+      cursorY += titleLineHeight;
+    });
+    if (detailLines.length > 0) {
+      cursorY += gapAfterTitle;
       ctx.fillStyle = '#eceff1';
-      ctx.font = '17px sans-serif';
-      ctx.fillText(acknowledgementNotice.detail, canvas.width / 2, noticeY + 112);
+      ctx.font = detailFont;
+      detailLines.forEach(line => {
+        ctx.fillText(line, canvas.width / 2, cursorY);
+        cursorY += detailLineHeight;
+      });
     }
+    cursorY += gapBeforePrompt;
     ctx.fillStyle = '#fff59d';
     ctx.font = '16px sans-serif';
-    ctx.fillText('クリック / タップで再開', canvas.width / 2, noticeY + 166);
+    ctx.fillText('クリック / タップで再開', canvas.width / 2, cursorY);
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
   }
