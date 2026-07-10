@@ -1596,7 +1596,7 @@ function finishLunchAtDayEnd() {
 
 // --- クイズ：平日の10時・15時に抽選し、週2回まで発生 ---
 const quizHours = [10, 15];
-const quizChancePerOpportunity = 0.2;
+const quizChancePerOpportunity = 0.3; // 従来比150%
 const maxWeeklyQuizCount = 2;
 const quizAnswerRadius = 23;
 const quizAnswerLockDurationMs = 1500; // 出現直後に誤って踏んで回答してしまわないための猶予時間
@@ -1608,12 +1608,66 @@ let quizExpireAt = 0; // この時刻（Date.now()基準）を過ぎたら、未
 let internalItKnowledge = 0;
 let internalCommunicationSkill = 0;
 const quizQuestions = [
-  { category: 'it', text: 'HTTPSが主に保護するものは？', choices: ['通信内容', '画面サイズ', 'CPU温度'], correct: 0 },
-  { category: 'it', text: 'バックアップの目的は？', choices: ['データ復旧', '回線高速化', '文字拡大'], correct: 0 },
-  { category: 'it', text: '強いパスワードに適するものは？', choices: ['長く複雑', '誕生日', 'password'], correct: 0 },
-  { category: 'communication', text: '認識違いを減らす行動は？', choices: ['復唱・確認', '推測で進行', '黙って保留'], correct: 0 },
-  { category: 'communication', text: '問題報告で最初に伝えるものは？', choices: ['結論と影響', '雑談', '言い訳'], correct: 0 },
-  { category: 'communication', text: '意見が対立したとき有効なのは？', choices: ['目的を確認', '無視する', '声量で勝つ'], correct: 0 }
+  { category: 'it', text: 'CPUの役割として最も適切なものはどれか。',
+    choices: ['演算処理や各装置の制御を行う', 'データを長期間保存する', 'プリンタへ印刷する'], correct: 0 },
+  { category: 'it', text: 'RAMの特徴として最も適切なものはどれか。',
+    choices: ['電源を切っても内容を保持する', '電源を切ると内容が消える', 'データを圧縮して保存する'], correct: 1 },
+  { category: 'it', text: 'OSの役割として最も適切なものはどれか。',
+    choices: ['Webページを表示する', 'ハードウェアやソフトウェアを管理する', 'データベースを作成する'], correct: 1 },
+  { category: 'it', text: 'SSDの特徴として適切なものはどれか。',
+    choices: ['磁気ディスクを回転させて記録する', '光ディスクに記録する装置である', '半導体メモリを利用して記録する'], correct: 2 },
+  { category: 'it', text: 'LANの説明として適切なものはどれか。',
+    choices: ['世界中を結ぶ通信網である', '限られた範囲で利用する通信網である', '人工衛星だけを利用する通信網である'], correct: 1 },
+  { category: 'it', text: 'IPアドレスの役割として適切なものはどれか。',
+    choices: ['ネットワーク上の機器を識別する', '利用者の権限を管理する', 'データを暗号化する'], correct: 0 },
+  { category: 'it', text: 'SQLの用途として最も適切なものはどれか。',
+    choices: ['データベースを検索・更新する', 'Webページを装飾する', 'ネットワークを監視する'], correct: 0 },
+  { category: 'it', text: 'データベースの主な目的はどれか。',
+    choices: ['データを効率よく管理する', 'CPUの性能を向上させる', '通信速度を高速化する'], correct: 0 },
+  { category: 'it', text: 'ファイアウォールの役割として適切なものはどれか。',
+    choices: ['保存データを自動で圧縮する', '不正な通信を制御する', 'ウイルスを自動で削除する'], correct: 1 },
+  { category: 'it', text: 'ウイルス対策ソフトの役割はどれか。',
+    choices: ['コンピュータウイルスを検出・駆除する', '通信を暗号化する', '利用者認証を管理する'], correct: 0 },
+  { category: 'it', text: 'フィッシング詐欺の説明として適切なものはどれか。',
+    choices: ['通信を大量に送りサービスを停止させる', '偽サイトで認証情報を盗む', 'ファイルを暗号化し身代金を要求する'], correct: 1 },
+  { category: 'it', text: 'ランサムウェアの特徴として適切なものはどれか。',
+    choices: ['不正アクセスを監視するソフトである', 'ファイルを暗号化し金銭を要求する', '通信を高速化するソフトである'], correct: 1 },
+  { category: 'it', text: 'バックアップを行う目的として適切なのはどれか。',
+    choices: ['障害時にデータを復元するため', 'CPUの処理速度を向上させるため', 'ネットワーク負荷を軽減するため'], correct: 0 },
+  { category: 'it', text: '機密性を表す内容として適切なものはどれか。',
+    choices: ['情報が改ざんされていないこと', '必要なとき利用できること', '許可された人だけが利用できること'], correct: 2 },
+  { category: 'it', text: '完全性を表す内容として適切なものはどれか。',
+    choices: ['情報が正確で改ざんされていないこと', '必要なとき利用できること', '誰でも閲覧できること'], correct: 0 },
+  { category: 'it', text: '可用性を表す内容として適切なものはどれか。',
+    choices: ['情報を暗号化していること', '必要なとき利用できること', '利用者を限定していること'], correct: 1 },
+  { category: 'it', text: 'IoTの説明として最も適切なものはどれか。',
+    choices: ['様々な機器をネットワークへ接続する', '人工知能だけで業務を行う', '仮想化技術のみを利用する'], correct: 0 },
+  { category: 'it', text: 'AIの活用例として適切なものはどれか。',
+    choices: ['HDDの容量を増やす', '画像から人物を識別する', '通信ケーブルを接続する'], correct: 1 },
+  { category: 'it', text: 'クラウドサービスの特徴として適切なのはどれか。',
+    choices: ['必ず自社運用より安価になる', 'インターネットなしでも利用できる', '必要に応じて利用資源を増減しやすい'], correct: 2 },
+  { category: 'it', text: 'SaaSの説明として適切なものはどれか。',
+    choices: ['ソフトウェアをサービスとして利用する形態', 'サーバだけを提供する形態', 'ネットワーク機器を貸し出す形態'], correct: 0 },
+  { category: 'it', text: 'PDCAの「C」が表す内容はどれか。',
+    choices: ['実行する', '評価・確認する', '改善する'], correct: 1 },
+  { category: 'it', text: 'プロジェクト管理で重要な要素はどれか。',
+    choices: ['気温を管理すること', '画面の明るさを管理すること', '納期や進捗を管理すること'], correct: 2 },
+  { category: 'it', text: '著作権法で保護される対象はどれか。',
+    choices: ['数学の定理', '自作したプログラム', '元素記号'], correct: 1 },
+  { category: 'it', text: '個人情報に該当するものはどれか。',
+    choices: ['氏名と生年月日の組合せ', '商品の価格一覧', '今日の最高気温'], correct: 0 },
+  { category: 'it', text: 'DXの目的として適切なものはどれか。',
+    choices: ['紙の書類を増やすこと', '業務をデジタル技術で変革すること', 'コンピュータを大型化すること'], correct: 1 },
+  { category: 'it', text: 'QRコードの特徴として適切なものはどれか。',
+    choices: ['一次元バーコードの一種である', '数値しか記録できない', '二次元コードで多くの情報を格納できる'], correct: 2 },
+  { category: 'it', text: 'ブラウザの役割として適切なものはどれか。',
+    choices: ['Webページを閲覧するためのソフトウェア', 'データベースを管理するソフトウェア', 'ウイルスを駆除するソフトウェア'], correct: 0 },
+  { category: 'it', text: 'VPNを利用する主な目的はどれか。',
+    choices: ['安全な通信経路を確保する', 'CPU性能を向上させる', 'ディスク容量を増やす'], correct: 0 },
+  { category: 'it', text: 'ルータの役割として適切なものはどれか。',
+    choices: ['文書を印刷する', '異なるネットワーク同士を接続する', 'データを圧縮する'], correct: 1 },
+  { category: 'it', text: 'HTMLの主な用途として適切なものはどれか。',
+    choices: ['データベースを操作する', '表計算を行う', 'Webページの構造を記述する'], correct: 2 }
 ];
 
 function startQuizEvent() {
@@ -1682,8 +1736,9 @@ function processTimedHourEvents(previousHour, newHour) {
     if (hour === dayEndHour && dayNumber % 7 === 0 && !midBossEvent) startMidBossEvent();
     const weekday = currentDate.getDay();
     const isWeekday = weekday >= 1 && weekday <= 5 && !isHoliday(currentDate);
+    // ボス系の敵（ラスボス・「巨大案件」）との戦闘中はクイズを出さない
     if (isWeekday && quizHours.includes(hour) && weeklyQuizCount < maxWeeklyQuizCount && !quizState &&
-        Math.random() < quizChancePerOpportunity) {
+        !bossEvent && !midBossEvent && Math.random() < quizChancePerOpportunity) {
       startQuizEvent();
     }
   }
