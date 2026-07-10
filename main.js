@@ -496,6 +496,7 @@ let startScreen = true;
 let setupStep = null;
 let dreamMemoryShopActive = false; // タイトル画面から開く、夢の記憶ポイントでの強化画面
 let endingListActive = false; // タイトル画面から開く、到達済みエンディング一覧画面
+let controllerHelpActive = false; // タイトル画面から開く、ゲームコントローラーの操作説明画面
 let titleResetConfirmActive = false; // タイトル画面左上の「リセット」ボタンを押した後の確認ダイアログ表示中かどうか
 // 目覚めエンド（真エンド・同僚生存）到達後、通常のタイトルへ戻す代わりに表示する専用のタイトル画面
 let trueEndTitleScreenActive = false;
@@ -4565,6 +4566,63 @@ const releaseJoystick = (event) => {
 moveJoystickEl.addEventListener('pointerup', releaseJoystick);
 moveJoystickEl.addEventListener('pointercancel', releaseJoystick);
 
+// ===== ゲームコントローラー対応（Gamepad API） =====
+// 左スティック＝移動（オンスクリーンのジョイスティックを操作していない間だけ反映）、右スティック＝照準、
+// R2/RTまたはAボタン＝連射、Bボタン＝パリィ（押した瞬間のみ）、Startボタン＝ポーズ（押した瞬間のみ）
+const gamepadStickDeadzone = 0.2;
+let gamepadFireHeld = false;
+let gamepadAimActive = false; // 右スティックが一定以上倒れている間、trueになる
+let gamepadAimAngle = 0;
+let gamepadParryHeldLastFrame = false;
+let gamepadPauseHeldLastFrame = false;
+
+function pollGamepadInput() {
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  const pad = pads && pads[0];
+  gamepadAimActive = false;
+  gamepadFireHeld = false;
+  if (!pad) return;
+
+  // 左スティック：オンスクリーンのジョイスティックを操作していない間だけ、移動に反映する
+  if (moveJoystickPointerId === null) {
+    const lx = pad.axes[0] || 0;
+    const ly = pad.axes[1] || 0;
+    if (Math.hypot(lx, ly) > gamepadStickDeadzone) {
+      touchMoveVector.x = lx;
+      touchMoveVector.y = ly;
+    } else {
+      touchMoveVector.x = 0;
+      touchMoveVector.y = 0;
+    }
+  }
+
+  // 右スティック：一定以上倒れている間だけ、その方向を照準にする
+  const rx = pad.axes[2] || 0;
+  const ry = pad.axes[3] || 0;
+  if (Math.hypot(rx, ry) > gamepadStickDeadzone) {
+    gamepadAimActive = true;
+    gamepadAimAngle = Math.atan2(ry, rx);
+  }
+
+  // 発射（R2/RT、またはAボタン。押している間ずっと連射する）
+  gamepadFireHeld = !!(pad.buttons[7] && pad.buttons[7].pressed) || !!(pad.buttons[0] && pad.buttons[0].pressed);
+
+  if (!gameOver && !gameClear) {
+    // パリィ（Bボタン）：押した瞬間だけ発動する（押しっぱなしでの連発は防ぐ）
+    const parryPressed = !!(pad.buttons[1] && pad.buttons[1].pressed);
+    if (parryPressed && !gamepadParryHeldLastFrame) attemptDeflectPartnerBullet();
+    gamepadParryHeldLastFrame = parryPressed;
+
+    // ポーズ（Startボタン）：押した瞬間だけ切り替える
+    const pausePressed = !!(pad.buttons[9] && pad.buttons[9].pressed);
+    if (pausePressed && !gamepadPauseHeldLastFrame && !wakeUpConfirmActive) {
+      isPaused = !isPaused;
+      lastUpdate = Date.now();
+    }
+    gamepadPauseHeldLastFrame = pausePressed;
+  }
+}
+
 // ===== 画面外の攻撃ボタン（#btnMobileFire） =====
 // 押している間だけ連射する、単純なボタン（向きはスマホ用の自動照準設定で決まる）
 const mobileFireEl = document.getElementById('btnMobileFire');
@@ -6637,6 +6695,7 @@ fitCanvasToViewport();
 // ===== ゲーム状態の更新 =====
 // 毎フレーム、移動・攻撃・時刻・衝突などを計算する
 function update() {
+  pollGamepadInput();
   if (acknowledgementNotice) {
     lastUpdate = Date.now();
     return;
@@ -7282,7 +7341,10 @@ function update() {
     // ただし、オート攻撃・完全オートモードでない（自分で操作して撃っている）場合は、同僚の方向も狙い先の候補に含める
     const allowPartnerAim = !autoFireEnabled && !fullAutoModeEnabled;
     const autoAimTarget = (mobileAutoAimEnabled || fullAutoModeEnabled) ? findAutoAimTarget(allowPartnerAim) : null;
-    if (autoAimTarget) {
+    if (gamepadAimActive) {
+      // ゲームコントローラー：右スティックを倒している間は、その方向を最優先で照準にする
+      player.angle = gamepadAimAngle;
+    } else if (autoAimTarget) {
       player.angle = Math.atan2(autoAimTarget.en.y - player.y, autoAimTarget.en.x - player.x);
     } else {
       player.angle = Math.atan2(
@@ -7302,7 +7364,7 @@ function update() {
     // 完全オートモードはさらに、射線のすぐ近くに同僚がいる場合も余裕を持って撃つのを控える
     const autoFireBlockedByPartner = autoFiringActive &&
       wouldPlayerShotHitPartner(player.angle, 4, fullAutoModeEnabled ? fullAutoPartnerLineOfFireMargin : 0);
-    const wantsToFire = (autoFiringActive && !autoFireBlockedByPartner) || mouseFireHeld;
+    const wantsToFire = (autoFiringActive && !autoFireBlockedByPartner) || mouseFireHeld || gamepadFireHeld;
     // CSRF・クリックジャッキング：一定時間、意図しない操作をさせられて攻撃できなくなる
     if (wantsToFire && !stunned && fixedEnemyFireLockTimerMs <= 0) {
       if (now - lastFire >= currentFireRate) {
@@ -9994,6 +10056,52 @@ function draw() {
     return;
   }
 
+  if (controllerHelpActive) {
+    drawSetupBackground(false);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffd54f';
+    ctx.font = 'bold 24px sans-serif';
+    ctx.fillText('🎮 コントローラーの操作方法', canvas.width / 2, 40);
+    ctx.font = '13px sans-serif';
+    ctx.fillStyle = '#cfd8dc';
+    ctx.fillText('（ブラウザでゲームパッドを認識させるため、接続後に一度何かボタンを押してください）', canvas.width / 2, 64);
+    ctx.textAlign = 'left';
+
+    const rowX = canvas.width / 2 - 220;
+    const rowW = 440;
+    const rowH = 46;
+    const rowGap = 10;
+    const gridStartY = 96;
+    const controllerHelpRows = [
+      { input: '左スティック', desc: '移動' },
+      { input: '右スティック', desc: '照準（倒した方向を狙う）' },
+      { input: 'R2 / RT または A ボタン', desc: '連射（押している間）' },
+      { input: 'B ボタン', desc: 'パリィ（同僚弾をはじき返す）' },
+      { input: 'Start ボタン', desc: '一時停止 / 再開' }
+    ];
+    controllerHelpRows.forEach((row, index) => {
+      const rowY = gridStartY + index * (rowH + rowGap);
+      ctx.fillStyle = 'rgba(40, 40, 40, 0.5)';
+      ctx.fillRect(rowX, rowY, rowW, rowH);
+      ctx.strokeStyle = '#616161';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(rowX, rowY, rowW, rowH);
+      ctx.font = 'bold 15px sans-serif';
+      ctx.fillStyle = '#ffd54f';
+      ctx.fillText(row.input, rowX + 14, rowY + 20);
+      ctx.font = '13px sans-serif';
+      ctx.fillStyle = '#eceff1';
+      ctx.fillText(row.desc, rowX + 14, rowY + 38);
+    });
+
+    const gridBottom = gridStartY + controllerHelpRows.length * (rowH + rowGap) - rowGap;
+    const backBtnW2 = 200, backBtnH2 = 32;
+    drawUiButton(canvas.width / 2 - backBtnW2 / 2, gridBottom + 20, backBtnW2, backBtnH2,
+      '戻る', () => { controllerHelpActive = false; },
+      { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
+    return;
+  }
+
   if (startScreen) {
     drawSetupBackground();
     // 左上に小さく、全ての引き継ぎ状態をリセットするボタンを配置する
@@ -10003,6 +10111,9 @@ function draw() {
     // （ランダムな自機・同僚・関係性100・ノーマルエンド直後、という状態を疑似的に作るだけで、エンディング記録には残さない）
     drawUiButton(canvas.width - 10 - 130, 10, 130, 24, 'Waking Nightmare', triggerWakingNightmareDebug,
       { fillStyle: 'rgba(20, 20, 60, 0.55)', strokeStyle: '#9fa8da', font: 'bold 11px sans-serif' });
+    // 上部中央に小さく、ゲームコントローラーの操作説明を開くボタンを配置する
+    drawUiButton(canvas.width / 2 - 95, 10, 190, 24, '🎮 コントローラー操作', () => { controllerHelpActive = true; },
+      { fillStyle: 'rgba(40, 40, 40, 0.55)', strokeStyle: '#90a4ae', font: 'bold 12px sans-serif' });
     // after_normalEND使用時は、タイトル画面の文字をすべて明朝体系フォントにし、彩度・明度を少し落とした配色にする
     const useMinchoTitle = shouldShowAfterNormalEndTitleBackground();
     const titleFontFamily = useMinchoTitle
