@@ -128,9 +128,9 @@ function dreamMemoryUpgradeCost(currentLevel) {
 const endingListDefs = [
   { id: 'true1', icon: '👁️', label: '目覚めエンド', hint: '？？？を撃破し、同僚が生存している状態で終える（事実上のTRUE END）' },
   { id: 'true2', icon: '🖤', label: '再び悪夢エンド', hint: '？？？を撃破するが、同僚を失っている' },
-  { id: 'normal1', icon: '🌤️', label: 'END（良好）', hint: '月末を迎え、同僚との関係性が良好な状態で一区切りをつける' },
-  { id: 'normal2', icon: '🏁', label: 'END（普通）', hint: '月末を迎え、同僚との関係性が普通の状態で一区切りをつける' },
-  { id: 'normal3', icon: '🌧️', label: 'END（悪い）', hint: '月末を迎え、同僚との関係性が悪い状態で一区切りをつける' },
+  { id: 'normal1', icon: '🌤️', label: 'END（良好）', hint: '同僚との関係性が良好な状態で一区切りをつける' },
+  { id: 'normal2', icon: '🏁', label: 'END（普通）', hint: '同僚との関係性が普通の状態で一区切りをつける' },
+  { id: 'normal3', icon: '🌧️', label: 'END（悪い）', hint: '同僚との関係性が悪い状態で一区切りをつける' },
   { id: 'bad-san', icon: '🌀', label: 'END（心）', hint: 'SANが0になる' },
   { id: 'bad-lifespan', icon: '⚰️', label: 'END（寿命）', hint: '寿命が0になる' },
   { id: 'bad-partner-shot', icon: '💔', label: 'END（同僚）', hint: '同僚の誤射でとどめを刺される' },
@@ -549,14 +549,14 @@ const playerIconGreetingLines = [
 ];
 // 同僚アイコンの性別に応じて、口調の異なる「はじめまして」を含む挨拶からランダムで選ぶ
 const partnerIconGreetingLinesFemale = [
-  'はじめまして。よろしくお願いします、一緒に頑張りましょうね！',
+  'はじめまして。一緒に頑張りましょうね！',
   'はじめまして！どうぞよろしくお願いします！',
   'はじめまして。精一杯がんばりますね！'
 ];
 const partnerIconGreetingLinesMale = [
   'はじめまして。よろしく頼む、一緒に頑張ろう！',
-  'はじめまして！気合入れていくから、よろしくな！',
-  'はじめまして。全力でサポートするぞ！'
+  'はじめまして！気合入れていくから、よろしくね！',
+  'はじめまして。全力でサポートするよ！'
 ];
 const iconGreetingHoldMs = 1400; // 全文表示後、フェードアウトを始めるまで待つ時間
 const iconGreetingFadeMs = 500; // フェードアウトにかける時間
@@ -1100,7 +1100,7 @@ function spawnScheduledReport() {
   position.y = Math.max(collisionSafeMargin, Math.min(canvas.height - collisionSafeMargin, position.y));
   const maxHp = Math.ceil(scheduledReportBaseHp * getEnemyDifficultyMultiplier());
   scheduledReport = { ...position, radius: scheduledReportRadius, hp: maxHp, maxHp };
-  showMessage('16時：定時報告が発生！ 終業までに片付けよう', 3500, '#ffca28', '23px sans-serif');
+  showMessage('16時：定時報告が発生！', 3500, '#ffca28', '23px sans-serif');
 }
 
 function defeatScheduledReport() {
@@ -1875,10 +1875,10 @@ function answerQuiz(answerIndex) {
   if (correct) {
     if (partner.active) {
       adjustPartnerRelationship(5);
-      showMessage('クイズ正解！ IT知識が上昇し、同僚の好感度が上がりました', 2200, '#69f0ae', '22px sans-serif');
+      showMessage('クイズ正解！ IT知識が増加し、同僚の好感度が上がりました', 2200, '#69f0ae', '22px sans-serif');
       showRandomPartnerSpeechBubbleIfFriendly(partnerQuizCorrectLines, '#69f0ae', partnerQuizCorrectStressedLines);
     } else {
-      showMessage('ITの知識が向上した！', 2200, '#69f0ae', '22px sans-serif');
+      showMessage('ITの知識が身に付いた！', 2200, '#69f0ae', '22px sans-serif');
     }
   } else {
     adjustPartnerRelationship(-1);
@@ -2140,13 +2140,13 @@ const partnerGenderById = {
 // （tier自体はアイコン演出の輝き／暗転の強さの区分としては引き続き5段階のまま使う）
 // 配置換え当日、あいさつの前に共通で挟む地の文（主人公だけが前回の記憶を持っている、という導入）
 const reunionSceneIntroLines = [
-  '主人公は配置換えで、新しい部署に来た。',
+  '？？？は配置換えで、新しい部署に来た。',
   '紹介された隣席の同僚は、初対面のはずだった。',
-  'けれど主人公だけは覚えている。',
+  'けれど？？？だけは覚えている。',
   'この同僚と同じオフィスで働き、最後に窓の外から迫る黒い影に襲われたことを。',
   '同僚が倒れ、自分も抵抗むなしく床に崩れたことを。',
   '同僚は何も覚えていない。',
-  'だから主人公は、ただ静かに名刺を差し出す。'
+  'だから？？？は、ただ静かに名刺を差し出す。'
 ];
 // 各段階の「line」は、地の文（reunionSceneIntroLines）を全て表示し終えた後に見せる自機のセリフ。
 // 「paragraph」は、そのセリフの後に続けて1行ずつ表示する締めの地の文（tierごとに内容が異なる）
@@ -2155,21 +2155,21 @@ const reunionSceneTiers = {
     line: '「はじめまして」',
     paragraph: [
       '口にした瞬間、胸が痛んだ。',
-      '君をまた失う未来だけは、もう繰り返したくない。'
+      '同僚をまた失う未来だけは、もう繰り返したくない。'
     ]
   },
   2: { // 良い関係（関係性60〜79）＝前世での好感度：良好
     line: '「はじめまして」',
     paragraph: [
       '口にした瞬間、胸が痛んだ。',
-      '君をまた失う未来だけは、もう繰り返したくない。'
+      '同僚をまた失う未来だけは、もう繰り返したくない。'
     ]
   },
   3: { // 普通の関係（関係性40〜59）＝前世での好感度：普通
     line: '「はじめまして」',
     paragraph: [
       'と笑った。けれど{player}は知っている。',
-      '君と{player}は、あの黒い夜を一度だけ共有している。'
+      '同僚と{player}は、あの黒い夜を共有している。'
     ]
   },
   4: { // 悪い関係（関係性0〜39）＝前世での好感度：悪い
@@ -2183,7 +2183,7 @@ const reunionSceneTiers = {
     line: '「はじめまして」',
     paragraph: [
       'と言う声が少し濁った。',
-      '最後までわかり合えなかった君と、また隣になるなんて。'
+      '最後までわかり合えなかった同僚と、また隣になるなんて。'
     ]
   }
 };
@@ -3234,7 +3234,7 @@ const specialSkills = [
   { id: 'communication', name: 'コミュニケーション能力', description: '同僚の弾をパリィした時、または同僚が自機の弾をパリィした時、関係性がレベルごとにさらに+2上がる', maxLevel: 5 },
   {
     id: 'network-specialist', name: 'ネットワークスペシャリスト',
-    description: '弾が画面端でレベルごとに1回多く跳ね返る。画面端で反射した自弾（1回目以降すべて）は、自機がパリィ（オートパリィ含む）で狩り直せ、同僚が自動でパリィする確率も2倍になる',
+    description: '弾が画面端でレベルごとに1回多く跳ね返る。画面端で反射した自弾（1回目以降すべて）は、自機がパリィ（オートパリィ含む）で打ち直せ、同僚が自動でパリィする確率も2倍になる',
     maxLevel: 3
   },
   { id: 'teamwork', name: 'チームワーク', description: '自分と同僚、お互いの弾が着弾しそうな時（敵からの弾を除く）、お互いパリィが発動しやすくなる（Lv5で発動率80%）', maxLevel: 5 },
@@ -5763,7 +5763,10 @@ const midBossPhaseCount = midBossPhaseDefs.length;
 const midBossPhaseNumberIcons = ['①', '②', '③', '④', '⑤', '⑥', '⑦'];
 const midBossHoleRadius = 14;
 const midBossHoleFlashDurationMs = 220;
-const midBossHoleMinSpacing = 0.24;
+// 発射口の配置は、重複しない均等なマス目（4列×2行のうち7マスを使用）を用意し、
+// それをシャッフルしてから①～⑦の番号順に割り当てる（マスの位置自体は固定間隔なので重ならない）
+const midBossHoleGridCols = 4;
+const midBossHoleGridRows = 2;
 const midBossHoleWanderIntervalMinMs = 1400; // ラスボスの発射口よりゆっくり動き回る
 const midBossHoleWanderIntervalMaxMs = 2400;
 const midBossHoleWanderEaseFactor = 0.6;
@@ -5798,16 +5801,22 @@ function getMidBossGeometry() {
   return { x, y: topY, width, height: midBossHeight };
 }
 
-// フェーズ（発射口）はそれぞれ独立に、案件本体の上をゆっくりランダムに動き回る
+// フェーズ（発射口）はそれぞれ独立に、案件本体の上をゆっくりランダムに動き回る。
+// 配置は均等なマス目をシャッフルしてから番号順に割り当てるため、重複せず毎回ランダムな配置になる
 function generateMidBossHoles() {
+  const slots = [];
+  for (let row = 0; row < midBossHoleGridRows; row++) {
+    for (let col = 0; col < midBossHoleGridCols; col++) {
+      slots.push({
+        relX: 0.1 + (col + 0.5) / midBossHoleGridCols * 0.8,
+        relY: 0.25 + (row + 0.5) / midBossHoleGridRows * 0.5
+      });
+    }
+  }
+  const shuffledSlots = shuffleArray(slots);
   const holes = [];
   for (let i = 0; i < midBossPhaseCount; i++) {
-    let relX, relY, attempts = 0;
-    do {
-      relX = 0.1 + Math.random() * 0.8;
-      relY = 0.25 + Math.random() * 0.5;
-      attempts++;
-    } while (attempts < 20 && holes.some(h => Math.hypot(h.relX - relX, h.relY - relY) < midBossHoleMinSpacing));
+    const { relX, relY } = shuffledSlots[i];
     holes.push({
       phaseIndex: i, relX, relY,
       wanderTargetRelX: relX, wanderTargetRelY: relY,
@@ -9609,6 +9618,11 @@ function draw() {
     drawUiButton(canvas.width - 138, 12, 126, 30, '思い直す', respecDreamMemoryUpgrades,
       { fillStyle: 'rgba(84, 30, 30, 0.55)', strokeStyle: '#ef9a9a', font: 'bold 13px sans-serif' });
 
+    // デバッグ用：押すたびに保有ポイントを1増やす（テスト用のため恒久的な機能ではない）
+    drawUiButton(canvas.width - 138 - 108, 12, 100, 30, 'ポイント付与',
+      () => { dreamMemorySave.points += 1; saveDreamMemorySave(); },
+      { fillStyle: 'rgba(20, 20, 60, 0.55)', strokeStyle: '#9fa8da', font: 'bold 13px sans-serif' });
+
     // 項目数が多いため、2列に分けて見やすくする
     const cols = 2;
     const colGap = 16;
@@ -10080,6 +10094,14 @@ function draw() {
       ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
+      // 弾の中心に「援」の文字を入れ、援護弾だとひと目でわかるようにする
+      ctx.save();
+      ctx.fillStyle = '#4a148c';
+      ctx.font = `bold ${b.radius}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('援', b.x, b.y + 1);
+      ctx.restore();
       continue;
     }
     ctx.save();
@@ -10092,6 +10114,9 @@ function draw() {
       ctx.fillStyle = '#ff1744';
       ctx.shadowColor = '#ff1744';
       ctx.shadowBlur = 10;
+    } else if (b.owner === 'midBoss') {
+      // 「大規模プロジェクト」の弾は、通常のラスボス弾（白）と見分けやすいよう少しオレンジがかった色にする
+      ctx.fillStyle = '#ffccbc';
     } else {
       ctx.fillStyle = 'white';
     }
