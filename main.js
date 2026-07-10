@@ -10110,20 +10110,23 @@ function draw() {
       : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 12px sans-serif' });
 
   // 「自己犠牲」「献身」：習得済みかつ同僚が健在で、まだこの周回で使っていない時だけ、
-  // 十字型の小さなボタンをトグルボタン列の右側に並べて表示する（1周回につき1回のみ発動可能）
-  const oneTimeSkillBtnSize = 40;
-  const oneTimeSkillBtnX = toggleBtnX + toggleBtnW + 10;
-  let oneTimeSkillBtnY = toggleBtnStartY;
+  // 同僚のプロフィール区画（x:164, y:12, w:145, h:204）内の、ステータス文字の下・区画下端より上の
+  // 余白部分に、十字型の小さなボタンを横に並べて表示する（1周回につき1回のみ発動可能）
+  const partnerPanelX = 164, partnerPanelW = 145, partnerPanelBottom = 12 + 204;
+  const oneTimeSkillBtnSize = 30, oneTimeSkillBtnGap = 8;
+  const oneTimeSkillBtnY = partnerPanelBottom - oneTimeSkillBtnSize - 10;
+  const oneTimeSkillTotalW = oneTimeSkillBtnSize * 2 + oneTimeSkillBtnGap;
+  let oneTimeSkillBtnX = partnerPanelX + (partnerPanelW - oneTimeSkillTotalW) / 2;
   if (dreamMemorySave.upgrades.selfSacrifice >= 1 && !selfSacrificeUsedThisRun && partner.active) {
     drawUiButton(oneTimeSkillBtnX, oneTimeSkillBtnY, oneTimeSkillBtnSize, oneTimeSkillBtnSize,
       '✝', useSelfSacrificeSkill,
-      { fillStyle: 'rgba(140, 20, 20, 0.65)', strokeStyle: '#ef9a9a', font: 'bold 22px sans-serif' });
-    oneTimeSkillBtnY += oneTimeSkillBtnSize + toggleBtnGap;
+      { fillStyle: 'rgba(140, 20, 20, 0.65)', strokeStyle: '#ef9a9a', font: 'bold 16px sans-serif' });
+    oneTimeSkillBtnX += oneTimeSkillBtnSize + oneTimeSkillBtnGap;
   }
   if (dreamMemorySave.upgrades.devotion >= 1 && !devotionUsedThisRun && partner.active) {
     drawUiButton(oneTimeSkillBtnX, oneTimeSkillBtnY, oneTimeSkillBtnSize, oneTimeSkillBtnSize,
       '✝', useDevotionSkill,
-      { fillStyle: 'rgba(20, 60, 140, 0.65)', strokeStyle: '#90caf9', font: 'bold 22px sans-serif' });
+      { fillStyle: 'rgba(20, 60, 140, 0.65)', strokeStyle: '#90caf9', font: 'bold 16px sans-serif' });
   }
 
   // 一時メッセージを画面上部の中央に表示する
