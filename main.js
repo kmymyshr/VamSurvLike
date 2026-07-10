@@ -498,6 +498,17 @@ let titleResetConfirmActive = false; // タイトル画面左上の「リセッ�
 let trueEndTitleScreenActive = false;
 let trueEndEndingListActive = false; // 専用タイトル画面から開く、専用デザインのエンディングリスト画面
 
+// 目覚めエンド専用タイトル画面の「就活を始める」：周回には入らず、ホワイトアウト→中央に一枚画像を表示→
+// クリックでフェードアウトしてゲームを終了する（ブラウザを閉じる）専用の演出
+let jobHuntEndSequence = null; // null、または { phase: 'whiteout' | 'image' | 'fadeOut', phaseTimerMs }
+const jobHuntEndWhiteoutDurationMs = 1800;
+const jobHuntEndFadeOutDurationMs = 1800;
+
+function startJobHuntEndSequence() {
+  trueEndTitleScreenActive = false;
+  jobHuntEndSequence = { phase: 'whiteout', phaseTimerMs: 0 };
+}
+
 // タイトル画面の「リセット」：夢の記憶ポイント・引き継ぎ役職／Score・エンディング記録など、
 // 永続化されている状態をすべて消し、まっさらな状態からやり直す
 function resetAllProgressAndReload() {
@@ -4450,6 +4461,10 @@ const bossFireIntervalMs = 1300;
 const bossBulletSpeed = 4.2;
 const bossBulletDamageSan = 12;
 const bossBulletDamageLifespan = 3;
+// 第5段階「劣等感」：発射口が1つ減るたび、残った発射口がこれらの倍率ぶん強化される
+// （耐久力は全回復した上でさらに1.5倍、攻撃速度・攻撃力はそれぞれ1.29倍になる）
+const bossInferiorityDurabilityMultiplier = 1.5;
+const bossInferiorityPowerMultiplier = 1.29;
 // 6段階、各段階ごとに性質の異なる発射口を持つ（耐久力は以前の設定の約30%に調整済み）
 const bossStageDefs = [
   {
@@ -4470,11 +4485,11 @@ const bossStageDefs = [
   },
   {
     stage: 5, name: '劣等感', nameEn: 'Inferiority Feelings',
-    holeCount: 10, hitsPerHole: 1, layout: 'wander-fast'
+    holeCount: 10, hitsPerHole: 1, layout: 'wander-fast', inferiority: true
   },
   {
     stage: 6, name: '内的葛藤', nameEn: 'Internal Conflict',
-    holeCount: 3, hitsPerHole: 30, layout: 'internal-conflict', selfConflict: true
+    holeCount: 3, hitsPerHole: 20, layout: 'internal-conflict', selfConflict: true
   },
   {
     stage: 7, name: '就職活動', nameEn: 'Job-Seeking Activities',
@@ -4562,9 +4577,11 @@ const bossStageGlassTexts = {
     lines: ['正しく進めなければ、人は仕事を探すのではなく、自分が社会に許される理由を探し続けてしまう。']
   }
 };
-// 第6段階（内的葛藤）：3つの自機アイコンが、互いに狙い合い体力を削り合う
-const bossInternalConflictDamagePerHit = 4; // 1回の攻撃で相手に与えるダメージ量
+// 第6段階（内的葛藤）：3つの自機アイコンが、互いに赤い球を撃ち合い体力を削り合う
+const bossInternalConflictDamagePerHit = 1; // 赤い球1発ぶんのダメージ量
 const bossInternalConflictFireIntervalMs = 1400; // お互いを攻撃する間隔の基準値
+const bossInternalConflictBulletSpeed = 5; // 赤い球の弾速
+const bossInternalConflictBulletRadius = 7;
 const bossInternalConflictLastStandDelayMs = 3000; // 最後の1人になってから爆発して消滅するまでの時間
 // 第4段階（承認欲求）：狙われただけで（当たらなくても）耐久力が少し回復してしまう。
 // パリィで打ち返した弾を当ててしまった場合は、さらに大きく回復する
@@ -4732,6 +4749,12 @@ function generateBossHoles(stage) {
     if (def.regen) hole.regen = true;
     if (def.burstDirections) hole.burstDirections = def.burstDirections;
     if (def.approvalSeeking) hole.approvalSeeking = true;
+    // 第5段階「劣等感」：発射口が1つ減るたび、残った発射口が強化されていく
+    if (def.inferiority) {
+      hole.inferiority = true;
+      hole.attackSpeedMultiplier = 1;
+      hole.damageMultiplier = 1;
+    }
     // 第2段階「シャドウ」：1つは自機、もう1つは同僚を模した半透明アイコンにする
     if (def.disguise) hole.disguiseRole = i === 0 ? 'player' : 'partner';
     holes.push(hole);
@@ -4944,7 +4967,8 @@ function updateBossEvent(dt) {
         hole.fireTimerMs = normalEndFireIntervalMs * (0.6 + Math.random() * 0.6);
       } else {
         fireSingleBossHoleBullet(hole);
-        hole.fireTimerMs = bossFireIntervalMs * (0.6 + Math.random() * 0.8);
+        // 第5段階「劣等感」：発射口が減るたびに強化された分、攻撃間隔を短くする（攻撃速度アップ）
+        hole.fireTimerMs = bossFireIntervalMs * (0.6 + Math.random() * 0.8) / (hole.attackSpeedMultiplier || 1);
       }
     }
   }
@@ -4973,18 +4997,40 @@ function updateBossEvent(dt) {
   }
 }
 
-// 第6段階「内的葛藤」：ランダムに選んだ、生きている他の自機アイコンへ攻撃を行う（自機・同僚は対象にしない）
+// 第6段階「内的葛藤」：ランダムに選んだ、生きている他の自機アイコンへ向けて赤い球を発射する（自機・同僚は対象にしない）
 function performInternalConflictAttack(hole) {
   const others = bossEvent.holes.filter(h => h !== hole && h.selfConflict && !h.destroyed);
   if (others.length === 0) return;
   const target = others[Math.floor(Math.random() * others.length)];
-  target.hitsTaken += bossInternalConflictDamagePerHit;
-  target.flashTimerMs = bossHoleFlashDurationMs;
-  const pos = getBossHoleAbsolutePosition(target);
-  spawnHitSpark(pos.x, pos.y, false);
-  if (target.hitsTaken >= target.maxHits) {
-    finalizeBossHoleDestruction(target);
+  const pos = getBossHoleAbsolutePosition(hole);
+  const targetPos = getBossHoleAbsolutePosition(target);
+  const angle = Math.atan2(targetPos.y - pos.y, targetPos.x - pos.x);
+  bullets.push({
+    x: pos.x,
+    y: pos.y,
+    vx: Math.cos(angle) * bossInternalConflictBulletSpeed,
+    vy: Math.sin(angle) * bossInternalConflictBulletSpeed,
+    radius: bossInternalConflictBulletRadius,
+    damage: bossInternalConflictDamagePerHit,
+    bounces: 0,
+    owner: 'selfConflict',
+    selfConflictSource: hole
+  });
+}
+
+// 第6段階「内的葛藤」：赤い球が、発射元以外の生きている自機アイコンに命中したかどうかを判定し、命中していれば処理する
+function checkInternalConflictBulletHit(bullet) {
+  if (!bossEvent) return false;
+  const hitHole = bossEvent.holes.find(h => h.selfConflict && !h.destroyed && h !== bullet.selfConflictSource &&
+    Math.hypot(bullet.x - getBossHoleAbsolutePosition(h).x, bullet.y - getBossHoleAbsolutePosition(h).y) <= bullet.radius + bossHoleRadius);
+  if (!hitHole) return false;
+  hitHole.hitsTaken += bullet.damage;
+  hitHole.flashTimerMs = bossHoleFlashDurationMs;
+  spawnHitSpark(bullet.x, bullet.y, false);
+  if (hitHole.hitsTaken >= hitHole.maxHits) {
+    finalizeBossHoleDestruction(hitHole);
   }
+  return true;
 }
 
 // 第3段階「確証バイアス」：自機・同僚の通常弾を自動的にパリィし、ランダムな方向へ跳ね返す。
@@ -5006,6 +5052,16 @@ function finalizeBossHoleDestruction(hole) {
   hole.destroyed = true;
   // 救済措置：既に10回復活済みなら、以降は復活タイマーをセットしない（そのまま倒したものとして扱う）
   if (hole.revive && (hole.reviveCount || 0) < bossHoleMaxRevives) hole.reviveTimerMs = bossReviveDelayMs;
+  // 第5段階「劣等感」：発射口が1つ減るたび、残った発射口は耐久力が全回復した上でさらに1.5倍になり、
+  // 攻撃速度・攻撃力もそれぞれ1.29倍になる
+  if (hole.inferiority) {
+    bossEvent.holes.filter(h => h.inferiority && !h.destroyed).forEach(h => {
+      h.maxHits *= bossInferiorityDurabilityMultiplier;
+      h.hitsTaken = 0;
+      h.attackSpeedMultiplier *= bossInferiorityPowerMultiplier;
+      h.damageMultiplier *= bossInferiorityPowerMultiplier;
+    });
+  }
   if (!bossEvent.holes.every(h => h.destroyed)) return;
   if (bossEvent.stage < bossStageDefs.length) {
     bossEvent.stage++;
@@ -5104,7 +5160,8 @@ function pushBossHoleBullet(pos, angle, hole, speedMultiplier = 1) {
     vx: Math.cos(angle) * bossBulletSpeed * speedMultiplier,
     vy: Math.sin(angle) * bossBulletSpeed * speedMultiplier,
     radius: 7,
-    damage: 1,
+    // 第5段階「劣等感」：発射口が減るたびに強化された分、攻撃力の倍率をそのまま弾に乗せる
+    damage: (hole && hole.damageMultiplier) || 1,
     bounces: 0,
     owner: 'boss',
     sourceHole: hole, // パリィで打ち返した時、この発射口へ向けて反射させるために覚えておく
@@ -5158,16 +5215,17 @@ function fireJobSeekingHoleBullet(hole) {
   }
 }
 
-// 同僚と同じ誤射ダメージ量で、ラスボス弾による被弾を処理する（パリィ成功時はここに来ない）
-function damagePlayerByBossBullet() {
+// 同僚と同じ誤射ダメージ量で、ラスボス弾による被弾を処理する（パリィ成功時はここに来ない）。
+// damageMultiplierは、第5段階「劣等感」で強化された発射口の弾ほど大きくなる
+function damagePlayerByBossBullet(damageMultiplier = 1) {
   if (friendlyFireInvincibleTimer > 0) return;
   if (playerBarrierCharges > 0) {
     playerBarrierCharges--;
     friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
     return;
   }
-  san = Math.max(0, san - bossBulletDamageSan * specialSkillEffects.sanDamageMultiplier);
-  lifespan = Math.max(0, lifespan - bossBulletDamageLifespan);
+  san = Math.max(0, san - bossBulletDamageSan * damageMultiplier * specialSkillEffects.sanDamageMultiplier);
+  lifespan = Math.max(0, lifespan - bossBulletDamageLifespan * damageMultiplier);
   friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
   friendlyFireHitFlashTimer = friendlyFireHitEffectDuration;
   explosionShakeTimer = Math.max(explosionShakeTimer, friendlyFireHitEffectDuration);
@@ -5175,15 +5233,15 @@ function damagePlayerByBossBullet() {
 }
 
 // 同僚がラスボス弾のパリィに失敗した時の被弾処理
-function damagePartnerByBossBullet() {
+function damagePartnerByBossBullet(damageMultiplier = 1) {
   if (!partner.active || partner.friendlyFireInvincibleTimer > 0) return;
   if (partner.barrierCharges > 0) {
     partner.barrierCharges--;
     partner.friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
     return;
   }
-  partner.san = Math.max(0, partner.san - bossBulletDamageSan);
-  partner.lifespan = Math.max(0, partner.lifespan - bossBulletDamageLifespan);
+  partner.san = Math.max(0, partner.san - bossBulletDamageSan * damageMultiplier);
+  partner.lifespan = Math.max(0, partner.lifespan - bossBulletDamageLifespan * damageMultiplier);
   partner.friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
 }
 
@@ -6407,6 +6465,21 @@ function update() {
     return;
   }
 
+  // 目覚めエンド専用タイトル画面の「就活を始める」を押した後：ホワイトアウト→画像表示→
+  // （クリック後）フェードアウトを経てゲームを終了する演出中は、他の一切を停止する
+  if (jobHuntEndSequence) {
+    jobHuntEndSequence.phaseTimerMs += rawDt * 1000;
+    if (jobHuntEndSequence.phase === 'whiteout' &&
+        jobHuntEndSequence.phaseTimerMs >= jobHuntEndWhiteoutDurationMs) {
+      jobHuntEndSequence.phase = 'image';
+      jobHuntEndSequence.phaseTimerMs = 0;
+    } else if (jobHuntEndSequence.phase === 'fadeOut' &&
+        jobHuntEndSequence.phaseTimerMs >= jobHuntEndFadeOutDurationMs) {
+      window.close();
+    }
+    return;
+  }
+
   // 力尽きた演出中は、画面を停止したまま演出用のタイマーだけを進める（3倍加速の影響を受けない）
   if (deathSequence) {
     deathSequence.phaseTimerMs += rawDt * 1000;
@@ -7143,6 +7216,13 @@ function update() {
       }
     }
     if (removed) continue;
+    // 第6段階「内的葛藤」：自機アイコン同士が撃ち合う赤い球。命中したらそのアイコンにダメージを与えて消える
+    if (b.owner === 'selfConflict') {
+      if (checkInternalConflictBulletHit(b)) {
+        bullets.splice(i, 1);
+      }
+      continue;
+    }
     // 特殊スキル「オートパリィ」：ネットワークスペシャリストで画面端から反射した自弾も、
     // 近くまで来たら自動でパリィを試みる（1発につき1回だけ判定する）
     if (b.owner === 'player' && (b.bouncesUsed || 0) >= 1 && !b.autoParryChecked &&
@@ -7220,7 +7300,7 @@ function update() {
         showRandomPartnerSpeechBubbleIfFriendly(partnerParryLines, '#80deea');
         continue;
       }
-      damagePartnerByBossBullet();
+      damagePartnerByBossBullet(b.damage || 1);
       bullets.splice(i, 1);
       continue;
     } else if (b.owner === 'boss' &&
@@ -7232,7 +7312,7 @@ function update() {
         showMessage('オートパリィ発動！', 1400, '#fff176');
         continue;
       }
-      damagePlayerByBossBullet();
+      damagePlayerByBossBullet(b.damage || 1);
       bullets.splice(i, 1);
       if (gameOver || deathSequence) return;
       continue;
@@ -7863,7 +7943,7 @@ function drawTrueEndTitleScreen() {
   drawUiButton(btnX, startY, btnW, btnH, 'エンディングリスト',
     () => { trueEndEndingListActive = true; }, trueEndTitleButtonStyle);
   drawUiButton(btnX, startY + (btnH + btnGap), btnW, btnH, '就活を始める',
-    () => { trueEndTitleScreenActive = false; selectMode(); }, trueEndTitleButtonStyle);
+    () => { startJobHuntEndSequence(); }, trueEndTitleButtonStyle);
   drawUiButton(btnX, startY + (btnH + btnGap) * 2, btnW, btnH, '寝る',
     () => {
       // 同僚との関係値・前回誰を選んだかの情報だけをリセットする（役職・Score・記憶ポイントなどは残す）
@@ -7871,6 +7951,53 @@ function drawTrueEndTitleScreen() {
       saveDreamMemorySave();
       location.reload();
     }, trueEndTitleButtonStyle);
+}
+
+// 目覚めエンド専用タイトル画面の「就活を始める」を押した後の演出。
+// whiteout：タイトル画面が白へ消えていく／image：中央に一枚画像（暫定は矩形）を表示し、クリックを待つ／
+// fadeOut：クリック後、画面全体が黒くフェードアウトしきったらゲームを終了する（updateBossEvent側でwindow.close()）
+const jobHuntEndPlaceholderImageW = 360;
+const jobHuntEndPlaceholderImageH = 220;
+function drawJobHuntEndSequence() {
+  const seq = jobHuntEndSequence;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (seq.phase === 'whiteout') {
+    // 専用タイトル画面の文字を、白へ完全に消えきるまで薄れさせながら見せておく
+    const p = Math.min(1, seq.phaseTimerMs / jobHuntEndWhiteoutDurationMs);
+    ctx.save();
+    ctx.globalAlpha = 1 - p;
+    drawGameTitleText(trueEndTitleCursiveFont, '#ff8fab', '#fffaf0', 'Wakin’ UnDead', true);
+    ctx.restore();
+    return;
+  }
+
+  // 'image'・'fadeOut'共通：中央に一枚画像（後日差し替え予定。暫定的に矩形で表示）を表示する
+  const imgX = canvas.width / 2 - jobHuntEndPlaceholderImageW / 2;
+  const imgY = canvas.height / 2 - jobHuntEndPlaceholderImageH / 2;
+  ctx.fillStyle = '#cfcfcf';
+  ctx.fillRect(imgX, imgY, jobHuntEndPlaceholderImageW, jobHuntEndPlaceholderImageH);
+  ctx.strokeStyle = '#888888';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(imgX, imgY, jobHuntEndPlaceholderImageW, jobHuntEndPlaceholderImageH);
+  ctx.fillStyle = '#888888';
+  ctx.font = '16px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('（差し替え予定の画像）', canvas.width / 2, imgY + jobHuntEndPlaceholderImageH + 28);
+  ctx.textAlign = 'left';
+
+  if (seq.phase === 'image') {
+    // 画面のどこをクリックしても、フェードアウトへ進む
+    uiButtons.push({
+      x: 0, y: 0, w: canvas.width, h: canvas.height,
+      action: () => { jobHuntEndSequence.phase = 'fadeOut'; jobHuntEndSequence.phaseTimerMs = 0; }
+    });
+  } else if (seq.phase === 'fadeOut') {
+    const p = Math.min(1, seq.phaseTimerMs / jobHuntEndFadeOutDurationMs);
+    ctx.fillStyle = `rgba(0, 0, 0, ${p})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
 }
 
 // 目覚めエンド専用タイトル画面から開く、専用デザイン（白背景・明朝体・黒枠半透明）のエンディングリスト
@@ -9085,6 +9212,12 @@ function draw() {
     return;
   }
 
+  // 「就活を始める」を押した後：ホワイトアウト→画像表示→フェードアウトでゲーム終了、の専用画面のみを表示する
+  if (jobHuntEndSequence) {
+    drawJobHuntEndSequence();
+    return;
+  }
+
   // ラスボス撃破演出：本体の退場（'retreat'）は通常の画面に重ねて描くが、
   // それ以降（背景復帰・白フェード・真エンド）は専用の画面に切り替える
   if (bossFinalSequence && bossFinalSequence.phase !== 'retreat') {
@@ -9872,6 +10005,11 @@ function draw() {
     if (b.owner === 'deflected') {
       ctx.fillStyle = '#ffd54f';
       ctx.shadowColor = '#fff176';
+      ctx.shadowBlur = 10;
+    } else if (b.owner === 'selfConflict') {
+      // 第6段階「内的葛藤」：自機アイコン同士が撃ち合う赤い球
+      ctx.fillStyle = '#ff1744';
+      ctx.shadowColor = '#ff1744';
       ctx.shadowBlur = 10;
     } else {
       ctx.fillStyle = 'white';
