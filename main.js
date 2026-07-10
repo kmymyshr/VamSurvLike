@@ -104,6 +104,12 @@ const dreamMemoryUpgradeDefs = [
     describeLevel: () => '同僚のSAN値が0にならなくなる',
     maxLevel: 1,
     costOverride: 0
+  },
+  {
+    id: 'awakening', label: '目覚め',
+    describeLevel: () => '第3回のアドベンチャーパートで、これまでの選択・関係性によらず必ず夢ルートに入る（真エンドの条件を満たしていると判定される）',
+    maxLevel: 1,
+    costOverride: 0
   }
 ];
 // 現在のレベルから次のレベルへ上げるのに必要な夢の記憶ポイント数（レベルが上がるごとに1ずつ増える。Lv0→1は1、Lv1→2は2…）
@@ -113,9 +119,8 @@ function dreamMemoryUpgradeCost(currentLevel) {
 
 // ===== エンディングリスト（タイトル画面から確認できる、到達済みエンディングの一覧） =====
 const endingListDefs = [
-  { id: 'true1', icon: '👁️', label: '目覚めエンド', hint: '？？？を撃破し、同僚が生存している状態で終える' },
+  { id: 'true1', icon: '👁️', label: '目覚めエンド', hint: '？？？を撃破し、同僚が生存している状態で終える（事実上のTRUE END）' },
   { id: 'true2', icon: '🖤', label: '再び悪夢エンド', hint: '？？？を撃破するが、同僚を失っている' },
-  { id: 'true', icon: '🌟', label: 'END', hint: 'ランク7に到達し、特殊な選択を全て正しく行い、同僚を失わずに完走する' },
   { id: 'normal1', icon: '🌤️', label: 'END（良好）', hint: '月末を迎え、同僚との関係性が良好な状態で一区切りをつける' },
   { id: 'normal2', icon: '🏁', label: 'END（普通）', hint: '月末を迎え、同僚との関係性が普通の状態で一区切りをつける' },
   { id: 'normal3', icon: '🌧️', label: 'END（悪い）', hint: '月末を迎え、同僚との関係性が悪い状態で一区切りをつける' },
@@ -511,18 +516,9 @@ function startSetupFadeOut(onComplete) {
 }
 
 // ===== エンディング =====
-// 'true' | 'normal1' | 'normal2' | 'normal3' | 'true1' | 'true2' | 'bad-san' | 'bad-lifespan' | 'bad-partner-shot' のいずれか。
-// gameOver / gameClear になる瞬間に確定する
+// 'normal1' | 'normal2' | 'normal3' | 'true1' | 'true2' | 'bad-san' | 'bad-lifespan' | 'bad-partner-shot' のいずれか。
+// gameOver / gameClear になる瞬間に確定する（true1＝夢ルートでラスボスを撃破し同僚が生存、が事実上のTRUE END）
 let endingType = null;
-// 週末ごとの特殊イベントで正しい選択をし続けているか（詳細な内容は別途実装予定。誤った選択で false になる）
-let allSpecialEventChoicesCorrect = true;
-function recordSpecialEventChoiceResult(isCorrect) {
-  if (!isCorrect) allSpecialEventChoicesCorrect = false;
-}
-// トゥルーエンドの条件：最終ランク（Rank7）に到達し、かつ週末の特殊イベントの選択をすべて正しく行っていること
-function isTrueEndEligible() {
-  return rank >= rankNames.length && allSpecialEventChoicesCorrect && !partnerEverLost;
-}
 
 // ===== 納期切れの爆発エフェクト =====
 const explosionEffectDuration = 500; // フラッシュと揺れの継続時間（ミリ秒）
@@ -1890,7 +1886,7 @@ function endWorkday() {
   // ランクはScoreに応じて毎フレーム自動更新されるため、ここでの判定は不要
   if (isLastDayOfMonth(currentDate)) {
     gameClear = true;
-    endingType = isTrueEndEligible() ? 'true' : getNormalEndingByRelationship();
+    endingType = getNormalEndingByRelationship();
     sendScore(score);
     return;
   }
@@ -2588,7 +2584,6 @@ const partner = {
   // 性格・向こう見ずさ（0〜1、初期はランダム）：高いほど疲労していても構わず撃ちたがる
   recklessness: 0.5
 };
-let partnerEverLost = false; // 一度でも力尽きたらtrue（トゥルーエンド条件に使う）
 // 同僚が離脱した原因（'san' / 'lifespan' / null）。休日に会いに行った時の対応を分けるために使う
 let partnerLossReason = null;
 let partnerLifespanAtLoss = 0; // 離脱した瞬間の寿命（SANが原因の離脱で復帰する際に使う）
@@ -2965,7 +2960,6 @@ function updatePartner(dt) {
   // 退場判定：SANか寿命が尽きたら以後登場しなくなり、プレイヤーにもSANダメージが入る
   if (partner.san <= 0 || partner.lifespan <= 0) {
     partner.active = false;
-    partnerEverLost = true;
     partnerLossReason = partner.lifespan <= 0 ? 'lifespan' : 'san';
     partnerLifespanAtLoss = partner.lifespan;
     if (normalEndBattleActive) {
@@ -3736,7 +3730,10 @@ function startPartnerAdventure(onComplete) {
     sceneKey = adv1Choice === 'A' ? 'adv2A' : 'adv2B';
   } else if (adventureRunCount === 3) {
     relCategoryAtAdv3 = category;
-    if (adv1Choice === 'A' && adv2Choice === 'C') {
+    if (dreamMemorySave.upgrades.awakening >= 1) {
+      // 「目覚め」：これまでの選択・関係性によらず、必ず夢ルートへ入る
+      sceneKey = 'adv3Dream';
+    } else if (adv1Choice === 'A' && adv2Choice === 'C') {
       sceneKey = isDreamFlagEligible() ? 'adv3Dream' : 'adv3AC';
     } else if (adv1Choice === 'A' && adv2Choice === 'D') {
       sceneKey = 'adv3AD';
@@ -7466,16 +7463,6 @@ function drawEndScreenButtons(baseY) {
 
 // ===== エンディング演出（一枚絵・説明文は仮のプレースホルダー。後で差し替え予定） =====
 const endingConfig = {
-  true: {
-    icon: '🌟',
-    label: 'TRUE END',
-    labelColor: '#ffd54f',
-    bgColor: 'rgba(40, 32, 4, 0.88)',
-    description: [
-      '（仮）あなたは仕事と人生の、真のバランスを見つけた。',
-      '最後まで正しい選択を積み重ねた者だけが辿り着く、本当の終わり。'
-    ]
-  },
   normal1: {
     icon: '🌤️',
     label: 'NORMAL END',
@@ -7734,6 +7721,12 @@ const backgroundTimeImages = {
   earlynight: (() => { const img = new Image(); img.src = 'images/background/03_earlynight.png'; return img; })(),
   night: (() => { const img = new Image(); img.src = 'images/background/04_night.png'; return img; })()
 };
+// 前回ノーマルエンドを迎えた時と全く同じ自機・同僚で周回している間、時間帯に関係なく使う専用の背景
+const backgroundDreamcatcherImage = (() => {
+  const img = new Image();
+  img.src = 'images/background/05_dreamcatcher.png';
+  return img;
+})();
 // ゲーム内時刻と背景画像の対応（時刻の間はなだらかにクロスフェードする）
 const backgroundTimeKeyframes = [
   { hour: dayStartHour, key: 'morning' },
@@ -7743,6 +7736,20 @@ const backgroundTimeKeyframes = [
 ];
 
 function drawBackground() {
+  // 前回ノーマルエンドを迎えた時と全く同じ自機・同僚を選んで周回している間は、
+  // 時間帯に応じた背景の代わりに、常にこの専用背景を使う
+  if (shouldShowReunionScene()) {
+    if (backgroundDreamcatcherImage.complete && backgroundDreamcatcherImage.naturalWidth > 0) {
+      ctx.drawImage(backgroundDreamcatcherImage, 0, 0, canvas.width, canvas.height);
+    } else {
+      ctx.fillStyle = backgroundGradient;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    // 背景を少し薄暗くして、敵・アイコン・文字などの前景を見やすくする
+    ctx.fillStyle = 'rgba(6, 10, 18, 0.3)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    return;
+  }
   const visualHour = getVisualGameHour();
   const firstFrame = backgroundTimeKeyframes[0];
   const lastFrame = backgroundTimeKeyframes[backgroundTimeKeyframes.length - 1];
@@ -9316,9 +9323,10 @@ function draw() {
     ctx.shadowOffsetY = 2;
     ctx.lineWidth = 4;
     ctx.strokeStyle = titleStrokeColor;
-    ctx.strokeText('Workin’ FunDead', canvas.width / 2, canvas.height / 2 - 118);
+    const subtitleText = useMinchoTitle ? 'Walkin’ UnDead' : 'Workin’ FunDead';
+    ctx.strokeText(subtitleText, canvas.width / 2, canvas.height / 2 - 118);
     ctx.fillStyle = titleFillColor;
-    ctx.fillText('Workin’ FunDead', canvas.width / 2, canvas.height / 2 - 118);
+    ctx.fillText(subtitleText, canvas.width / 2, canvas.height / 2 - 118);
     ctx.restore();
     ctx.textAlign = 'left';
 
