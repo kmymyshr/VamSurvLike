@@ -710,6 +710,10 @@ const fridgePosition = { x: 710, y: 520 };
 const coffeeItemSpawnPosition = { x: coffeeMakerPosition.x, y: coffeeMakerPosition.y };
 const energyDrinkItemSpawnPosition = { x: fridgePosition.x, y: fridgePosition.y };
 const stationRespawnDelayMs = 3000; // 取得後、この位置にまた出現するまでの時間
+// コーヒー・栄養ドリンクは固定位置に「落下演出なし・即着地」で出現するため、
+// 同僚が既にその場で待機していたりフルオートモード中だったりすると、出現した瞬間に取得されてしまう不具合があった。
+// 出現直後のこの猶予時間の間は、クリック・同僚の自動摂取・フルオートモードいずれでも取得できないようにする
+const stationItemPickupGraceMs = 500;
 
 // ===== 回復アイテム（栄養ドリンク） =====
 // チョコレートより効果は強いが出現頻度は低い上位互換の回復アイテム。時間経過では消えない
@@ -750,7 +754,8 @@ function getRandomEnergyDrinkSpawnDelay() {
   return stationRespawnDelayMs;
 }
 
-// 冷蔵庫のすぐ隣に生成する（固定位置。落下演出はなく、最初から取得可能）
+// 冷蔵庫のすぐ隣に生成する（固定位置。落下演出はなく、すぐ着地済みの状態になる。
+// ただし取得できるようになるまでには、下記の出現猶予（stationItemPickupGraceMs）が必要）
 function spawnEnergyDrink() {
   energyDrink = {
     x: energyDrinkItemSpawnPosition.x,
@@ -758,7 +763,8 @@ function spawnEnergyDrink() {
     targetY: energyDrinkItemSpawnPosition.y,
     radius: energyDrinkRadius,
     fallSpeed: 0,
-    landed: true
+    landed: true,
+    graceMs: stationItemPickupGraceMs
   };
 }
 
@@ -874,7 +880,8 @@ function getRandomCoffeeSpawnDelay() {
   return stationRespawnDelayMs;
 }
 
-// コーヒーメーカーのすぐ隣に生成する（固定位置。落下演出はなく、最初から取得可能）
+// コーヒーメーカーのすぐ隣に生成する（固定位置。落下演出はなく、すぐ着地済みの状態になる。
+// ただし取得できるようになるまでには、下記の出現猶予（stationItemPickupGraceMs）が必要）
 function spawnCoffee() {
   coffee = {
     x: coffeeItemSpawnPosition.x,
@@ -882,7 +889,8 @@ function spawnCoffee() {
     targetY: coffeeItemSpawnPosition.y,
     radius: coffeeRadius,
     fallSpeed: 0,
-    landed: true
+    landed: true,
+    graceMs: stationItemPickupGraceMs
   };
 }
 
@@ -2720,7 +2728,9 @@ function updatePartner(dt) {
     : null;
   // 脳疲労が60%を超えていて、着地済みの回復アイテムがあれば、追従・徘徊よりも優先して取りに行く
   // （栄養ドリンクとチョコレートが両方あれば、効果の大きい栄養ドリンクを優先する）
-  const landedEnergyDrink = (energyDrink && energyDrink.landed) ? energyDrink : null;
+  // 出現直後の猶予時間が残っている間は、同僚がその場で待機していても取得対象にしない
+  // （固定位置に落下演出なしで出現する栄養ドリンクは、猶予がないと出現と同時に取得されてしまう）
+  const landedEnergyDrink = (energyDrink && energyDrink.landed && !(energyDrink.graceMs > 0)) ? energyDrink : null;
   const landedChocolate = (chocolate && chocolate.landed) ? chocolate : null;
   const partnerRecoveryTarget = landedEnergyDrink || landedChocolate;
   const partnerWantsRecoveryItem = !!partnerRecoveryTarget &&
@@ -5982,12 +5992,12 @@ function tryCollectItemAtPoint(p) {
     consumeChocolate();
     return true;
   }
-  if (coffee && coffee.landed &&
+  if (coffee && coffee.landed && !(coffee.graceMs > 0) &&
       Math.hypot(p.x - coffee.x, p.y - coffee.y) <= coffee.radius + itemClickHitTolerance) {
     consumeCoffee();
     return true;
   }
-  if (energyDrink && energyDrink.landed &&
+  if (energyDrink && energyDrink.landed && !(energyDrink.graceMs > 0) &&
       Math.hypot(p.x - energyDrink.x, p.y - energyDrink.y) <= energyDrink.radius + itemClickHitTolerance) {
     consumeEnergyDrink();
     return true;
@@ -6472,8 +6482,10 @@ function update() {
       energyDrink.landed = true;
     }
   } else if (energyDrink) {
-    // 完全オートモード中は、クリック操作を挟まず着地後すぐに自動で取得する
-    if (fullAutoModeEnabled) {
+    // 出現直後の猶予時間が残っている間は、フルオートモードでも取得しない
+    if (energyDrink.graceMs > 0) energyDrink.graceMs = Math.max(0, energyDrink.graceMs - dt * 1000);
+    // 完全オートモード中は、猶予時間が終わり次第、クリック操作を挟まず自動で取得する
+    if (fullAutoModeEnabled && energyDrink.graceMs <= 0) {
       consumeEnergyDrink();
       if (gameOver || deathSequence) return;
     }
@@ -6499,8 +6511,10 @@ function update() {
       coffee.landed = true;
     }
   } else if (coffee) {
-    // 完全オートモード中は、クリック操作を挟まず着地後すぐに自動で取得する
-    if (fullAutoModeEnabled) {
+    // 出現直後の猶予時間が残っている間は、フルオートモードでも取得しない
+    if (coffee.graceMs > 0) coffee.graceMs = Math.max(0, coffee.graceMs - dt * 1000);
+    // 完全オートモード中は、猶予時間が終わり次第、クリック操作を挟まず自動で取得する
+    if (fullAutoModeEnabled && coffee.graceMs <= 0) {
       consumeCoffee();
       if (gameOver || deathSequence) return;
     }
@@ -7268,7 +7282,7 @@ function drawUiButton(x, y, w, h, label, action, options = {}) {
 function drawEndScreenButtons(baseY) {
   const btnW = 300, btnH = 48;
   const btnX = canvas.width / 2 - btnW / 2;
-  drawUiButton(btnX, baseY, btnW, btnH, '・・・という夢をみました', () => {
+  drawUiButton(btnX, baseY, btnW, btnH, '...という夢？', () => {
     // 次に同じ自機・同僚で始めた時の再会シーンのため、今回の相手との関係を記録しておく
     dreamMemorySave.lastRun = selectedPartnerIcon ? {
       playerGender: selectedGender,
