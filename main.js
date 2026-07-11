@@ -501,6 +501,19 @@ let lastFire = 0;
 let score = 0;
 let gameOver = false;
 let gameClear = false;
+// 「寝る」を選んで再読み込みされた直後だけ、タイトル画面を黒からゆっくりフェードインさせる
+// （sessionStorageは1回読んだら消し、通常の起動時には影響しない）
+const titleFadeInDurationMs = 1200;
+let titleFadeInRemainingMs = 0;
+try {
+  if (sessionStorage.getItem('vamSurvLike_titleFadeIn') === '1') {
+    sessionStorage.removeItem('vamSurvLike_titleFadeIn');
+    titleFadeInRemainingMs = titleFadeInDurationMs;
+  }
+} catch (e) {
+  // sessionStorageが使えない環境では、通常通りフェードなしで表示する
+}
+
 // 起動時はまずモード選択（startScreen）を表示し、その後 'gender' → 'partner-icon' → null（完了、ゲーム開始）と進む
 let startScreen = true;
 let setupStep = null;
@@ -5263,7 +5276,7 @@ function startBossEvent() {
     moveTimerMs: 0
   };
   enemies.length = 0; // 通常の敵は一時的に退避させ、ラスボス戦の間は出現しない
-  showMessage('……何かが、近寄ってくる気配がする。', 3400, '#ff1744', '26px sans-serif');
+  showMessage('……何かが、近寄ってくる気配がする。', 3400, '#ff1744', `26px ${trueEndTitleMinchoFont}`);
 }
 
 // ===== 「目覚め」で夢ルートに入り、ADV3を完走した直後の特別なラスボス戦 =====
@@ -5464,7 +5477,7 @@ function startDreamBossEvent() {
     moveTargetY: 0,
     moveTimerMs: 0
   };
-  showMessage('……何かが、近寄ってくる気配がする。', 3400, '#ff1744', '26px sans-serif');
+  showMessage('……何かが、近寄ってくる気配がする。', 3400, '#ff1744', `26px ${trueEndTitleMinchoFont}`);
 }
 
 function updateBossEvent(dt) {
@@ -5636,6 +5649,19 @@ function autoParryByBossHole(bullet) {
   bullet.owner = 'boss';
   bullet.sourceHole = undefined;
   bullet.stage3Reflected = true;
+  spawnDeflectEffect(bullet.x, bullet.y);
+}
+
+// 第2段階「シャドウ」：自分に対応するアイコン（自機なら自機を模した発射口、同僚なら同僚を模した発射口）への
+// 攻撃は、この確率でパリィされる。反射弾はランダムな方向へ飛ぶが、自機・同僚どちらにも当たり判定を持たず素通りする
+const shadowSelfIconParryChance = 0.9;
+function deflectBossHoleByShadowSelfIcon(bullet) {
+  const speed = Math.hypot(bullet.vx, bullet.vy) || bossBulletSpeed;
+  const angle = Math.random() * Math.PI * 2;
+  bullet.vx = Math.cos(angle) * speed;
+  bullet.vy = Math.sin(angle) * speed;
+  bullet.owner = 'deflected';
+  bullet.sourceHole = undefined;
   spawnDeflectEffect(bullet.x, bullet.y);
 }
 
@@ -7025,6 +7051,8 @@ function update() {
   const nowReal = Date.now();
   // rawDt：実際の経過時間（3倍加速モードの影響を受けない）。演出・カットシーン・UI画面の進行に使う
   const rawDt = (nowReal - lastUpdate) / 1000;
+  // 「寝る」演出を経て再読み込みされた直後だけ、タイトル画面のフェードインを進める
+  if (titleFadeInRemainingMs > 0) titleFadeInRemainingMs = Math.max(0, titleFadeInRemainingMs - rawDt * 1000);
   // ノーマルルート終了時の負けイベント戦闘：同僚が消える直前のスローモーション演出中は、
   // 全体の進行速度（dt）を10%に落とす（3倍加速モード中でもさらにその10%になる）
   const effectiveTimeScale = (normalEndSequence && normalEndSequence.phase === 'partnerLossSlowmo')
@@ -7037,6 +7065,12 @@ function update() {
     return;
   }
   gameClockMs = now;
+
+  // 目覚めエンド専用タイトル画面の「寝る」を押した後の演出中は、他の一切を停止する
+  if (nightmareAgainSequence) {
+    updateNightmareAgainSequence(rawDt);
+    return;
+  }
 
   // アドベンチャーパートに入る前の統計情報画面：「会話に進む」が押されるまで、他の一切を停止する
   if (adventureStatsSummaryActive) {
@@ -8066,6 +8100,13 @@ function update() {
           autoParryByBossHole(b);
           continue;
         }
+        if (hitHole.disguiseRole && b.owner === hitHole.disguiseRole &&
+            Math.random() < shadowSelfIconParryChance) {
+          // 第2段階「シャドウ」：自分に対応するアイコンへの攻撃は、高確率でパリィされる。
+          // 反射弾はランダムな方向へ飛ぶが、自機・同僚どちらにも当たらず素通りする
+          deflectBossHoleByShadowSelfIcon(b);
+          continue;
+        }
         if (hitHole.approvalSeeking && b.owner === 'deflected') {
           // 第4段階「承認欲求」：パリィで打ち返した弾が命中すると、通常弾以上に大きく回復してしまう
           hitHole.hitsTaken = Math.max(0, hitHole.hitsTaken - bossApprovalParryHealAmount);
@@ -8606,8 +8647,88 @@ function drawTrueEndTitleScreen() {
       // 同僚との関係値・前回誰を選んだかの情報だけをリセットする（役職・Score・記憶ポイントなどは残す）
       dreamMemorySave.lastRun = null;
       saveDreamMemorySave();
-      location.reload();
+      startNightmareAgainSequence();
     }, trueEndTitleButtonStyle);
+}
+
+// 目覚めエンド専用タイトル画面の「寝る」を押した後の演出：
+// 黒フェードアウト（3秒）→nightmare_again.pngが拡大しながらフェードイン→
+// 拡大を続けたまま黒フェードアウト（3秒）→タイトルへ（再読み込み後、タイトルがフェードインする）
+let nightmareAgainSequence = null; // null、または { phase: 'fadeOut' | 'imageIn' | 'imageOut', phaseTimerMs, scale }
+const nightmareAgainFadeOutDurationMs = 3000;
+const nightmareAgainImageFadeInDurationMs = 2200;
+const nightmareAgainImageFadeOutDurationMs = 3000;
+const nightmareAgainImageZoomPerSec = 0.09; // 1秒あたりの拡大量。フェードイン・フェードアウトを通じて一定速度で拡大し続ける
+const nightmareAgainImage = (() => {
+  const img = new Image();
+  img.src = 'images/background/nightmare_again.png';
+  return img;
+})();
+
+function startNightmareAgainSequence() {
+  // 専用タイトル画面の描画に戻らないよう切り替え、代わりにこの演出を専用画面として描画する
+  trueEndTitleScreenActive = false;
+  nightmareAgainSequence = { phase: 'fadeOut', phaseTimerMs: 0, scale: 1 };
+}
+
+function updateNightmareAgainSequence(rawDt) {
+  const seq = nightmareAgainSequence;
+  seq.phaseTimerMs += rawDt * 1000;
+  if (seq.phase !== 'fadeOut') {
+    seq.scale += nightmareAgainImageZoomPerSec * rawDt;
+  }
+  if (seq.phase === 'fadeOut' && seq.phaseTimerMs >= nightmareAgainFadeOutDurationMs) {
+    seq.phase = 'imageIn';
+    seq.phaseTimerMs = 0;
+  } else if (seq.phase === 'imageIn' && seq.phaseTimerMs >= nightmareAgainImageFadeInDurationMs) {
+    seq.phase = 'imageOut';
+    seq.phaseTimerMs = 0;
+  } else if (seq.phase === 'imageOut' && seq.phaseTimerMs >= nightmareAgainImageFadeOutDurationMs) {
+    nightmareAgainSequence = null;
+    // 再読み込み後の最初のタイトル表示だけ、黒からフェードインさせる
+    try { sessionStorage.setItem('vamSurvLike_titleFadeIn', '1'); } catch (e) {}
+    location.reload();
+  }
+}
+
+function drawNightmareAgainSequence() {
+  const seq = nightmareAgainSequence;
+
+  if (seq.phase === 'fadeOut') {
+    // 直前の専用タイトル画面を静止したまま表示し、その上に黒を重ねてフェードアウトする
+    // （ボタンは押せないよう、描画後に無効化する）
+    drawTrueEndTitleScreen();
+    uiButtons.length = 0;
+    const p = Math.min(1, seq.phaseTimerMs / nightmareAgainFadeOutDurationMs);
+    ctx.fillStyle = `rgba(0, 0, 0, ${p})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    return;
+  }
+
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const img = nightmareAgainImage;
+  if (img.complete && img.naturalWidth > 0) {
+    // 常に画面全体を覆う基準サイズ（cover）に、さらに拡大分を掛け合わせる
+    const coverScale = Math.max(canvas.width / img.naturalWidth, canvas.height / img.naturalHeight);
+    const drawScale = coverScale * seq.scale;
+    const drawW = img.naturalWidth * drawScale;
+    const drawH = img.naturalHeight * drawScale;
+    const imgAlpha = seq.phase === 'imageIn'
+      ? Math.min(1, seq.phaseTimerMs / nightmareAgainImageFadeInDurationMs)
+      : 1;
+    ctx.save();
+    ctx.globalAlpha = imgAlpha;
+    ctx.drawImage(img, canvas.width / 2 - drawW / 2, canvas.height / 2 - drawH / 2, drawW, drawH);
+    ctx.restore();
+  }
+
+  if (seq.phase === 'imageOut') {
+    const p = Math.min(1, seq.phaseTimerMs / nightmareAgainImageFadeOutDurationMs);
+    ctx.fillStyle = `rgba(0, 0, 0, ${p})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
 }
 
 // 目覚めエンド専用タイトル画面の「就活を始める」を押した後の演出。
@@ -9912,6 +10033,13 @@ function draw() {
     return;
   }
 
+  // 専用タイトル画面の「寝る」を押した後：黒フェードアウト→nightmare_again.pngが拡大しながらフェードイン→
+  // 拡大を続けたまま黒フェードアウト、の専用画面のみを表示する
+  if (nightmareAgainSequence) {
+    drawNightmareAgainSequence();
+    return;
+  }
+
   // 「就活を始める」を押した後：ホワイトアウト→画像表示→フェードアウトでゲーム終了、の専用画面のみを表示する
   if (jobHuntEndSequence) {
     drawJobHuntEndSequence();
@@ -10755,6 +10883,13 @@ function draw() {
     if (setupFadePhase === 'out') {
       uiButtons.length = 0;
       const fadeAlpha = 1 - Math.max(0, Math.min(1, setupFadeTimer / setupFadeDurationMs));
+      ctx.fillStyle = `rgba(0, 0, 0, ${fadeAlpha})`;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+    // 「寝る」演出を経て再読み込みされた直後だけ、タイトル画面が黒からゆっくりフェードインする
+    if (titleFadeInRemainingMs > 0) {
+      uiButtons.length = 0;
+      const fadeAlpha = titleFadeInRemainingMs / titleFadeInDurationMs;
       ctx.fillStyle = `rgba(0, 0, 0, ${fadeAlpha})`;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
