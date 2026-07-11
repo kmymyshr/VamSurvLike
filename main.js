@@ -391,8 +391,8 @@ function countActiveWorkEnemies() {
 const maxEnemies = 3; // 1ウェーブで同時に出現する敵（仕事）の数
 const waveCooldownDelayMs = 900; // ウェーブを全滅させてから次のウェーブが出るまでの間
 const enemyCollisionRadius = 32;
-const minDeadlineMs = 5000; // 納期の最短時間（5秒）
-const maxDeadlineMs = 30000; // 納期の最長時間（30秒）
+const minDeadlineMs = 5000 * 0.7; // 納期の最短時間（元の70%）
+const maxDeadlineMs = 15000; // 納期の最長時間（15秒）
 let specialDeadlineMultiplier = 1;
 let waveCooldownMs = 0; // 次のウェーブ出現までの残り時間
 
