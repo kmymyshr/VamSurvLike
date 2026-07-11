@@ -1999,7 +1999,8 @@ function endWorkday() {
       // ここでの関係性がそのまま「前回プレイの関係性」として次の周回に引き継がれ、
       // 次の周回からは通常どおりアドベンチャーパートに入り、夢ルートへ入れる可能性も生まれる
       if (partner.active && adventureCheckpointCount >= adventureCheckpointCountForAdv3) {
-        startNormalEndBattleSequence();
+        // ゆっくり黒くフェードアウトしてから、イベント戦（ノーマルルート負けイベント戦闘）に入る
+        startPreFirstNormalEndFadeOut();
         return;
       }
       if (!partner.active && adventureCheckpointCount >= adventureCheckpointCountForAdv3) {
@@ -2500,7 +2501,7 @@ function showRandomPartnerSpeechBubbleIfFriendly(lines, color, stressedLines = n
 }
 
 // ===== 攻撃をサボっていると同僚の好感度が下がる仕組み =====
-const partnerNeglectThresholdMs = 5000; // これだけ攻撃しないと苦言を呈し始める
+const partnerNeglectThresholdMs = 8000; // これだけ攻撃しないと苦言を呈し始める
 const partnerNeglectIntervalMs = 2000; // 苦言を呈したあとも、さらにこの間隔で好感度が下がり続ける
 const partnerNeglectRelationshipPenalty = 1;
 let partnerNeglectTimerMs = 0; // 攻撃せず苦言状態が続いている時間
@@ -5470,6 +5471,13 @@ function finalizeBossHoleDestruction(hole) {
     });
   }
   if (!bossEvent.holes.every(h => h.destroyed)) return;
+  // ノーマルルート終了時の負けイベント戦闘で、万が一発射口を全て破壊できてしまった場合：
+  // 通常のステージ進行ではなく、そのままラスボス撃破（夢エンドへ）の演出につなげる
+  if (normalEndSequence && normalEndSequence.phase === 'battle') {
+    normalEndSequence = null;
+    startBossFinalSequence();
+    return;
+  }
   if (bossEvent.stage < bossStageDefs.length) {
     bossEvent.stage++;
     bossEvent.holes = generateBossHoles(bossEvent.stage);
@@ -5791,6 +5799,9 @@ const normalEndBossImage = loadImage('images/dreamcatcher/last_boss_normal.png')
 const normalEndFreezeDurationMs = 2500; // 自機・同僚が操作不可のまま静止している時間
 const normalEndShakeDurationMs = 2200; // 振動・明滅しながら画面が暗転するまでの時間
 const normalEndHoleCount = 7;
+// 一度でもノーマルエンドを経ている場合、発射口は決して破壊できないわけではなく、1つ1000回の被弾で破壊できる
+// （万が一全て破壊できてしまった場合は、通常のラスボスと同じ撃破演出を経て夢エンドにつながる）
+const normalEndDestructibleHoleMaxHits = 1000;
 const normalEndBulletSpeed = 6.5; // 通常のラスボス弾より速い、高速弾
 const normalEndFireIntervalMs = 700;
 const normalEndPartnerAutoParryCap = 0.5; // 同僚のオートパリィ確率は、この戦闘中は最大でもこの値までしか出ない
@@ -5811,10 +5822,16 @@ const normalEndTextFadeDelayMs = normalEndBgFadeInDurationMs + normalEndTextFade
 const normalEndTextFadeInDurationMs = 2600; // 文字がゆっくりフェードインしきるまでの時間
 const normalEndTextFadeOutDurationMs = 2400; // クリック後、文字がゆっくりフェードアウトしきるまでの時間
 let normalEndSequence = null; // null、または { phase, phaseTimerMs, battleTimerMs, partnerLoseAtMs, partnerLost }
-// 「{partner}を助けないと…」画面表示直後、誤って（または残っていたクリックで）即座にタイトルへ
-// 進んでしまわないよう、この時刻を過ぎるまではクリックしてもタイトルへは移行しない
-const normalEndScreenClickLockDurationMs = 1000;
-let normalEndScreenClickUnlockAt = 0;
+
+// 一度もノーマルエンドを経ていない場合、アドベンチャーパート第3回に相当する日の終業時刻になった瞬間、
+// 通常のフリーズ・振動演出には入らず、まずゆっくり黒くフェードアウトしてからイベント戦（負けイベント戦闘）に入る
+const preFirstNormalEndFadeOutDurationMs = 2500;
+let preFirstNormalEndFadeOutActive = false;
+let preFirstNormalEndFadeOutTimerMs = 0;
+function startPreFirstNormalEndFadeOut() {
+  preFirstNormalEndFadeOutActive = true;
+  preFirstNormalEndFadeOutTimerMs = 0;
+}
 
 // 「同僚と遊ぶ」ADV3をノーマルルートで終えた直後に呼ばれる。この日が最終日として扱われる
 function startNormalEndBattleSequence() {
@@ -5861,14 +5878,15 @@ function updateNormalEndSequence(rawDt) {
   } else if (normalEndSequence.phase === 'fadeOut' && normalEndSequence.phaseTimerMs >= normalEndFadeOutDurationMs) {
     normalEndSequence.phase = 'endScreen';
     normalEndSequence.phaseTimerMs = 0;
-    normalEndScreenClickUnlockAt = Date.now() + normalEndScreenClickLockDurationMs;
   } else if (normalEndSequence.phase === 'endScreenFadeOut' && normalEndSequence.phaseTimerMs >= normalEndScreenFadeOutDurationMs) {
     finishNormalEndSequence();
   }
 }
 
-// 7つの発射口が、ランダムに動き回りながら高速弾を放つ。決して破壊できない（負けイベント専用）
+// 7つの発射口が、ランダムに動き回りながら高速弾を放つ。
+// 一度もノーマルエンドを経ていない場合は決して破壊できないが、一度以上経ている場合は1つ1000回の被弾で破壊できる
 function generateIndestructibleBossHoles() {
+  const destructible = hasEverReachedNormalEnd();
   const holes = [];
   for (let i = 0; i < normalEndHoleCount; i++) {
     let relX, relY, attempts = 0;
@@ -5878,11 +5896,12 @@ function generateIndestructibleBossHoles() {
       attempts++;
     } while (attempts < 20 && holes.some(h => Math.hypot(h.relX - relX, h.relY - relY) < bossHoleMinSpacing));
     holes.push({
-      relX, relY, hitsTaken: 0, destroyed: false, flashTimerMs: 0, maxHits: 999999,
+      relX, relY, hitsTaken: 0, destroyed: false, flashTimerMs: 0,
+      maxHits: destructible ? normalEndDestructibleHoleMaxHits : 999999,
       fireTimerMs: Math.random() * normalEndFireIntervalMs,
       wanderTargetRelX: relX, wanderTargetRelY: relY,
       wanderTimerMs: bossHoleWanderIntervalMinMs + Math.random() * (bossHoleWanderIntervalMaxMs - bossHoleWanderIntervalMinMs),
-      indestructible: true
+      indestructible: !destructible
     });
   }
   return holes;
@@ -6739,10 +6758,10 @@ canvas.addEventListener('click', (event) => {
     bossFinalSequence.phaseTimerMs = 0;
     return;
   }
-  // ノーマルルート終了時の負けイベント戦闘：エンディング文がフェードイン表示中にクリックすると、フェードアウトしてタイトルへ。
-  // 画面が切り替わった直後の誤操作・残っていたクリックで即座にタイトルへ進まないよう、少しの間はクリックを無視する
+  // ノーマルルート終了時の負けイベント戦闘：「{partner}を助けないと…」の文字が完全に表示しきってから、
+  // クリックでフェードアウトしてタイトルへ進む。文字が出きるまでは、戦闘中の連打が残っていても無視する
   if (normalEndSequence && normalEndSequence.phase === 'endScreen') {
-    if (Date.now() < normalEndScreenClickUnlockAt) return;
+    if (normalEndSequence.phaseTimerMs < normalEndTextFadeDelayMs + normalEndTextFadeInDurationMs) return;
     normalEndSequence.phase = 'endScreenFadeOut';
     normalEndSequence.phaseTimerMs = 0;
     return;
@@ -6854,6 +6873,16 @@ function update() {
   // 「目覚め」で夢ルートに入った直後の「24:00」演出中は、他の一切を停止する（3倍加速の影響を受けない）
   if (dreamBossIntroSequence) {
     updateDreamBossIntroSequence(rawDt);
+    return;
+  }
+
+  // 一度もノーマルエンドを経ていない場合、イベント戦に入る直前のゆっくりした暗転中は、他の一切を停止する
+  if (preFirstNormalEndFadeOutActive) {
+    preFirstNormalEndFadeOutTimerMs += rawDt * 1000;
+    if (preFirstNormalEndFadeOutTimerMs >= preFirstNormalEndFadeOutDurationMs) {
+      preFirstNormalEndFadeOutActive = false;
+      startNormalEndBattleSequence();
+    }
     return;
   }
 
@@ -11817,6 +11846,14 @@ function draw() {
   // その間はどのボタンにも触れられないようにする
   if (deathSequence) {
     drawDeathSequenceOverlay();
+    uiButtons.length = 0;
+  }
+
+  // 一度もノーマルエンドを経ていない場合、イベント戦に入る直前：通常のゲーム画面の上から、ゆっくり黒くフェードアウトさせる
+  if (preFirstNormalEndFadeOutActive) {
+    const fadeAlpha = Math.min(1, preFirstNormalEndFadeOutTimerMs / preFirstNormalEndFadeOutDurationMs);
+    ctx.fillStyle = `rgba(0, 0, 0, ${fadeAlpha})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
     uiButtons.length = 0;
   }
 }
