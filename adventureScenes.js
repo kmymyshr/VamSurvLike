@@ -376,7 +376,7 @@ Object.assign(partnerAdventureScenes, { dreamRoute: buildLinearScene('dream', [
   '今回は、迎え撃つ。\n' +
   '？？？「行くよ」\n' +
   '同僚「はい」\n' +
-  '窓の向こうで、黒い影が動いた。'
+  '窓の向こうで、黒い影が動く。'
 ], () => markDreamRouteCompleted(), null) });
 
 // ⑨⑩⑪ 好感度ルート（通常2択の後、またはADV4以降は選択肢なしで直接ここへ入る）
