@@ -361,7 +361,9 @@ function chooseEnemyTypeIndex() {
 
 // 日数が経つごとに敵がどんどん強くなるようにする倍率（残り工数＝HPと、SAN攻撃力の両方に掛ける）
 const enemyDifficultyGrowthPerDay = 0.045;
-const enemyHpMultiplier = 2.2; // 敵の基本HPの倍率（全体的に弱めに調整）
+// 敵の基本HPの倍率。基本攻撃力（baseBulletDamage=20、発射間隔175ms）に対して弱すぎ、
+// 初期状態の自機でもほぼ確実に一撃で倒せてしまっていたため、最弱の敵でも2〜4発は必要になる水準まで引き上げた
+const enemyHpMultiplier = 40;
 function getEnemyDifficultyMultiplier() {
   return 1 + (dayNumber - 1) * enemyDifficultyGrowthPerDay;
 }
@@ -444,9 +446,12 @@ function spawnWave(count = maxEnemies) {
 }
 
 // 一度もノーマルエンドを経ていない場合（チュートリアル的な特別な5日間のプレイ）の5日目：
-// 通常の敵はウェーブ式で出さず、1時間に5体相当のランダムな間隔で画面外から個別に襲来させる
-const prologueDay5EnemySpawnAvgMs = 3600000 / 5; // 1時間に5体 → 平均12分に1体
-const prologueDay5EnemySpawnMinMs = 60000; // 運が悪くても、これより短い間隔では襲来しない
+// 通常の敵はウェーブ式で出さず、ゲーム内1時間に5体相当のランダムな間隔で画面外から個別に襲来させる。
+// ※このゲームの時間はhourMs（現実の5秒＝ゲーム内1時間）で進むため、実時間の1時間（3600000ms）ではなく
+// 　hourMsを基準に計算する（実時間基準にすると、1日（16時間=80秒）で1体も出ないほど間隔が開いてしまうバグになる）。
+// hourMsはこの定数より後で定義されるため、値は関数内で都度計算する（トップレベルで直接参照するとTDZエラーになる）
+const prologueDay5EnemySpawnPerHour = 5;
+const prologueDay5EnemySpawnMinMs = 200; // 運が悪くても、これより短い間隔では連続しない
 let prologueDay5EnemySpawnTimerMs = -1; // 5日目に入った直後、最初の1体はすぐに出現させる
 function isPrologueRandomEnemySpawnDay() {
   return !hasEverReachedNormalEnd() && dayNumber >= prologueEventBattleDayCount;
@@ -455,8 +460,9 @@ function updatePrologueDay5EnemySpawning(dt) {
   prologueDay5EnemySpawnTimerMs -= dt * 1000;
   if (prologueDay5EnemySpawnTimerMs <= 0) {
     spawnEnemy();
+    const avgMs = hourMs / prologueDay5EnemySpawnPerHour;
     prologueDay5EnemySpawnTimerMs += Math.max(
-      prologueDay5EnemySpawnMinMs, -Math.log(1 - Math.random()) * prologueDay5EnemySpawnAvgMs
+      prologueDay5EnemySpawnMinMs, -Math.log(1 - Math.random()) * avgMs
     );
   }
 }
