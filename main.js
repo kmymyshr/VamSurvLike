@@ -749,7 +749,7 @@ function updatePassiveFatigueGain(dt) {
   const realSecondsPerGameHour = hourMs / 1000;
   applyFatigueGain((ratePerHour / realSecondsPerGameHour) * dt);
   if (partner.active) {
-    const partnerRatePerHour = getPassiveFatigueRatePerHour(true);
+    const partnerRatePerHour = getPassiveFatigueRatePerHour(true) * partnerFatigueGainMultiplier;
     partner.fatigue = Math.min(maxFatigue, partner.fatigue + (partnerRatePerHour / realSecondsPerGameHour) * dt);
   }
 }
@@ -798,6 +798,7 @@ let fullAutoQuizChoiceIndex = null; // クイズの選択肢をランダムに1�
 const fatiguePassiveBaseRatePerHour = 6; // 通常時、ゲーム内1時間あたりの脳疲労蓄積量（10分に1）
 const fatigueOvertimeBaseRatePerHour = 9; // 残業中（終業時刻以降）は、ゲーム内1時間あたりこの量に変わる
 const fatigueAutoFireBonusRatePerHour = 12; // オート連射中は、上記に加えてゲーム内1時間あたりこの量が上乗せされる（5分に1）
+const partnerFatigueGainMultiplier = 0.6; // 同僚は常にオート連射中と同じ扱いになるため、蓄積が急すぎないよう緩和する倍率
 const fatigueParryGain = 1; // パリィが成功するたびに増える脳疲労
 const stunRecoveryPerSec = 18; // 行動不能中は脳疲労を回復する（自動回復が起きる唯一のケース）
 const fireRateMultiplier = 1.5; // 疲労が多いほど発射間隔を延ばす倍率
