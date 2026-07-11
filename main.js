@@ -126,7 +126,8 @@ function dreamMemoryUpgradeCost(currentLevel) {
 
 // ===== エンディングリスト（タイトル画面から確認できる、到達済みエンディングの一覧） =====
 const endingListDefs = [
-  { id: 'true1', icon: '👁️', label: '目覚めエンド', hint: '？？？を撃破し、同僚が生存している状態で終える（事実上のTRUE END）' },
+  { id: 'true1', icon: '👁️', label: '目覚めエンド', hint: '？？？を撃破し、同僚が生存している状態で「就活を始める」を選ぶ（事実上のTRUE END）' },
+  { id: 'hikikomori', icon: '🏠', label: 'ただの自宅警備員END', hint: '？？？を撃破し、同僚が生存している状態で「就活を始める」を選ばず、そのまま眠り続ける' },
   { id: 'true2', icon: '🖤', label: '再び悪夢エンド', hint: '？？？を撃破するが、同僚を失っている' },
   { id: 'normal1', icon: '🌤️', label: 'END（良好）', hint: '同僚との関係性が良好な状態で一区切りをつける' },
   { id: 'normal2', icon: '🏁', label: 'END（普通）', hint: '同僚との関係性が普通の状態で一区切りをつける' },
@@ -5041,6 +5042,15 @@ const bossBulletDamageLifespan = 3;
 // （耐久力は全回復した上でさらに1.5倍、攻撃速度・攻撃力はそれぞれ1.29倍になる）
 const bossInferiorityDurabilityMultiplier = 1.5;
 const bossInferiorityPowerMultiplier = 1.29;
+// 第2段階「シャドウ」：自機の役職ランクが上がるほど、自分自身の「影」も相当に強くなる。
+// ランク1を基準に、ランクが上がるごとに耐久力・攻撃頻度がこの倍率ぶん強化され（ランク7で約3.1倍）、
+// 弾数・拡散も段階的に増えていく
+function getShadowRankMultiplier() {
+  return 1 + (rank - 1) * 0.35;
+}
+function getShadowRankExtraBulletCount() {
+  return Math.floor((rank - 1) / 2); // ランク3-4で+1発、5-6で+2発、7で+3発
+}
 // 6段階、各段階ごとに性質の異なる発射口を持つ（耐久力は以前の設定の約30%に調整済み）
 const bossStageDefs = [
   {
@@ -5332,8 +5342,14 @@ function generateBossHoles(stage) {
       hole.attackSpeedMultiplier = 1;
       hole.damageMultiplier = 1;
     }
-    // 第2段階「シャドウ」：1つは自機、もう1つは同僚を模した半透明アイコンにする
-    if (def.disguise) hole.disguiseRole = i === 0 ? 'player' : 'partner';
+    // 第2段階「シャドウ」：1つは自機、もう1つは同僚を模した半透明アイコンにする。
+    // 自機の役職ランクが上がるほど、耐久力・攻撃頻度をここで強化しておく（弾数・拡散はfireSingleBossHoleBullet側で対応）
+    if (def.disguise) {
+      hole.disguiseRole = i === 0 ? 'player' : 'partner';
+      const shadowMultiplier = getShadowRankMultiplier();
+      hole.maxHits = Math.ceil(hole.maxHits * shadowMultiplier);
+      hole.attackSpeedMultiplier = shadowMultiplier;
+    }
     holes.push(hole);
   }
   return holes;
@@ -5914,20 +5930,28 @@ function fireSingleBossHoleBullet(hole) {
     }
     return;
   }
-  // 第2段階「シャドウ」：自機・同僚それぞれの戦い方を真似た攻撃をしてくる
+  // 第2段階「シャドウ」：自機・同僚それぞれの戦い方を真似た攻撃をしてくる。
+  // 自機の役職ランクが上がるほど、弾数が増え拡散も広がる（getShadowRankExtraBulletCount参照）
   if (hole.disguiseRole === 'player') {
-    // 自機の「マルチタスク」を真似て、わずかにずらした2発を素早く撃つ
+    // 自機の「マルチタスク」を真似て、わずかにずらした弾を素早く連続で撃つ
     const baseAngle = Math.atan2(player.y - pos.y, player.x - pos.x);
-    [-0.15, 0.15].forEach(offset => {
+    const extraBullets = getShadowRankExtraBulletCount();
+    const bulletCount = 2 + extraBullets * 2;
+    const halfSpread = 0.15 + extraBullets * 0.08;
+    for (let i = 0; i < bulletCount; i++) {
+      const offset = (i - (bulletCount - 1) / 2) * (halfSpread * 2 / (bulletCount - 1));
       pushBossHoleBullet(pos, baseAngle + offset, hole, 1.3);
-    });
+    }
     return;
   }
   if (hole.disguiseRole === 'partner') {
     // 同僚のように、自機・同僚のどちらかをランダムに狙い、狙いにやや幅を持たせる
     const target = (partner.active && Math.random() < 0.5) ? partner : player;
-    const angle = Math.atan2(target.y - pos.y, target.x - pos.x) + (Math.random() - 0.5) * 0.5;
-    pushBossHoleBullet(pos, angle, hole);
+    const baseAngle = Math.atan2(target.y - pos.y, target.x - pos.x);
+    const bulletCount = 1 + getShadowRankExtraBulletCount();
+    for (let i = 0; i < bulletCount; i++) {
+      pushBossHoleBullet(pos, baseAngle + (Math.random() - 0.5) * 0.5, hole);
+    }
     return;
   }
   // 穴ごとに、自機・同僚のどちらを狙うかをランダムに決める（同僚も直接狙われる）
@@ -6400,32 +6424,32 @@ function updateBossFinalSequence(dt) {
   // 'realWorldTime'・'clearMessageShown' はクリック待ちのため、ここでは時間経過だけでは進行しない
 }
 
-// 真エンドに到達したので、クリア済フラグと役職・Scoreの引き継ぎを保存してタイトルへ戻る
+// 真エンドに到達したので、クリア済フラグと役職・Scoreの引き継ぎを保存してタイトルへ戻る。
+// 同僚生存（true1）の場合は、まだ「目覚めエンド」を確定させず専用タイトル画面へ進むだけにする。
+// 実際にクリア済フラグ・エンディング記録を保存するのは、そこで「就活を始める」を選んだ時点（drawTrueEndTitleScreen側）
 function finishBossTrueEnd() {
-  dreamMemorySave.trueEndCleared = true;
-  // 前世記憶ルート（夢ルート）を完走していたかどうかに関わらず、ラスボス撃破自体は真エンド1/2に到達する。
-  // 夢ルートを踏んでいたかは、別途 dreamRouteCompleted で参照できる（演出の出し分け用）
-  const bossEndingId = bossFinalSequence.partnerAlive ? 'true1' : 'true2';
-  dreamMemorySave.endingsCleared[bossEndingId] = true;
-  dreamMemorySave.lastRun = selectedPartnerIcon ? {
-    playerGender: selectedGender,
-    partnerIcon: selectedPartnerIcon,
-    relationship: partner.relationship,
-    endingType: bossEndingId
-  } : null;
-  saveCarriedProgressionForNextRun();
-  saveDreamMemorySave();
-  if (bossEndingId === 'true1') {
+  if (bossFinalSequence.partnerAlive) {
     // 目覚めエンド（真エンド・同僚生存）：通常のタイトルへ戻す代わりに、専用のタイトル画面を表示する
     // （黒からゆっくりフェードインさせる。再読み込みは行わないため、専用のタイマーで進める）
     bossFinalSequence = null;
     trueEndTitleScreenActive = true;
     trueEndTitleFadeInRemainingMs = titleFadeInDurationMs;
-  } else {
-    // 再び悪夢エンド：タイトル画面へ戻った直後だけ、黒からゆっくりフェードインさせる
-    try { sessionStorage.setItem('vamSurvLike_titleFadeIn', '1'); } catch (e) {}
-    location.reload();
+    return;
   }
+  // 再び悪夢エンド（同僚を失っている）：こちらは従来通り、この時点で即座に確定させる
+  dreamMemorySave.trueEndCleared = true;
+  dreamMemorySave.endingsCleared['true2'] = true;
+  dreamMemorySave.lastRun = selectedPartnerIcon ? {
+    playerGender: selectedGender,
+    partnerIcon: selectedPartnerIcon,
+    relationship: partner.relationship,
+    endingType: 'true2'
+  } : null;
+  saveCarriedProgressionForNextRun();
+  saveDreamMemorySave();
+  // タイトル画面へ戻った直後だけ、黒からゆっくりフェードインさせる
+  try { sessionStorage.setItem('vamSurvLike_titleFadeIn', '1'); } catch (e) {}
+  location.reload();
 }
 
 // ===== 中ボス「大規模プロジェクト」（DAY7ごと・18時に出現する）=====
@@ -8845,7 +8869,6 @@ function drawGameTitleText(fontFamily, strokeColor, fillColor, subtitleText, sho
 // 目覚めエンド（真エンド・同僚生存）到達後に表示する専用タイトル画面（暫定：白背景）。
 // タイトル文字は通常タイトルと同じ書体で、常に爪痕＋鉛筆の線で打ち消した状態にする
 const trueEndTitleMinchoFont = '"Yu Mincho", "Hiragino Mincho ProN", "MS PMincho", serif';
-const trueEndTitleCursiveFont = '"Comic Sans MS", "Chalkboard SE", "Marker Felt", cursive, sans-serif';
 const trueEndTitleButtonStyle = {
   fillStyle: 'rgba(0, 0, 0, 0.08)',
   strokeStyle: '#000000',
@@ -8857,17 +8880,30 @@ function drawTrueEndTitleScreen() {
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  drawGameTitleText(trueEndTitleCursiveFont, '#ff8fab', '#fffaf0', 'Wakin’ UnDead', true);
+  drawGameTitleText(trueEndTitleMinchoFont, '#000000', '#000000', 'Wakin’ UnDead', true);
 
   const btnW = 260, btnH = 46, btnGap = 16;
   const btnX = canvas.width / 2 - btnW / 2;
-  const startY = canvas.height / 2 - 10;
-  drawUiButton(btnX, startY, btnW, btnH, 'エンディングリスト',
-    () => { trueEndEndingListActive = true; }, trueEndTitleButtonStyle);
-  drawUiButton(btnX, startY + (btnH + btnGap), btnW, btnH, '就活を始める',
-    () => { startJobHuntEndSequence(); }, trueEndTitleButtonStyle);
-  drawUiButton(btnX, startY + (btnH + btnGap) * 2, btnW, btnH, '寝る',
+  const startY = canvas.height / 2 - (btnH * 2 + btnGap) / 2;
+  drawUiButton(btnX, startY, btnW, btnH, '就活を始める',
     () => {
+      // ここで初めて「目覚めエンド」を確定させる
+      dreamMemorySave.trueEndCleared = true;
+      dreamMemorySave.endingsCleared['true1'] = true;
+      dreamMemorySave.lastRun = selectedPartnerIcon ? {
+        playerGender: selectedGender,
+        partnerIcon: selectedPartnerIcon,
+        relationship: partner.relationship,
+        endingType: 'true1'
+      } : null;
+      saveCarriedProgressionForNextRun();
+      saveDreamMemorySave();
+      startJobHuntEndSequence();
+    }, trueEndTitleButtonStyle);
+  drawUiButton(btnX, startY + (btnH + btnGap), btnW, btnH, '寝る',
+    () => {
+      // 就活を始めず眠り続けた場合は「ただの自宅警備員END」として記録する
+      dreamMemorySave.endingsCleared['hikikomori'] = true;
       // 同僚との関係値・前回誰を選んだかの情報だけをリセットする（役職・Score・記憶ポイントなどは残す）
       dreamMemorySave.lastRun = null;
       saveDreamMemorySave();
@@ -8980,7 +9016,7 @@ function drawJobHuntEndSequence() {
     const p = Math.min(1, seq.phaseTimerMs / jobHuntEndWhiteoutDurationMs);
     ctx.save();
     ctx.globalAlpha = 1 - p;
-    drawGameTitleText(trueEndTitleCursiveFont, '#ff8fab', '#fffaf0', 'Wakin’ UnDead', true);
+    drawGameTitleText(trueEndTitleMinchoFont, '#000000', '#000000', 'Wakin’ UnDead', true);
     ctx.restore();
     return;
   }
@@ -10257,13 +10293,15 @@ function draw() {
     return;
   }
 
-  // 目覚めエンド（真エンド・同僚生存）到達後の専用タイトル画面（とそのエンディングリスト）
+  // 目覚めエンド（真エンド・同僚生存）到達後の専用タイトル画面
   if (trueEndTitleScreenActive) {
-    if (trueEndEndingListActive) {
-      drawTrueEndEndingListScreen();
-    } else {
-      drawTrueEndTitleScreen();
-    }
+    drawTrueEndTitleScreen();
+    return;
+  }
+
+  // 目覚めエンド到達済みデータで、通常のタイトル画面から開いた専用デザインのエンディングリスト
+  if (trueEndEndingListActive) {
+    drawTrueEndEndingListScreen();
     return;
   }
 
@@ -11078,7 +11116,15 @@ function draw() {
       const endingListBtnW = 220, endingListBtnH = 40;
       drawTitleGlitchButton(canvas.width / 2 - endingListBtnW / 2, bottomY + (cornerBtnH - endingListBtnH) / 2,
         endingListBtnW, endingListBtnH,
-        'エンディングリスト', () => { endingListActive = true; },
+        'エンディングリスト',
+        () => {
+          // 目覚めエンド（true1）到達済みのデータでは、専用デザインのエンディングリストを開く
+          if (dreamMemorySave.endingsCleared.true1) {
+            trueEndEndingListActive = true;
+          } else {
+            endingListActive = true;
+          }
+        },
         { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#ffd54f', font: `bold 14px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' }, 303);
     }
 
