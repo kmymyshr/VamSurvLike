@@ -4729,8 +4729,18 @@ function updateMousePosition(event) {
 // キャンバス上のポインタ操作はマウスのときだけ従来通り扱う（タップはメニュー用のclickイベントで別途処理する）
 const touchMoveVector = { x: 0, y: 0 }; // ジョイスティックの入力方向・強さ（-1〜1）
 
+// 自機本体をクリック＆ドラッグしている間は、攻撃の代わりに自機の移動を優先する
+const playerDragHitTolerance = 6;
+let playerDragActive = false;
 canvas.addEventListener('pointermove', (event) => {
-  if (event.pointerType === 'mouse') updateMousePosition(event);
+  if (event.pointerType !== 'mouse') return;
+  updateMousePosition(event);
+  if (playerDragActive) {
+    const p = getCanvasPoint(event);
+    player.x = p.x;
+    player.y = p.y;
+    clampToPlayableFloor(player);
+  }
 });
 // マウスの左ボタンを押した地点がアイテムの上なら、発射は行わずその場でアイテムだけを取得する
 // （setPointerCaptureより前に判定するため、この場合はboolean変数でclickイベント側に伝える）
@@ -4750,14 +4760,22 @@ canvas.addEventListener('pointerdown', (event) => {
     canvas.setPointerCapture(event.pointerId);
     return;
   }
+  if (isInCoreGameplayForClickActions() &&
+      Math.hypot(mousePosition.x - player.x, mousePosition.y - player.y) <= player.radius + playerDragHitTolerance) {
+    playerDragActive = true;
+    // ドラッグ終了時のclickイベントで、自動攻撃のON/OFF切り替えが誤って発生しないようにする
+    itemConsumedByPointerDown = true;
+    canvas.setPointerCapture(event.pointerId);
+    return;
+  }
   mouseFireHeld = true;
   canvas.setPointerCapture(event.pointerId);
 });
 canvas.addEventListener('pointerup', (event) => {
-  if (event.pointerType === 'mouse' && event.button === 0) mouseFireHeld = false;
+  if (event.pointerType === 'mouse' && event.button === 0) { mouseFireHeld = false; playerDragActive = false; }
 });
 canvas.addEventListener('pointercancel', (event) => {
-  if (event.pointerType === 'mouse') mouseFireHeld = false;
+  if (event.pointerType === 'mouse') { mouseFireHeld = false; playerDragActive = false; }
 });
 canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 
