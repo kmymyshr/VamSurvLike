@@ -508,6 +508,7 @@ let dreamMemoryShopActive = false; // タイトル画面から開く、夢の記
 let specialSkillPreShopActive = false; // 強化画面から開く、特殊スキルの事前強化専用ページ
 let endingListActive = false; // タイトル画面から開く、到達済みエンディング一覧画面
 let controllerHelpActive = false; // タイトル画面から開く、ゲームコントローラーの操作説明画面
+let memoryStatusActive = false; // タイトル画面から開く、「記憶」（現在の周回引き継ぎ状況・夢ルート到達条件）確認画面
 let titleResetConfirmActive = false; // タイトル画面左上の「リセット」ボタンを押した後の確認ダイアログ表示中かどうか
 // 目覚めエンド（真エンド・同僚生存）到達後、通常のタイトルへ戻す代わりに表示する専用のタイトル画面
 let trueEndTitleScreenActive = false;
@@ -6686,7 +6687,7 @@ function computeFullAutoMoveVector(dt) {
 // （アイテムのクリック取得・クリックによるオート攻撃切替を有効にする条件）
 function isInCoreGameplayForClickActions() {
   return !startScreen && setupStep === null && !dreamMemoryShopActive &&
-    !endingListActive && !specialSkillSelectionActive && !adventureState && !reunionSceneActive &&
+    !endingListActive && !memoryStatusActive && !specialSkillSelectionActive && !adventureState && !reunionSceneActive &&
     !bossFinalSequence && !normalEndSequence && !isPaused && !wakeUpConfirmActive &&
     !gameOver && !gameClear && dayTransitionPhase === null;
 }
@@ -8133,7 +8134,7 @@ function drawAdventureStatsSection(x, y, title, lines, accentColor) {
 function drawEndScreenButtons(baseY) {
   const btnW = 300, btnH = 48;
   const btnX = canvas.width / 2 - btnW / 2;
-  drawUiButton(btnX, baseY, btnW, btnH, '...という夢？', () => {
+  drawUiButton(btnX, baseY, btnW, btnH, '…という、夢…？', () => {
     // 次に同じ自機・同僚で始めた時の再会シーンのため、今回の相手との関係を記録しておく
     dreamMemorySave.lastRun = selectedPartnerIcon ? {
       playerGender: selectedGender,
@@ -8210,7 +8211,7 @@ const endingConfig = {
     labelColor: '#90a4ae',
     bgColor: 'rgba(8, 8, 8, 0.92)',
     description: [
-      '気づかぬうちに蓄積した消耗が、静かに寿命を削りきった。',
+      '気づかぬうちに蓄積していた疲労が、静かに寿命を削りきった。',
          ]
   },
   'bad-partner-shot': {
@@ -8219,7 +8220,7 @@ const endingConfig = {
     labelColor: '#ef9a9a',
     bgColor: 'rgba(35, 5, 12, 0.92)',
     description: [
-      '同僚の一撃が、最後の引き金になってしまった。',
+      '同僚からの言葉の暴力が、最後の引き金になってしまった。',
       'どこかで関係性を誤ってしまったのだろうか。'
     ]
   },
@@ -8229,7 +8230,7 @@ const endingConfig = {
     labelColor: '#90a4ae',
     bgColor: 'rgba(10, 10, 10, 0.92)',
     description: [
-      '（仮）誰かと言葉を交わすこともなく、ただひたすらに仕事をした。',
+      '誰かと言葉を交わすこともなく、ただひたすらに仕事をした。',
     ]
   }
 };
@@ -8259,7 +8260,7 @@ function drawEndingScreen() {
   ctx.fillText(`Final Score: ${score}`, canvas.width / 2, canvas.height / 2 + 54);
   ctx.font = '15px sans-serif';
   ctx.fillStyle = '#ce93d8';
-  ctx.fillText(`「・・・という夢をみました」を選ぶと、役職「${rankNames[rank - 1]}」・Score・役職スキルを次周に引き継げます`,
+  ctx.fillText(`「…という、夢…？」を選ぶと、役職「${rankNames[rank - 1]}」を次周に引き継げます`,
     canvas.width / 2, canvas.height / 2 + 76);
   ctx.font = 'bold 26px sans-serif';
   ctx.fillStyle = cfg.labelColor;
@@ -10317,6 +10318,79 @@ function draw() {
     return;
   }
 
+  if (memoryStatusActive) {
+    drawSetupBackground(false);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#81d4fa';
+    ctx.font = 'bold 24px sans-serif';
+    ctx.fillText('記憶', canvas.width / 2, 34);
+    ctx.textAlign = 'left';
+
+    const lastRun = dreamMemorySave.lastRun;
+    const relationshipCategoryLabel = { good: '良好', normal: '普通', bad: '悪い' };
+    const carriedSkillNames = (dreamMemorySave.carriedRankSkillIds || [])
+      .map(id => (rankSkillDefs.find(s => s.id === id) || {}).name)
+      .filter(Boolean);
+    const specialPreLevelEntries = Object.keys(dreamMemorySave.specialSkillPreLevels || {})
+      .filter(id => dreamMemorySave.specialSkillPreLevels[id] > 0)
+      .map(id => {
+        const def = specialSkills.find(s => s.id === id);
+        return def ? `${def.name} Lv${dreamMemorySave.specialSkillPreLevels[id]}` : null;
+      })
+      .filter(Boolean);
+
+    const sections = [
+      {
+        heading: '周回引き継ぎ状況',
+        lines: [
+          `役職：${rankNames[(dreamMemorySave.carriedRank || 1) - 1]}（Rank ${dreamMemorySave.carriedRank || 1}）`,
+          `Score：${dreamMemorySave.carriedScore || 0}`,
+          `役職スキル：${carriedSkillNames.length ? carriedSkillNames.join('、') : 'なし'}`,
+          `特殊スキルの事前強化：${specialPreLevelEntries.length ? specialPreLevelEntries.join('、') : 'なし'}`
+        ]
+      },
+      {
+        heading: '目覚めエンドへの到達状況',
+        lines: [
+          `ノーマルエンドの経験：${hasEverReachedNormalEnd() ? 'あり（アドベンチャーパートが発生する）' : 'なし（プロローグ状態。アドベンチャーパートは発生しない）'}`,
+          `「目覚め」の強化：${dreamMemorySave.upgrades.awakening >= 1 ? '習得済み（次回、第3回アドベンチャーパートで必ず夢ルートに入る）' : '未習得'}`,
+          `前回プレイの関係性：${lastRun ? `${lastRun.relationship}（${relationshipCategoryLabel[getRelationshipCategory(lastRun.relationship)]}）` : '記録なし'}`,
+          `前回のエンディング：${lastRun ? (endingListDefs.find(d => d.id === lastRun.endingType) || {}).label || lastRun.endingType : '記録なし'}`,
+          `真エンド（ラスボス撃破）到達済み：${dreamMemorySave.trueEndCleared ? 'あり' : 'なし'}`
+        ]
+      }
+    ];
+    if (dreamMemorySave.upgrades.awakening < 1) {
+      sections[1].lines.push(
+        '「目覚め」が未習得の場合、前回の関係性が良好で、かつ今回も同じ自機・同僚の組み合わせで関係性良好を保てれば、夢ルートに入れる可能性があります'
+      );
+    }
+
+    let textY = 70;
+    sections.forEach(section => {
+      ctx.font = 'bold 17px sans-serif';
+      ctx.fillStyle = '#ffd54f';
+      ctx.fillText(section.heading, 40, textY);
+      textY += 26;
+      section.lines.forEach(line => {
+        ctx.font = '14px sans-serif';
+        ctx.fillStyle = '#eceff1';
+        const wrapped = wrapTextToWidth(line, canvas.width - 80);
+        wrapped.forEach(wrappedLine => {
+          ctx.fillText(wrappedLine, 52, textY);
+          textY += 20;
+        });
+      });
+      textY += 14;
+    });
+
+    const backBtnW3 = 200, backBtnH3 = 32;
+    drawUiButton(canvas.width / 2 - backBtnW3 / 2, textY + 6, backBtnW3, backBtnH3,
+      '戻る', () => { memoryStatusActive = false; },
+      { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
+    return;
+  }
+
   if (controllerHelpActive) {
     drawSetupBackground(false);
     ctx.textAlign = 'center';
@@ -10368,6 +10442,9 @@ function draw() {
     // 左上に小さく、全ての引き継ぎ状態をリセットするボタンを配置する
     drawUiButton(10, 10, 74, 24, 'リセット', () => { titleResetConfirmActive = true; },
       { fillStyle: 'rgba(60, 20, 20, 0.55)', strokeStyle: '#ef9a9a', font: 'bold 12px sans-serif' });
+    // 左上、「リセット」の下に小さく、現在のフラグ状態・引き継ぎ状況を確認できる「記憶」ボタンを配置する
+    drawUiButton(10, 40, 74, 24, '記憶', () => { memoryStatusActive = true; },
+      { fillStyle: 'rgba(20, 40, 60, 0.55)', strokeStyle: '#81d4fa', font: 'bold 12px sans-serif' });
     // 右上に小さく、デバッグ用の「Waking Nightmare」ボタンを配置する
     // （ランダムな自機・同僚・関係性100・ノーマルエンド直後、という状態を疑似的に作るだけで、エンディング記録には残さない）
     drawUiButton(canvas.width - 10 - 130, 10, 130, 24, 'Waking Nightmare', triggerWakingNightmareDebug,
