@@ -3561,7 +3561,7 @@ function recomputeSpecialSkillEffects() {
 
 const specialSkillSelectionLockDurationMs = 1000; // 表示直後の連続タップ／クリックによる誤選択を防ぐ猶予時間
 let specialSkillSelectionUnlockAt = 0; // この時刻（Date.now()基準）を過ぎるまで選択を受け付けない
-const specialSkillMaxRerolls = 1; // 1回のプレイ（ゲーム開始～終了）を通して選び直せる合計回数。選択のたびに回復はしない
+const specialSkillMaxRerolls = 3; // 1回のプレイ（ゲーム開始～終了）を通して選び直せる合計回数。選択のたびに回復はしない
 let specialSkillRerollsRemaining = specialSkillMaxRerolls;
 // 完全オートモード中、選択画面が表示されてからこの時間クリックがなければ、ランダムに1つ選んだ扱いにする
 const specialSkillSelectionAutoPickDelayMs = 3000;
@@ -3620,6 +3620,31 @@ function chooseSpecialSkill(choiceIndex) {
     2500,
     '#e1bee7',
     '26px sans-serif'
+  );
+  specialSkillSelectionActive = false;
+  lastUpdate = Date.now();
+
+  if (pendingSpecialSkillSelections > 0) {
+    pendingSpecialSkillSelections--;
+    openSpecialSkillSelection('レベルアップ：特殊スキルを選択');
+    return;
+  }
+}
+
+// 特殊スキル選択画面で「スキルを取らない」を選んだ場合の回復量
+const specialSkillSkipRecoveryAmount = 10;
+// スキルを取らない代わりに、その回のスキル選択権を1回失い、SAN・寿命をそれぞれ回復する
+function skipSpecialSkillSelection() {
+  // 表示直後の連打・連続タップによる誤操作を防ぐため、猶予時間内の選択は無視する
+  if (Date.now() < specialSkillSelectionUnlockAt) return;
+
+  san = Math.min(maxSan, san + specialSkillSkipRecoveryAmount);
+  lifespan = Math.min(maxLifespan, lifespan + specialSkillSkipRecoveryAmount);
+  showMessage(
+    `スキルを取らない代わりに、SAN・寿命がそれぞれ${specialSkillSkipRecoveryAmount}回復した`,
+    2500,
+    '#80cbc4',
+    '22px sans-serif'
   );
   specialSkillSelectionActive = false;
   lastUpdate = Date.now();
@@ -11994,15 +12019,27 @@ function draw() {
     ctx.fillText(specialSkillSelectionTitle, canvas.width / 2, 70);
     ctx.textAlign = 'left';
 
-    // 表示された3択が気に入らない場合、残り回数の範囲でリロール（選び直し）できる
+    // 表示された3択が気に入らない場合、残り回数の範囲でリロール（選び直し）できる。
+    // また、今回は取らない代わりにSAN・寿命を回復するボタンも並べて置く
     const rerollBtnW = 190, rerollBtnH = 34;
+    const skipBtnW = 260, skipBtnH = 34;
+    const topRowGap = 12;
+    const topRowTotalW = rerollBtnW + skipBtnW + topRowGap;
+    const topRowStartX = canvas.width / 2 - topRowTotalW / 2;
     const rerollAvailable = !selectionLocked && specialSkillRerollsRemaining > 0;
-    drawUiButton(canvas.width / 2 - rerollBtnW / 2, 82, rerollBtnW, rerollBtnH,
+    drawUiButton(topRowStartX, 82, rerollBtnW, rerollBtnH,
       `リロール（残${specialSkillRerollsRemaining}回）`,
       rerollAvailable ? rerollSpecialSkillChoices : () => {},
       rerollAvailable
         ? { fillStyle: 'rgba(103, 58, 183, 0.6)', strokeStyle: '#ce93d8', font: 'bold 14px sans-serif' }
         : { fillStyle: 'rgba(60, 60, 60, 0.5)', strokeStyle: '#616161', textColor: '#9e9e9e', font: 'bold 14px sans-serif' });
+    const skipAvailable = !selectionLocked;
+    drawUiButton(topRowStartX + rerollBtnW + topRowGap, 82, skipBtnW, skipBtnH,
+      `スキルを取らない（SAN・寿命+${specialSkillSkipRecoveryAmount}）`,
+      skipAvailable ? skipSpecialSkillSelection : () => {},
+      skipAvailable
+        ? { fillStyle: 'rgba(20, 90, 60, 0.6)', strokeStyle: '#80cbc4', font: 'bold 13px sans-serif' }
+        : { fillStyle: 'rgba(60, 60, 60, 0.5)', strokeStyle: '#616161', textColor: '#9e9e9e', font: 'bold 13px sans-serif' });
 
     ctx.save();
     if (selectionLocked) ctx.globalAlpha = 0.5; // 誤選択防止の猶予中は、選べないことが分かるよう薄く表示する
