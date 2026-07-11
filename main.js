@@ -6901,6 +6901,10 @@ function attemptDeflectPartnerBullet() {
   showMessage(`パリィ成功！（${messageParts.join('・')}）`, 1400, '#fff176');
 }
 
+// 完全オートモード中の自動パリィが有効になる、脳疲労の上限（これを超えると自動では発動しなくなる。
+// パリィボタン・右クリックなど、プレイヤー自身の意思によるパリィはこの制限を受けない）
+const fullAutoParryFatigueThreshold = 80;
+
 // 完全オートモード中、範囲内に入った援護弾を可能なら自動でパリィする（1本の援護弾につき1回だけ試みる）
 let fullAutoSupportBulletParryAttempted = false;
 function updateFullAutoSupportBulletParry() {
@@ -6909,11 +6913,33 @@ function updateFullAutoSupportBulletParry() {
     fullAutoSupportBulletParryAttempted = false;
     return;
   }
-  if (fullAutoSupportBulletParryAttempted || stunned) return;
+  if (fullAutoSupportBulletParryAttempted || stunned || fatigue > fullAutoParryFatigueThreshold) return;
   const d = Math.hypot(supportBullet.x - player.x, supportBullet.y - player.y);
   if (d <= getDeflectRange() + supportBullet.radius) {
     fullAutoSupportBulletParryAttempted = true;
     attemptDeflectPartnerBullet();
+  }
+}
+
+// 完全オートモード中、援護弾以外のパリィ可能な攻撃（同僚・ラスボス・中ボス・固定敵からの弾や、
+// パリィ範囲に入った敵本体）にも自動でパリィを発動する。連打にならないよう、一定間隔でしか判定しない
+const fullAutoThreatParryIntervalMs = 500;
+let fullAutoThreatParryTimerMs = 0;
+function updateFullAutoThreatParry(dt) {
+  if (stunned || fatigue > fullAutoParryFatigueThreshold) return;
+  fullAutoThreatParryTimerMs -= dt * 1000;
+  if (fullAutoThreatParryTimerMs > 0) return;
+  const range = getDeflectRange();
+  const threatBulletInRange = bullets.some(b => {
+    if (b.owner !== 'partner' && b.owner !== 'boss' && b.owner !== 'midBoss' &&
+        b.owner !== 'fixedEnemy' && b.owner !== 'fixedEnemyDisguise') return false;
+    return Math.hypot(b.x - player.x, b.y - player.y) <= range + b.radius;
+  });
+  const threatEnemyInRange = !threatBulletInRange && enemies.some(en =>
+    en !== partner && Math.hypot(en.x - player.x, en.y - player.y) <= range + en.radius);
+  if (threatBulletInRange || threatEnemyInRange) {
+    attemptDeflectPartnerBullet();
+    fullAutoThreatParryTimerMs = fullAutoThreatParryIntervalMs;
   }
 }
 
@@ -7710,6 +7736,8 @@ function update() {
   updateSupportBulletSystem(dt);
   // 完全オートモード中は、近くまで来た援護弾を可能ならパリィする
   if (fullAutoModeEnabled) updateFullAutoSupportBulletParry();
+  // 完全オートモード中は、援護弾以外のパリィ可能な攻撃にも自動でパリィを発動する（脳疲労80以下の間だけ）
+  if (fullAutoModeEnabled) updateFullAutoThreatParry(dt);
 
   // 各敵の納期をカウントダウンし、0になった敵を爆発させる
   for (let i = enemies.length - 1; i >= 0; i--) {
