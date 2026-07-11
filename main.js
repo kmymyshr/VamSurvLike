@@ -9939,7 +9939,7 @@ function draw() {
     return;
   }
 
-  if (dreamMemoryShopActive) {
+  if (dreamMemoryShopActive && !specialSkillPreShopActive) {
     drawSetupBackground();
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ffd54f';
