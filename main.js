@@ -4736,7 +4736,14 @@ canvas.addEventListener('pointermove', (event) => {
 // （setPointerCaptureより前に判定するため、この場合はboolean変数でclickイベント側に伝える）
 let itemConsumedByPointerDown = false;
 canvas.addEventListener('pointerdown', (event) => {
-  if (event.pointerType !== 'mouse' || event.button !== 0) return;
+  if (event.pointerType !== 'mouse') return;
+  // 右クリックはスペースキーと同様にパリィを試みる（メニュー移動や発射は行わない）
+  if (event.button === 2) {
+    updateMousePosition(event);
+    if (!gameOver && !gameClear && !isPaused) attemptDeflectPartnerBullet();
+    return;
+  }
+  if (event.button !== 0) return;
   updateMousePosition(event);
   if (isInCoreGameplayForClickActions() && tryCollectItemAtPoint(getCanvasPoint(event))) {
     itemConsumedByPointerDown = true;
