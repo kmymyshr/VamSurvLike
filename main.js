@@ -4548,6 +4548,15 @@ function beginGameplay() {
   // クリック待ち画面を表示してからゲームを始める（暗転からのフェードアウトは不要なので、直接waitingにする）
   dayTransitionPhase = 'waiting';
   dayTransitionWaitingTimerMs = 0;
+
+  // 一度もノーマルエンドを経ていない場合（チュートリアル的な特別なプレイ）：
+  // 完全オートモード・3倍加速・スマホ用自動照準はボタンごと非表示にするため、念のためここで強制的にOFFにしておく
+  if (!hasEverReachedNormalEnd()) {
+    fullAutoModeEnabled = false;
+    gameTimeScale = 1;
+    threeXModeEnabled = false;
+    mobileAutoAimEnabled = false;
+  }
 }
 
 // 週間ノルマ未達成時：休日出勤するか休むかを処理する
@@ -7779,6 +7788,9 @@ function update() {
       player.angle = gamepadAimAngle;
     } else if (autoAimTarget) {
       player.angle = Math.atan2(autoAimTarget.en.y - player.y, autoAimTarget.en.x - player.x);
+    } else if (moveJoystickPointerId !== null && (touchMoveVector.x !== 0 || touchMoveVector.y !== 0)) {
+      // 画面外の移動ジョイスティックを操作している間は、入力方向へ向きも変える
+      player.angle = Math.atan2(touchMoveVector.y, touchMoveVector.x);
     } else {
       player.angle = Math.atan2(
         mousePosition.y - player.y,
@@ -10860,6 +10872,9 @@ function draw() {
     // 左上、「リセット」の下に小さく、現在のフラグ状態・引き継ぎ状況を確認できる「記憶」ボタンを配置する
     drawUiButton(10, 40, 74, 24, '記憶', () => { memoryStatusActive = true; },
       { fillStyle: 'rgba(20, 40, 60, 0.55)', strokeStyle: '#81d4fa', font: 'bold 12px sans-serif' });
+    // 左上、「記憶」の下に小さく、ゲームを閉じる（終了する）ボタンを配置する
+    drawUiButton(10, 70, 74, 24, 'やめる', () => { window.close(); },
+      { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 12px sans-serif' });
     // 右上に小さく、デバッグ用の「Waking Nightmare」ボタンを配置する
     // （ランダムな自機・同僚・関係性100・ノーマルエンド直後、という状態を疑似的に作るだけで、エンディング記録には残さない）
     drawUiButton(canvas.width - 10 - 130, 10, 130, 24, 'Waking Nightmare', triggerWakingNightmareDebug,
@@ -11759,27 +11774,30 @@ function draw() {
     12, 268
   );
   // 完全オートモード・3倍加速・スマホ用自動照準：左下に縦にコンパクトに並べる。
-  // クイズや固定敵の説明パネル（窓付近・画面上部）とは被らない位置
-  const toggleBtnW = 170, toggleBtnH = 26, toggleBtnGap = 6;
-  const toggleBtnX = 12, toggleBtnStartY = 278;
-  drawUiButton(toggleBtnX, toggleBtnStartY, toggleBtnW, toggleBtnH,
-    `完全オートモード: ${fullAutoModeEnabled ? 'ON' : 'OFF'}`,
-    () => { fullAutoModeEnabled = !fullAutoModeEnabled; },
-    fullAutoModeEnabled
-      ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 12px sans-serif' }
-      : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 12px sans-serif' });
-  drawUiButton(toggleBtnX, toggleBtnStartY + (toggleBtnH + toggleBtnGap), toggleBtnW, toggleBtnH,
-    `3倍加速: ${gameTimeScale === 3 ? 'ON' : 'OFF'}`,
-    () => { gameTimeScale = gameTimeScale === 3 ? 1 : 3; },
-    gameTimeScale === 3
-      ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 12px sans-serif' }
-      : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 12px sans-serif' });
-  drawUiButton(toggleBtnX, toggleBtnStartY + (toggleBtnH + toggleBtnGap) * 2, toggleBtnW, toggleBtnH,
-    `スマホ用自動照準: ${mobileAutoAimEnabled ? 'ON' : 'OFF'}`,
-    () => setMobileAutoAimEnabled(!mobileAutoAimEnabled),
-    mobileAutoAimEnabled
-      ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 12px sans-serif' }
-      : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 12px sans-serif' });
+  // クイズや固定敵の説明パネル（窓付近・画面上部）とは被らない位置。
+  // 一度もノーマルエンドを経ていない場合（チュートリアル的な特別なプレイ）は、これらのボタン自体を表示しない
+  if (hasEverReachedNormalEnd()) {
+    const toggleBtnW = 170, toggleBtnH = 26, toggleBtnGap = 6;
+    const toggleBtnX = 12, toggleBtnStartY = 278;
+    drawUiButton(toggleBtnX, toggleBtnStartY, toggleBtnW, toggleBtnH,
+      `完全オートモード: ${fullAutoModeEnabled ? 'ON' : 'OFF'}`,
+      () => { fullAutoModeEnabled = !fullAutoModeEnabled; },
+      fullAutoModeEnabled
+        ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 12px sans-serif' }
+        : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 12px sans-serif' });
+    drawUiButton(toggleBtnX, toggleBtnStartY + (toggleBtnH + toggleBtnGap), toggleBtnW, toggleBtnH,
+      `3倍加速: ${gameTimeScale === 3 ? 'ON' : 'OFF'}`,
+      () => { gameTimeScale = gameTimeScale === 3 ? 1 : 3; },
+      gameTimeScale === 3
+        ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 12px sans-serif' }
+        : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 12px sans-serif' });
+    drawUiButton(toggleBtnX, toggleBtnStartY + (toggleBtnH + toggleBtnGap) * 2, toggleBtnW, toggleBtnH,
+      `スマホ用自動照準: ${mobileAutoAimEnabled ? 'ON' : 'OFF'}`,
+      () => setMobileAutoAimEnabled(!mobileAutoAimEnabled),
+      mobileAutoAimEnabled
+        ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 12px sans-serif' }
+        : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 12px sans-serif' });
+  }
 
   // 「自己犠牲」「献身」：習得済みかつ同僚が健在で、まだこの周回で使っていない時だけ、
   // 同僚のプロフィール区画（x:164, y:12, w:145, h:204）内の、ステータス文字の下・区画下端より上の
