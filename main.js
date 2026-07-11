@@ -532,7 +532,7 @@ let gameOver = false;
 let gameClear = false;
 // 「寝る」を選んで再読み込みされた直後だけ、タイトル画面を黒からゆっくりフェードインさせる
 // （sessionStorageは1回読んだら消し、通常の起動時には影響しない）
-const titleFadeInDurationMs = 1200;
+const titleFadeInDurationMs = 3000;
 let titleFadeInRemainingMs = 0;
 try {
   if (sessionStorage.getItem('vamSurvLike_titleFadeIn') === '1') {
@@ -554,6 +554,7 @@ let memoryStatusActive = false; // タイトル画面から開く、「記憶」
 let titleResetConfirmActive = false; // タイトル画面左上の「リセット」ボタンを押した後の確認ダイアログ表示中かどうか
 // 目覚めエンド（真エンド・同僚生存）到達後、通常のタイトルへ戻す代わりに表示する専用のタイトル画面
 let trueEndTitleScreenActive = false;
+let trueEndTitleFadeInRemainingMs = 0; // 専用タイトル画面が出た直後だけ、黒からゆっくりフェードインさせる
 let trueEndEndingListActive = false; // 専用タイトル画面から開く、専用デザインのエンディングリスト画面
 
 // 目覚めエンド専用タイトル画面の「就活を始める」：周回には入らず、ホワイトアウト→中央に一枚画像をクリックでフェードイン表示→
@@ -6230,6 +6231,8 @@ function finishNormalEndSequence() {
   } : null;
   saveCarriedProgressionForNextRun();
   saveDreamMemorySave();
+  // タイトル画面へ戻った直後だけ、黒からゆっくりフェードインさせる
+  try { sessionStorage.setItem('vamSurvLike_titleFadeIn', '1'); } catch (e) {}
   location.reload();
 }
 
@@ -6395,9 +6398,13 @@ function finishBossTrueEnd() {
   saveDreamMemorySave();
   if (bossEndingId === 'true1') {
     // 目覚めエンド（真エンド・同僚生存）：通常のタイトルへ戻す代わりに、専用のタイトル画面を表示する
+    // （黒からゆっくりフェードインさせる。再読み込みは行わないため、専用のタイマーで進める）
     bossFinalSequence = null;
     trueEndTitleScreenActive = true;
+    trueEndTitleFadeInRemainingMs = titleFadeInDurationMs;
   } else {
+    // 再び悪夢エンド：タイトル画面へ戻った直後だけ、黒からゆっくりフェードインさせる
+    try { sessionStorage.setItem('vamSurvLike_titleFadeIn', '1'); } catch (e) {}
     location.reload();
   }
 }
@@ -7206,7 +7213,11 @@ function update() {
   }
   // 目覚めエンド専用タイトル画面（とそのエンディングリスト）は静的な画面なので、他の一切を止める
   if (trueEndTitleScreenActive) {
-    lastUpdate = Date.now();
+    const nowRealForTrueEndTitle = Date.now();
+    if (trueEndTitleFadeInRemainingMs > 0) {
+      trueEndTitleFadeInRemainingMs = Math.max(0, trueEndTitleFadeInRemainingMs - (nowRealForTrueEndTitle - lastUpdate));
+    }
+    lastUpdate = nowRealForTrueEndTitle;
     return;
   }
   const nowReal = Date.now();
@@ -7894,14 +7905,14 @@ function update() {
     } else if (moveJoystickPointerId !== null && (touchMoveVector.x !== 0 || touchMoveVector.y !== 0)) {
       // 画面外の移動ジョイスティックを操作している間は、入力方向へ向きも変える
       player.angle = Math.atan2(touchMoveVector.y, touchMoveVector.x);
-    } else if (Math.hypot(mousePosition.x - player.x, mousePosition.y - player.y) > player.radius) {
+    } else if (!playerDragActive) {
       player.angle = Math.atan2(
         mousePosition.y - player.y,
         mousePosition.x - player.x
       );
     }
-    // マウスカーソルが自機の当たり判定内にある間（ドラッグ移動中など）は、
-    // 距離がほぼ0になり方向がぶれやすいため、カーソルが範囲内に入った瞬間の向きをそのまま維持する
+    // ドラッグ移動中は自機がカーソルにほぼ重なり続け方向が定まらないため、
+    // ドラッグを始めた瞬間の向きのまま一切変えない
 
     // 手動時は左クリック中だけ、自動時は常にカーソル方向へ攻撃する
     const fatigueRatio = Math.max(0, Math.min(1, fatigue / maxFatigue));
@@ -8826,6 +8837,14 @@ function drawTrueEndTitleScreen() {
       saveDreamMemorySave();
       startNightmareAgainSequence();
     }, trueEndTitleButtonStyle);
+
+  // 目覚めエンド到達直後だけ、専用タイトル画面を黒からゆっくりフェードインさせる
+  if (trueEndTitleFadeInRemainingMs > 0) {
+    uiButtons.length = 0;
+    const fadeAlpha = trueEndTitleFadeInRemainingMs / titleFadeInDurationMs;
+    ctx.fillStyle = `rgba(0, 0, 0, ${fadeAlpha})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
 }
 
 // 目覚めエンド専用タイトル画面の「寝る」を押した後の演出：
