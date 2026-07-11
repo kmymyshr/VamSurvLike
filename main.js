@@ -4739,21 +4739,16 @@ let playerDragActive = false;
 canvas.addEventListener('pointermove', (event) => {
   if (event.pointerType !== 'mouse') return;
   updateMousePosition(event);
-  if (playerDragActive) {
+  // stunで操作不能になった瞬間、ドラッグ中でも自機が動き続けないようにする
+  if (playerDragActive && !stunned) {
     const p = getCanvasPoint(event);
     player.x = p.x;
     player.y = p.y;
     clampToPlayableFloor(player);
   }
 });
-// 右クリックはスペースキーと同様にパリィを試みる（メニュー移動や発射は行わない）
-canvas.addEventListener('pointerdown', (event) => {
-  if (event.pointerType === 'mouse' && event.button === 2 && !gameOver && !gameClear && !isPaused) {
-    attemptDeflectPartnerBullet();
-  }
-});
 // マウスの左ボタンを押した地点がアイテムの上なら、発射は行わずその場でアイテムだけを取得する
-// 自機本体の上なら、発射は行わずドラッグ移動を開始する
+// 自機本体の上なら、発射は行わずドラッグ移動を開始する（stun中は開始しない）
 // （setPointerCaptureより前に判定するため、この場合はboolean変数でclickイベント側に伝える）
 let itemConsumedByPointerDown = false;
 canvas.addEventListener('pointerdown', (event) => {
@@ -4764,7 +4759,7 @@ canvas.addEventListener('pointerdown', (event) => {
     canvas.setPointerCapture(event.pointerId);
     return;
   }
-  if (isInCoreGameplayForClickActions() &&
+  if (isInCoreGameplayForClickActions() && !stunned &&
       Math.hypot(mousePosition.x - player.x, mousePosition.y - player.y) <= player.radius + playerDragHitTolerance) {
     playerDragActive = true;
     // ドラッグ終了時のclickイベントで、自動攻撃のON/OFF切り替えが誤って発生しないようにする
@@ -4781,7 +4776,13 @@ canvas.addEventListener('pointerup', (event) => {
 canvas.addEventListener('pointercancel', (event) => {
   if (event.pointerType === 'mouse') { mouseFireHeld = false; playerDragActive = false; }
 });
-canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+// 右クリックはスペースキーと同様にパリィを試みる（メニュー移動や発射は行わない）。
+// pointerdownのbutton===2ではなく、常に確実に発火するcontextmenuを使うことで、
+// 左ボタンでドラッグ中（pointerCapture済み）でも右クリックパリィが機能するようにする
+canvas.addEventListener('contextmenu', (event) => {
+  event.preventDefault();
+  if (!gameOver && !gameClear && !isPaused) attemptDeflectPartnerBullet();
+});
 
 // ===== 画面外の移動ジョイスティック（#moveJoystick、アナログ入力） =====
 // 指が土台の中心からどれだけ・どの方向に離れているかで touchMoveVector（-1〜1）を求める。
@@ -7908,14 +7909,14 @@ function update() {
     } else if (moveJoystickPointerId !== null && (touchMoveVector.x !== 0 || touchMoveVector.y !== 0)) {
       // 画面外の移動ジョイスティックを操作している間は、入力方向へ向きも変える
       player.angle = Math.atan2(touchMoveVector.y, touchMoveVector.x);
-    } else if (!playerDragActive) {
+    } else if (Math.hypot(mousePosition.x - player.x, mousePosition.y - player.y) > player.radius) {
       player.angle = Math.atan2(
         mousePosition.y - player.y,
         mousePosition.x - player.x
       );
     }
-    // ドラッグ移動中は自機がカーソルにほぼ重なり続け方向が定まらないため、
-    // ドラッグを始めた瞬間の向きのまま一切変えない
+    // カーソルが自機の当たり判定内にある間（ドラッグ移動中はカーソルが自機に重なり続けるため、常にこの状態になる）は、
+    // 距離がほぼ0になり向きの計算が不安定になるため更新せず、範囲に入る直前（外側にいた最後）の安定した向きを維持する
 
     // 手動時は左クリック中だけ、自動時は常にカーソル方向へ攻撃する
     const fatigueRatio = Math.max(0, Math.min(1, fatigue / maxFatigue));
