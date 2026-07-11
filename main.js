@@ -8546,11 +8546,11 @@ const afterEndImage = (() => {
 })();
 
 // タイトル画面の背景を、直前のプレイ内容に応じて切り替えるべきかどうかを判定する
+// 過去に一度でもノーマルエンドを経験している場合は、以降ずっとこの背景を使う
 function shouldShowAfterNormalEndTitleBackground() {
+  if (hasEverReachedNormalEnd()) return true;
   const lastRun = dreamMemorySave.lastRun;
-  if (!lastRun) return false;
-  if (typeof lastRun.endingType === 'string' && lastRun.endingType.startsWith('normal')) return true;
-  return !!lastRun.lostToBossBeforeAdv3;
+  return !!(lastRun && lastRun.lostToBossBeforeAdv3);
 }
 
 // モード選択・性別選択・同僚選択・アイコン挨拶・再会シーン・強化画面などの背景を描く（画像＋読みやすくする暗いオーバーレイ）。
