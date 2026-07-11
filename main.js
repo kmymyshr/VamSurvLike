@@ -2483,8 +2483,8 @@ function startGameAfterGreeting() {
   }
 }
 
-// タイトル画面の「夢と同じ設定で進める」：性別・同僚選択画面を省略し、
-// 前回と同じ自機・同僚を自動で選んだ状態のまま、同僚の挨拶へ直接つなげる
+// タイトル画面の「前回の夢の続きを見る」：性別・同僚選択画面を省略し、
+// 前回と同じ自機・同僚を自動で選んだ状態のまま、自機の挨拶→同僚の挨拶の順に表示してからゲームを開始する
 function startWithLastRunSettings() {
   const lastRun = dreamMemorySave.lastRun;
   if (!lastRun || !lastRun.partnerIcon) return;
@@ -2494,12 +2494,15 @@ function startWithLastRunSettings() {
   selectedGender = lastRun.playerGender;
   selectedPlayerIcon = lastRun.playerGender;
   selectedPartnerIcon = lastRun.partnerIcon;
-  const greetingLines = partnerGenderById[lastRun.partnerIcon] === 'female'
-    ? partnerIconGreetingLinesFemale
-    : partnerIconGreetingLinesMale;
-  const line = greetingLines[Math.floor(Math.random() * greetingLines.length)];
-  startIconGreeting(lastRun.partnerIcon, line, () => { startGameAfterGreeting(); },
-    partnerIconImageElements[lastRun.partnerIcon]);
+  const playerLine = playerIconGreetingLines[Math.floor(Math.random() * playerIconGreetingLines.length)];
+  startIconGreeting(lastRun.playerGender, playerLine, () => {
+    const partnerGreetingLines = partnerGenderById[lastRun.partnerIcon] === 'female'
+      ? partnerIconGreetingLinesFemale
+      : partnerIconGreetingLinesMale;
+    const partnerLine = partnerGreetingLines[Math.floor(Math.random() * partnerGreetingLines.length)];
+    startIconGreeting(lastRun.partnerIcon, partnerLine, () => { startGameAfterGreeting(); },
+      partnerIconImageElements[lastRun.partnerIcon]);
+  }, genderImageElements[lastRun.playerGender]);
 }
 
 // ===== 同僚 =====
@@ -8028,10 +8031,13 @@ function update() {
     }
   }
 
-  // 敵をプレイヤーへ向けて移動する。当たり判定の半径は固定
+  // 敵を自機（または、ランダムに同僚が対象の敵は同僚）へ向けて移動する。当たり判定の半径は固定
   for (const e of enemies) {
-    const dx = player.x - e.x;
-    const dy = player.y - e.y;
+    // 対象は敵ごとに一度だけランダムに決め、以後は同じ対象を追い続ける
+    if (e.targetsPartner === undefined) e.targetsPartner = partner.active && Math.random() < 0.5;
+    const target = (e.targetsPartner && partner.active) ? partner : player;
+    const dx = target.x - e.x;
+    const dy = target.y - e.y;
     const dist = Math.hypot(dx, dy) || 1;
     // 時刻が遅くなるほど敵の移動速度を上げる
     const dayProgress = Math.max(0, Math.min(1, (currentHour - dayStartHour) / (dayEndHour - dayStartHour)));
@@ -8510,7 +8516,17 @@ function drawUiButton(x, y, w, h, label, action, options = {}) {
   ctx.font = options.font || 'bold 20px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(label, x + w / 2, y + h / 2);
+  // ラベルに改行(\n)を含む場合は、行間を詰めて複数行の中央揃えで表示する
+  const labelLines = label.split('\n');
+  if (labelLines.length > 1) {
+    const lineHeight = parseInt(ctx.font, 10) * 1.2 || 20;
+    const totalHeight = lineHeight * labelLines.length;
+    labelLines.forEach((line, i) => {
+      ctx.fillText(line, x + w / 2, y + h / 2 - totalHeight / 2 + lineHeight * (i + 0.5));
+    });
+  } else {
+    ctx.fillText(label, x + w / 2, y + h / 2);
+  }
   ctx.restore();
   uiButtons.push({ x, y, w, h, action });
 }
@@ -10460,15 +10476,6 @@ function draw() {
     ctx.textAlign = 'center';
     ctx.fillText('数字キー 1〜2 / タップで選択', canvas.width / 2, cardY + cardH + 50);
     ctx.textAlign = 'left';
-
-    // 前回プレイした自機・同僚の組み合わせが記録されている時だけ、選択を省略して進めるボタンを出す
-    const hasLastRunCombo = !!(dreamMemorySave.lastRun && dreamMemorySave.lastRun.partnerIcon);
-    if (hasLastRunCombo) {
-      const resumeBtnW = 260, resumeBtnH = 40;
-      drawUiButton(canvas.width / 2 - resumeBtnW / 2, cardY + cardH + 74, resumeBtnW, resumeBtnH,
-        '夢と同じ設定で進める', startWithLastRunSettings,
-        { fillStyle: 'rgba(20, 70, 90, 0.55)', strokeStyle: '#80deea', font: 'bold 15px sans-serif' });
-    }
     return;
   }
 
@@ -11053,6 +11060,17 @@ function draw() {
         endingListBtnW, endingListBtnH,
         'エンディングリスト', () => { endingListActive = true; },
         { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#ffd54f', font: `bold 14px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' }, 303);
+    }
+
+    // 前回プレイした自機・同僚の組み合わせが記録されている時だけ、画面中央に選択を省略して進めるボタンを出す
+    const hasLastRunCombo = !!(dreamMemorySave.lastRun && dreamMemorySave.lastRun.partnerIcon);
+    if (hasLastRunCombo) {
+      const resumeBtnW = 80, resumeBtnH = 60;
+      const resumeBtnCenterX = 20 + resumeBtnW / 2;
+      const resumeBtnCenterY = canvas.height / 2 + 100;
+      drawTitleGlitchButton(resumeBtnCenterX - resumeBtnW / 2, resumeBtnCenterY - resumeBtnH / 2, resumeBtnW, resumeBtnH,
+        '前回の夢の\n続きを見る', startWithLastRunSettings,
+        { fillStyle: 'rgba(60, 8, 8, 0.75)', strokeStyle: '#b71c1c', font: `bold 11px ${uiFontFamily}`, textColor: 'white' }, 404);
     }
 
     const helpTextY = bottomY - 60;
