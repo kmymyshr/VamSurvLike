@@ -10875,6 +10875,10 @@ function draw() {
     // 左上、「記憶」の下に小さく、ゲームを閉じる（終了する）ボタンを配置する
     drawUiButton(10, 70, 74, 24, 'やめる', () => { window.close(); },
       { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 12px sans-serif' });
+    // ブラウザの仕様上、スクリプトから閉じられない場合があるため、その旨を小さく注意書きしておく
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+    ctx.font = '9px sans-serif';
+    ctx.fillText('※閉じられない場合はタブを閉じてください', 10, 106);
     // 右上に小さく、デバッグ用の「Waking Nightmare」ボタンを配置する
     // （ランダムな自機・同僚・関係性100・ノーマルエンド直後、という状態を疑似的に作るだけで、エンディング記録には残さない）
     drawUiButton(canvas.width - 10 - 130, 10, 130, 24, 'Waking Nightmare', triggerWakingNightmareDebug,
