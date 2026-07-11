@@ -10863,9 +10863,6 @@ function draw() {
     // （ランダムな自機・同僚・関係性100・ノーマルエンド直後、という状態を疑似的に作るだけで、エンディング記録には残さない）
     drawUiButton(canvas.width - 10 - 130, 10, 130, 24, 'Waking Nightmare', triggerWakingNightmareDebug,
       { fillStyle: 'rgba(20, 20, 60, 0.55)', strokeStyle: '#9fa8da', font: 'bold 11px sans-serif' });
-    // 上部中央に小さく、ゲームコントローラーの操作説明を開くボタンを配置する
-    drawUiButton(canvas.width / 2 - 95, 10, 190, 24, '🎮 コントローラー操作', () => { controllerHelpActive = true; },
-      { fillStyle: 'rgba(40, 40, 40, 0.55)', strokeStyle: '#90a4ae', font: 'bold 12px sans-serif' });
     // after_normalEND使用時は、タイトル画面の文字をすべて明朝体系フォントにし、彩度・明度を少し落とした配色にする
     const useMinchoTitle = shouldShowAfterNormalEndTitleBackground();
     const titleFontFamily = useMinchoTitle
@@ -10919,8 +10916,8 @@ function draw() {
     ctx.fillStyle = useMinchoTitle ? '#9aa39f' : '#cfd8dc';
     ctx.font = `16px ${uiFontFamily}`;
     ctx.textAlign = 'center';
-    ctx.fillText('P = 一時停止 / 再開　F = 自動攻撃切替　Space = パリィ（同僚弾をはじき返す）', canvas.width / 2, helpTextY);
-    ctx.fillText('WASD・十字ボタン = 移動　マウス・ドラッグ / 連射ボタン = 照準・攻撃', canvas.width / 2, helpTextY + 26);
+    ctx.fillText('P = 一時停止 / 再開　F = 自動攻撃切替　Space = パリィ（はじきかえす）', canvas.width / 2, helpTextY);
+    ctx.fillText('WASD・十字ボタン = 移動　マウスポインタ = 向き　左クリック = アイテム取得・自動攻撃ＯＮ／　　ＯＦＦ', canvas.width / 2, helpTextY + 26);
     ctx.textAlign = 'left';
 
     // リセット確認ダイアログ：「やり直しますか？」→はい/いいえ
