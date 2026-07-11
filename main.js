@@ -393,6 +393,8 @@ const waveCooldownDelayMs = 900; // ウェーブを全滅させてから次の�
 const enemyCollisionRadius = 32;
 const minDeadlineMs = 5000 * 0.7; // 納期の最短時間（元の70%）
 const maxDeadlineMs = 15000; // 納期の最長時間（15秒）
+// 納期が短い敵ほど移動速度が速くなる（最短の敵はこの倍率、最長の敵は等倍のまま）
+const enemyDeadlineSpeedMaxMultiplier = 1.5;
 let specialDeadlineMultiplier = 1;
 let waveCooldownMs = 0; // 次のウェーブ出現までの残り時間
 
@@ -425,10 +427,13 @@ function spawnEnemy(typeIndex, isMini = false) {
   setEnemyStats(e, typeIndex);
   if (isMini) e.speed *= miniEnemySpeedMultiplier;
   e.touched = false;
-  // 敵ごとに5～30秒のランダムな納期を設定する
+  // 敵ごとにランダムな納期を設定する。0（最短）～1（最長）の位置を先に決めておき、
+  // 納期そのものだけでなく、納期が短い敵ほど速く動く移動速度の倍率にも使う
+  const deadlineUrgencyRatio = Math.random();
   e.deadlineMs = (
-    minDeadlineMs + Math.random() * (maxDeadlineMs - minDeadlineMs)
+    minDeadlineMs + deadlineUrgencyRatio * (maxDeadlineMs - minDeadlineMs)
   ) * specialDeadlineMultiplier;
+  e.speed *= enemyDeadlineSpeedMaxMultiplier - deadlineUrgencyRatio * (enemyDeadlineSpeedMaxMultiplier - 1);
   enemies.push(e);
   return e;
 }
