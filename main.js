@@ -514,15 +514,23 @@ let titleResetConfirmActive = false; // タイトル画面左上の「リセッ�
 let trueEndTitleScreenActive = false;
 let trueEndEndingListActive = false; // 専用タイトル画面から開く、専用デザインのエンディングリスト画面
 
-// 目覚めエンド専用タイトル画面の「就活を始める」：周回には入らず、ホワイトアウト→中央に一枚画像を表示→
-// クリックでフェードアウトしてゲームを終了する（ブラウザを閉じる）専用の演出
-let jobHuntEndSequence = null; // null、または { phase: 'whiteout' | 'image' | 'fadeOut', phaseTimerMs }
+// 目覚めエンド専用タイトル画面の「就活を始める」：周回には入らず、ホワイトアウト→中央に一枚画像をクリックでフェードイン表示→
+// （クリックで）フェードアウトしてゲームを終了する（ブラウザを閉じる）専用の演出
+let jobHuntEndSequence = null; // null、または { phase: 'whiteout' | 'image' | 'fadeOut', phaseTimerMs, revealed, revealTimerMs }
 const jobHuntEndWhiteoutDurationMs = 1800;
 const jobHuntEndFadeOutDurationMs = 1800;
+const jobHuntEndImageFadeInDurationMs = 900;
+let jobHuntEndImage = null; // 自機・同僚の組み合わせに応じた images/ending/ending_XX_YY.png
 
 function startJobHuntEndSequence() {
   trueEndTitleScreenActive = false;
-  jobHuntEndSequence = { phase: 'whiteout', phaseTimerMs: 0 };
+  // 自機の性別（icon_01=男性→01／icon_02=女性→02）と、選んでいた同僚アイコン（char_XX→XX）の組み合わせで、
+  // images/ending/ending_{自機}_{同僚}.png を表示する
+  const playerNum = selectedGender === 'female' ? '02' : '01';
+  const partnerNum = selectedPartnerIcon ? selectedPartnerIcon.replace('char_', '') : null;
+  jobHuntEndImage = new Image();
+  if (partnerNum) jobHuntEndImage.src = `images/ending/ending_${playerNum}_${partnerNum}.png`;
+  jobHuntEndSequence = { phase: 'whiteout', phaseTimerMs: 0, revealed: false, revealTimerMs: 0 };
 }
 
 // タイトル画面の「リセット」：夢の記憶ポイント・引き継ぎ役職／Score・エンディング記録など、
@@ -6907,6 +6915,8 @@ function update() {
         jobHuntEndSequence.phaseTimerMs >= jobHuntEndWhiteoutDurationMs) {
       jobHuntEndSequence.phase = 'image';
       jobHuntEndSequence.phaseTimerMs = 0;
+    } else if (jobHuntEndSequence.phase === 'image' && jobHuntEndSequence.revealed) {
+      jobHuntEndSequence.revealTimerMs += rawDt * 1000;
     } else if (jobHuntEndSequence.phase === 'fadeOut' &&
         jobHuntEndSequence.phaseTimerMs >= jobHuntEndFadeOutDurationMs) {
       window.close();
@@ -8439,8 +8449,8 @@ function drawTrueEndTitleScreen() {
 // 目覚めエンド専用タイトル画面の「就活を始める」を押した後の演出。
 // whiteout：タイトル画面が白へ消えていく／image：中央に一枚画像（暫定は矩形）を表示し、クリックを待つ／
 // fadeOut：クリック後、画面全体が黒くフェードアウトしきったらゲームを終了する（updateBossEvent側でwindow.close()）
-const jobHuntEndPlaceholderImageW = 360;
-const jobHuntEndPlaceholderImageH = 220;
+const jobHuntEndImageMaxW = 560;
+const jobHuntEndImageMaxH = 460;
 function drawJobHuntEndSequence() {
   const seq = jobHuntEndSequence;
   ctx.fillStyle = '#ffffff';
@@ -8456,26 +8466,36 @@ function drawJobHuntEndSequence() {
     return;
   }
 
-  // 'image'・'fadeOut'共通：中央に一枚画像（後日差し替え予定。暫定的に矩形で表示）を表示する
-  const imgX = canvas.width / 2 - jobHuntEndPlaceholderImageW / 2;
-  const imgY = canvas.height / 2 - jobHuntEndPlaceholderImageH / 2;
-  ctx.fillStyle = '#cfcfcf';
-  ctx.fillRect(imgX, imgY, jobHuntEndPlaceholderImageW, jobHuntEndPlaceholderImageH);
-  ctx.strokeStyle = '#888888';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(imgX, imgY, jobHuntEndPlaceholderImageW, jobHuntEndPlaceholderImageH);
-  ctx.fillStyle = '#888888';
-  ctx.font = '16px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('（差し替え予定の画像）', canvas.width / 2, imgY + jobHuntEndPlaceholderImageH + 28);
-  ctx.textAlign = 'left';
+  // 'image'・'fadeOut'共通：中央に、自機・同僚の組み合わせに対応するエンディング画像を表示する。
+  // クリックするまでは非表示のままで、最初のクリックでゆっくりフェードインする
+  const revealAlpha = seq.revealed ? Math.min(1, seq.revealTimerMs / jobHuntEndImageFadeInDurationMs) : 0;
+  if (revealAlpha > 0 && jobHuntEndImage && jobHuntEndImage.complete && jobHuntEndImage.naturalWidth > 0) {
+    const scale = Math.min(
+      jobHuntEndImageMaxW / jobHuntEndImage.naturalWidth,
+      jobHuntEndImageMaxH / jobHuntEndImage.naturalHeight
+    );
+    const drawW = jobHuntEndImage.naturalWidth * scale;
+    const drawH = jobHuntEndImage.naturalHeight * scale;
+    ctx.save();
+    ctx.globalAlpha = revealAlpha;
+    ctx.drawImage(jobHuntEndImage, canvas.width / 2 - drawW / 2, canvas.height / 2 - drawH / 2, drawW, drawH);
+    ctx.restore();
+  }
 
   if (seq.phase === 'image') {
-    // 画面のどこをクリックしても、フェードアウトへ進む
-    uiButtons.push({
-      x: 0, y: 0, w: canvas.width, h: canvas.height,
-      action: () => { jobHuntEndSequence.phase = 'fadeOut'; jobHuntEndSequence.phaseTimerMs = 0; }
-    });
+    if (!seq.revealed) {
+      // 最初のクリックで、エンディング画像をフェードイン表示する
+      uiButtons.push({
+        x: 0, y: 0, w: canvas.width, h: canvas.height,
+        action: () => { jobHuntEndSequence.revealed = true; jobHuntEndSequence.revealTimerMs = 0; }
+      });
+    } else if (revealAlpha >= 1) {
+      // 画像が完全に表示されたら、次のクリックでフェードアウトへ進む
+      uiButtons.push({
+        x: 0, y: 0, w: canvas.width, h: canvas.height,
+        action: () => { jobHuntEndSequence.phase = 'fadeOut'; jobHuntEndSequence.phaseTimerMs = 0; }
+      });
+    }
   } else if (seq.phase === 'fadeOut') {
     const p = Math.min(1, seq.phaseTimerMs / jobHuntEndFadeOutDurationMs);
     ctx.fillStyle = `rgba(0, 0, 0, ${p})`;
