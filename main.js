@@ -6801,6 +6801,23 @@ function attemptDeflectPartnerBullet() {
   if (meleeTargets.length > 0) messageParts.push(meleeTargets.length > 1 ? `敵${meleeTargets.length}体` : '敵');
   showMessage(`パリィ成功！（${messageParts.join('・')}）`, 1400, '#fff176');
 }
+
+// 完全オートモード中、範囲内に入った援護弾を可能なら自動でパリィする（1本の援護弾につき1回だけ試みる）
+let fullAutoSupportBulletParryAttempted = false;
+function updateFullAutoSupportBulletParry() {
+  const supportBullet = bullets.find(b => b.owner === 'support');
+  if (!supportBullet) {
+    fullAutoSupportBulletParryAttempted = false;
+    return;
+  }
+  if (fullAutoSupportBulletParryAttempted || stunned) return;
+  const d = Math.hypot(supportBullet.x - player.x, supportBullet.y - player.y);
+  if (d <= deflectRange + supportBullet.radius) {
+    fullAutoSupportBulletParryAttempted = true;
+    attemptDeflectPartnerBullet();
+  }
+}
+
 // スマホ用自動照準のターゲットを返す。定時報告が出ている間は、同僚の自律攻撃と同様にそちらを優先する
 // allowPartner: 完全オート・自動攻撃モードではない（自分の意思で撃っている）時にtrue。
 // この場合だけ、同僚も狙い先の候補に含める（同僚しか近くにいない場面などで、あえてその方向へ撃てるようにする）
@@ -6899,9 +6916,10 @@ function computeFullAutoEnemyAvoidanceVector() {
 
 // 完全オートモード中の移動方向（-1〜1に正規化済み）を、優先度順に1つだけ選んで決める
 // （複数の意図を混ぜず、優先度が高いものだけに従うことで振動を防ぐ）
-// 優先度1: 同僚弾の回避 → 優先度2: 近い敵からの回避 → 優先度3: 同僚との距離を置く
-// （チョコレート・栄養ドリンク・コーヒー・ファイヤーウォール・食事はいずれも、自機が実際にその場へ来ない限り
-// 　取得されないため、完全オートモード中はクリック操作がない以上、これらを取得できない）
+// 優先度1: 同僚弾の回避 → 優先度2: 近い敵からの回避 →
+// 優先度3: 昼食・チョコレート・ファイヤーウォールを取りに行く → 優先度4: 同僚との距離を置く
+// （完全オートモード中は、自機がアイテムに直接触れるだけで自動取得される。栄養ドリンク・コーヒーは
+// 　自発的には取りに行かないが、通りがかって触れれば取得される）
 // 敵の反発がほぼ打ち消し合って板挟みになった時、振動せずランダムな方向へ抜け出すための状態
 const fullAutoStuckVectorThreshold = 0.15; // 合成ベクトルの大きさがこれ未満なら「板挟み」とみなす
 const fullAutoEscapeDurationMs = 500; // 一度ランダムな方向へ逃げ始めたら、この間は同じ方向を保つ
@@ -6943,7 +6961,19 @@ function computeFullAutoMoveVector(dt) {
   }
   fullAutoEscapeTimerMs = 0;
 
-  // 優先度3：他に優先事項がなければ、同僚から距離を置く
+  // 優先度3：他に優先事項がなければ、昼食・チョコレート・ファイヤーウォールを自発的に取りに行く
+  // （栄養ドリンク・コーヒーは自発的には取りに行かないが、通りがかって触れれば自動で取得される）
+  const seekTarget = findFullAutoSeekableItemTarget();
+  if (seekTarget) {
+    const sdx = seekTarget.x - player.x;
+    const sdy = seekTarget.y - player.y;
+    const sdist = Math.hypot(sdx, sdy);
+    if (sdist > 1) {
+      return { x: sdx / sdist, y: sdy / sdist };
+    }
+  }
+
+  // 優先度4：他に優先事項がなければ、同僚から距離を置く
   // （同僚弾を被弾しにくくし、自機の弾線上に同僚が入って誤射を防ぐ状況自体も減らす）
   if (partner.active) {
     const pdx = player.x - partner.x;
@@ -6954,6 +6984,21 @@ function computeFullAutoMoveVector(dt) {
     }
   }
   return { x: 0, y: 0 };
+}
+
+// 完全オートモードが自発的に取りに行く対象（昼食・チョコレート・ファイヤーウォール）のうち、最も近いものを返す
+function findFullAutoSeekableItemTarget() {
+  const candidates = [];
+  if (chocolate && chocolate.landed) candidates.push(chocolate);
+  if (heartWall && heartWall.landed) candidates.push(heartWall);
+  if (lunchState) lunchState.items.forEach(item => candidates.push(item));
+  if (candidates.length === 0) return null;
+  let nearest = null, nearestD = Infinity;
+  for (const item of candidates) {
+    const d = Math.hypot(item.x - player.x, item.y - player.y);
+    if (d < nearestD) { nearest = item; nearestD = d; }
+  }
+  return nearest;
 }
 
 // タイトル・各種選択画面・演出中でない、実際にプレイ中の画面かどうか
@@ -6998,6 +7043,34 @@ function tryCollectItemAtPoint(p) {
     }
   }
   return false;
+}
+
+// 完全オートモード中だけ有効：自機がアイテムに実際に触れたら、クリックなしで自動的に取得する
+function checkFullAutoItemTouchPickup() {
+  if (chocolate && chocolate.landed &&
+      Math.hypot(player.x - chocolate.x, player.y - chocolate.y) <= player.radius + chocolate.radius) {
+    consumeChocolate();
+  }
+  if (coffee && coffee.landed && !(coffee.graceMs > 0) &&
+      Math.hypot(player.x - coffee.x, player.y - coffee.y) <= player.radius + coffee.radius) {
+    consumeCoffee();
+  }
+  if (energyDrink && energyDrink.landed && !(energyDrink.graceMs > 0) &&
+      Math.hypot(player.x - energyDrink.x, player.y - energyDrink.y) <= player.radius + energyDrink.radius) {
+    consumeEnergyDrink();
+  }
+  if (heartWall && heartWall.landed &&
+      Math.hypot(player.x - heartWall.x, player.y - heartWall.y) <= player.radius + heartWall.radius) {
+    consumeHeartWall();
+  }
+  if (lunchState) {
+    for (let i = lunchState.items.length - 1; i >= 0; i--) {
+      const item = lunchState.items[i];
+      if (Math.hypot(player.x - item.x, player.y - item.y) <= player.radius + item.radius) {
+        collectLunchItem(i);
+      }
+    }
+  }
 }
 
 // ===== メニュー選択のタップ／クリック対応 =====
@@ -7530,6 +7603,8 @@ function update() {
 
   // 援護弾（ボスが倒せない時の救済措置）の発生判定・飛来を処理する
   updateSupportBulletSystem(dt);
+  // 完全オートモード中は、近くまで来た援護弾を可能ならパリィする
+  if (fullAutoModeEnabled) updateFullAutoSupportBulletParry();
 
   // 各敵の納期をカウントダウンし、0になった敵を爆発させる
   for (let i = enemies.length - 1; i >= 0; i--) {
@@ -7767,6 +7842,9 @@ function update() {
     clampToPlayableFloor(player);
     pushEntityOutsideScheduledReport(player);
     pushEntityOutsideFixedEnemy(player);
+
+    // 完全オートモード中だけ、自機がアイテムに直接触れたらその場で自動取得する
+    if (fullAutoModeEnabled) checkFullAutoItemTouchPickup();
 
     // 無敵時間を減らし、0になったら解除する
     if (invincible) {
@@ -9548,7 +9626,7 @@ function drawRealWorldTimeScreen() {
   ctx.fillText('real-world time', canvas.width - 16, 30);
   ctx.fillStyle = '#222222';
   ctx.font = 'bold 26px sans-serif';
-  ctx.fillText(`${yy}/${mm}/${dd} ${hh}:${mi}:${ss} (${wd})`, canvas.width - 16, 58);
+  ctx.fillText(`${yy}/${mm}/${dd} (${wd}) ${hh}:${mi}:${ss}`, canvas.width - 16, 58);
   ctx.textAlign = 'center';
   ctx.font = '15px sans-serif';
   ctx.fillStyle = '#888888';
