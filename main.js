@@ -8661,7 +8661,7 @@ const nightmareAgainImageFadeOutDurationMs = 3000;
 // 拡大速度は一定ではなく、拡大が始まってからの経過時間とともに徐々に増していく
 // （t秒後の拡大速度 = base + accel × t。フェードイン・フェードアウトを通じてずっと加速し続ける）
 const nightmareAgainImageZoomBaseRatePerSec = 0.04;
-const nightmareAgainImageZoomAccelPerSec2 = 0.045;
+const nightmareAgainImageZoomAccelPerSec2 = 0.1;
 const nightmareAgainImage = (() => {
   const img = new Image();
   img.src = 'images/background/nightmare_again.png';
