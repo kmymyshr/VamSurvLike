@@ -8654,11 +8654,14 @@ function drawTrueEndTitleScreen() {
 // 目覚めエンド専用タイトル画面の「寝る」を押した後の演出：
 // 黒フェードアウト（3秒）→nightmare_again.pngが拡大しながらフェードイン→
 // 拡大を続けたまま黒フェードアウト（3秒）→タイトルへ（再読み込み後、タイトルがフェードインする）
-let nightmareAgainSequence = null; // null、または { phase: 'fadeOut' | 'imageIn' | 'imageOut', phaseTimerMs, scale }
+let nightmareAgainSequence = null; // null、または { phase: 'fadeOut' | 'imageIn' | 'imageOut', phaseTimerMs, scale, zoomElapsedMs }
 const nightmareAgainFadeOutDurationMs = 3000;
 const nightmareAgainImageFadeInDurationMs = 2200;
 const nightmareAgainImageFadeOutDurationMs = 3000;
-const nightmareAgainImageZoomPerSec = 0.09; // 1秒あたりの拡大量。フェードイン・フェードアウトを通じて一定速度で拡大し続ける
+// 拡大速度は一定ではなく、拡大が始まってからの経過時間とともに徐々に増していく
+// （t秒後の拡大速度 = base + accel × t。フェードイン・フェードアウトを通じてずっと加速し続ける）
+const nightmareAgainImageZoomBaseRatePerSec = 0.04;
+const nightmareAgainImageZoomAccelPerSec2 = 0.045;
 const nightmareAgainImage = (() => {
   const img = new Image();
   img.src = 'images/background/nightmare_again.png';
@@ -8668,14 +8671,17 @@ const nightmareAgainImage = (() => {
 function startNightmareAgainSequence() {
   // 専用タイトル画面の描画に戻らないよう切り替え、代わりにこの演出を専用画面として描画する
   trueEndTitleScreenActive = false;
-  nightmareAgainSequence = { phase: 'fadeOut', phaseTimerMs: 0, scale: 1 };
+  nightmareAgainSequence = { phase: 'fadeOut', phaseTimerMs: 0, scale: 1, zoomElapsedMs: 0 };
 }
 
 function updateNightmareAgainSequence(rawDt) {
   const seq = nightmareAgainSequence;
   seq.phaseTimerMs += rawDt * 1000;
   if (seq.phase !== 'fadeOut') {
-    seq.scale += nightmareAgainImageZoomPerSec * rawDt;
+    seq.zoomElapsedMs += rawDt * 1000;
+    const currentZoomRate = nightmareAgainImageZoomBaseRatePerSec +
+      nightmareAgainImageZoomAccelPerSec2 * (seq.zoomElapsedMs / 1000);
+    seq.scale += currentZoomRate * rawDt;
   }
   if (seq.phase === 'fadeOut' && seq.phaseTimerMs >= nightmareAgainFadeOutDurationMs) {
     seq.phase = 'imageIn';
