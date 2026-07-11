@@ -518,8 +518,8 @@ let trueEndEndingListActive = false; // 専用タイトル画面から開く、�
 // （クリックで）フェードアウトしてゲームを終了する（ブラウザを閉じる）専用の演出
 let jobHuntEndSequence = null; // null、または { phase: 'whiteout' | 'image' | 'fadeOut', phaseTimerMs, revealed, revealTimerMs }
 const jobHuntEndWhiteoutDurationMs = 1800;
-const jobHuntEndFadeOutDurationMs = 1800;
-const jobHuntEndImageFadeInDurationMs = 900;
+const jobHuntEndFadeOutDurationMs = 3000;
+const jobHuntEndImageFadeInDurationMs = 1500;
 let jobHuntEndImage = null; // 自機・同僚の組み合わせに応じた images/ending/ending_XX_YY.png
 
 function startJobHuntEndSequence() {
@@ -532,6 +532,7 @@ function startJobHuntEndSequence() {
   if (partnerNum) jobHuntEndImage.src = `images/ending/ending_${playerNum}_${partnerNum}.png`;
   jobHuntEndSequence = { phase: 'whiteout', phaseTimerMs: 0, revealed: false, revealTimerMs: 0 };
 }
+
 
 // タイトル画面の「リセット」：夢の記憶ポイント・引き継ぎ役職／Score・エンディング記録など、
 // 永続化されている状態をすべて消し、まっさらな状態からやり直す
@@ -5238,23 +5239,70 @@ function startBossEvent() {
 }
 
 // ===== 「目覚め」で夢ルートに入り、ADV3を完走した直後の特別なラスボス戦 =====
-// DAY〇〇の代わりに「24:00」を表示し、クリック待ちなしで自動的にフェードアウトしてから
-// 特別なラスボス戦（SAN20以下で出会うものと実質同じだが、専用の見た目・背景で、通常敵/固定敵/クイズは出さない）へ入る
-let dreamBossIntroSequence = null; // null、または { phase: 'clock' | 'fadeOut', phaseTimerMs }
-const dreamBossIntroClockDurationMs = 3000;
+// DAY〇〇の代わりに「24:00」を表示し、クリックすると暗めの赤字へゆっくり変わりながら爪痕・取り消し線が生じ、
+// その後フェードアウトしてから特別なラスボス戦（SAN20以下で出会うものと実質同じだが、専用の見た目・背景で、
+// 通常敵/固定敵/クイズは出さない）へ入る
+let dreamBossIntroSequence = null; // null、または { phase, phaseTimerMs, clockWaitTimerMs, glitchElapsedMs, glitchTimerMs, glitchText }
+const dreamBossIntroClockAutoAdvanceMs = 3000; // 完全オートモード中、クリックがなくてもこの時間で自動的に次へ進める
+const dreamBossIntroTransformDurationMs = 1600; // クリック後、赤字に変わりながら爪痕・取り消し線が生じきるまでの時間
 const dreamBossIntroFadeOutDurationMs = 800;
+// 表示されている間ずっと、時刻の表記がランダムな（存在しない値も含む）ものへ切り替わり続ける。
+// 切り替え間隔は最初は緩やかで、時間が経つほどだんだん速くなっていく
+const dreamBossIntroGlitchMinIntervalMs = 45;
+const dreamBossIntroGlitchMaxIntervalMs = 420;
+const dreamBossIntroGlitchRampMs = 6000; // この時間かけて、切り替わり間隔が最速になる
 
 function startDreamBossIntroSequence() {
-  dreamBossIntroSequence = { phase: 'clock', phaseTimerMs: 0 };
+  dreamBossIntroSequence = {
+    phase: 'clock', phaseTimerMs: 0, clockWaitTimerMs: 0,
+    glitchElapsedMs: 0, glitchTimerMs: 0, glitchText: '24:00'
+  };
+}
+
+// 「24:00」表示中のクリックで、赤字に変わりながら爪痕・取り消し線が生じる演出へ進める
+function advanceDreamBossIntroFromClock() {
+  if (!dreamBossIntroSequence || dreamBossIntroSequence.phase !== 'clock') return;
+  dreamBossIntroSequence.phase = 'transform';
+  dreamBossIntroSequence.phaseTimerMs = 0;
+}
+
+// ランダムな（存在しない値も含む）時刻表記を1つ作る（例：12:34、66:66）
+function generateDreamBossIntroGlitchTime() {
+  const hh = Math.floor(Math.random() * 100);
+  const mm = Math.floor(Math.random() * 100);
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
 }
 
 function updateDreamBossIntroSequence(rawDt) {
-  dreamBossIntroSequence.phaseTimerMs += rawDt * 1000;
-  if (dreamBossIntroSequence.phase === 'clock' && dreamBossIntroSequence.phaseTimerMs >= dreamBossIntroClockDurationMs) {
-    dreamBossIntroSequence.phase = 'fadeOut';
-    dreamBossIntroSequence.phaseTimerMs = 0;
-  } else if (dreamBossIntroSequence.phase === 'fadeOut' &&
-      dreamBossIntroSequence.phaseTimerMs >= dreamBossIntroFadeOutDurationMs) {
+  const seq = dreamBossIntroSequence;
+  // 表示中はずっと、経過時間に応じてだんだん速く時刻表記が切り替わり続ける（フェーズを問わず進行する）
+  seq.glitchElapsedMs += rawDt * 1000;
+  seq.glitchTimerMs += rawDt * 1000;
+  const glitchP = Math.min(1, seq.glitchElapsedMs / dreamBossIntroGlitchRampMs);
+  const glitchInterval = dreamBossIntroGlitchMaxIntervalMs +
+    (dreamBossIntroGlitchMinIntervalMs - dreamBossIntroGlitchMaxIntervalMs) * glitchP;
+  if (seq.glitchTimerMs >= glitchInterval) {
+    seq.glitchTimerMs = 0;
+    seq.glitchText = generateDreamBossIntroGlitchTime();
+  }
+
+  if (seq.phase === 'clock') {
+    // 完全オートモード中は、クリックがなくても一定時間でクリックした扱いにして次へ進める
+    if (fullAutoModeEnabled) {
+      seq.clockWaitTimerMs += rawDt * 1000;
+      if (seq.clockWaitTimerMs >= dreamBossIntroClockAutoAdvanceMs) {
+        advanceDreamBossIntroFromClock();
+      }
+    }
+    return;
+  }
+  seq.phaseTimerMs += rawDt * 1000;
+  if (seq.phase === 'transform' &&
+      seq.phaseTimerMs >= dreamBossIntroTransformDurationMs) {
+    seq.phase = 'fadeOut';
+    seq.phaseTimerMs = 0;
+  } else if (seq.phase === 'fadeOut' &&
+      seq.phaseTimerMs >= dreamBossIntroFadeOutDurationMs) {
     dreamBossIntroSequence = null;
     startDreamBossEvent();
   }
@@ -5263,17 +5311,105 @@ function updateDreamBossIntroSequence(rawDt) {
 function drawDreamBossIntroSequence() {
   ctx.fillStyle = 'black';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // 赤字への変化・爪痕/取り消し線の出現度合い（0〜1）。クリック前は0のまま
+  const transformP = dreamBossIntroSequence.phase === 'clock'
+    ? 0
+    : Math.min(1, dreamBossIntroSequence.phaseTimerMs / dreamBossIntroTransformDurationMs);
   const alpha = dreamBossIntroSequence.phase === 'fadeOut'
     ? Math.max(0, 1 - dreamBossIntroSequence.phaseTimerMs / dreamBossIntroFadeOutDurationMs)
     : 1;
+
   ctx.save();
   ctx.globalAlpha = alpha;
-  ctx.fillStyle = 'white';
+  // 白 → 暗めの赤へ、ゆっくり色が変わっていく
+  const r = Math.round(255 + (139 - 255) * transformP);
+  const g = Math.round(255 + (0 - 255) * transformP);
+  const b = Math.round(255 + (0 - 255) * transformP);
+  ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
   ctx.font = 'bold 40px sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('24:00', canvas.width / 2, canvas.height / 2);
+  const textY = canvas.height / 2;
+  const displayText = dreamBossIntroSequence.glitchText;
+  ctx.fillText(displayText, canvas.width / 2, textY);
+
+  if (transformP > 0) {
+    const textWidth = ctx.measureText(displayText).width;
+    drawDreamBossIntroClawMarks(canvas.width / 2, textY, textWidth, transformP);
+  }
   ctx.restore();
   ctx.textAlign = 'left';
+
+  if (dreamBossIntroSequence.phase === 'clock') {
+    // クリックで、赤字に変わりながら爪痕・取り消し線が生じる演出に進む
+    uiButtons.push({ x: 0, y: 0, w: canvas.width, h: canvas.height, action: advanceDreamBossIntroFromClock });
+  }
+}
+
+// 「24:00」の文字に、じわじわ現れる爪痕＋鉛筆の取り消し線を重ねて描く（alphaで出現度合いを制御）
+function drawDreamBossIntroClawMarks(centerX, centerY, textWidth, alpha) {
+  ctx.save();
+  ctx.globalAlpha *= alpha;
+  ctx.strokeStyle = 'rgba(28, 3, 3, 0.92)';
+  ctx.lineCap = 'round';
+  const left = centerX - textWidth / 2;
+
+  // 爪痕：暗い血のような色の斜めの傷を、ジグザグに交差させながら数本走らせる
+  const clawCount = 4;
+  for (let c = 0; c < clawCount; c++) {
+    const crossing = c % 2 === 1;
+    const startX = left - 6 + (textWidth + 12) / (clawCount + 1) * (c + 0.55);
+    const startY = centerY - 20 + (titleGlitchPseudoRandom(c * 17 + 301) - 0.5) * 8;
+    const baseAngleDeg = crossing ? -28 : 28;
+    const angleDeg = baseAngleDeg + (titleGlitchPseudoRandom(c * 41 + 311) - 0.5) * 10;
+    const angle = angleDeg * Math.PI / 180;
+    const length = 30 + titleGlitchPseudoRandom(c * 29 + 305) * 10;
+    const endX = startX + Math.cos(angle) * length;
+    const endY = startY + Math.sin(angle) * length;
+    const perpAngle = angle + Math.PI / 2;
+    const segs = 6;
+    let prevX = startX, prevY = startY;
+    for (let s = 1; s <= segs; s++) {
+      const t = s / segs;
+      const jag = (titleGlitchPseudoRandom(c * 71 + s * 13 + 317) - 0.5) * 3;
+      const px = startX + (endX - startX) * t + Math.cos(perpAngle) * jag;
+      const py = startY + (endY - startY) * t + Math.sin(perpAngle) * jag;
+      ctx.lineWidth = 1.5 + Math.sin(Math.PI * t) * 3.5;
+      ctx.beginPath();
+      ctx.moveTo(prevX, prevY);
+      ctx.lineTo(px, py);
+      ctx.stroke();
+      prevX = px; prevY = py;
+    }
+  }
+
+  // 取り消し線：鉛筆でぐしゃぐしゃと引いたような、ほぼ水平の二重線
+  const pencilLineCount = 2;
+  for (let p = 0; p < pencilLineCount; p++) {
+    const baseY = centerY - 6 + p * 9 + (titleGlitchPseudoRandom(p * 53 + 321) - 0.5) * 6;
+    const angleDeg = (titleGlitchPseudoRandom(p * 61 + 331) - 0.5) * 8;
+    const angle = angleDeg * Math.PI / 180;
+    const startX = left - 6 - titleGlitchPseudoRandom(p * 11 + 341) * 4;
+    const length = textWidth + 12 + titleGlitchPseudoRandom(p * 23 + 351) * 10;
+    const endX = startX + Math.cos(angle) * length;
+    const endY = baseY + Math.sin(angle) * length;
+    const perpAngle = angle + Math.PI / 2;
+    const segs = 10;
+    let prevPX = startX, prevPY = baseY;
+    ctx.lineWidth = 2;
+    for (let s = 1; s <= segs; s++) {
+      const t = s / segs;
+      const jag = (titleGlitchPseudoRandom(p * 97 + s * 17 + 361) - 0.5) * 4;
+      const px = startX + (endX - startX) * t + Math.cos(perpAngle) * jag;
+      const py = baseY + (endY - baseY) * t + Math.sin(perpAngle) * jag;
+      ctx.beginPath();
+      ctx.moveTo(prevPX, prevPY);
+      ctx.lineTo(px, py);
+      ctx.stroke();
+      prevPX = px; prevPY = py;
+    }
+  }
+  ctx.restore();
 }
 
 // 「24:00」のフェードアウトが終わった瞬間に呼ばれ、特別なラスボス戦を実際に開始する
@@ -8498,7 +8634,7 @@ function drawJobHuntEndSequence() {
     }
   } else if (seq.phase === 'fadeOut') {
     const p = Math.min(1, seq.phaseTimerMs / jobHuntEndFadeOutDurationMs);
-    ctx.fillStyle = `rgba(0, 0, 0, ${p})`;
+    ctx.fillStyle = `rgba(255, 255, 255, ${p})`;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
 }
@@ -11419,7 +11555,10 @@ function draw() {
   ctx.font = 'bold 22px sans-serif';
   ctx.fillStyle = holidayFlag ? '#ffeb3b' : 'white';
   const hourStr = String(currentHour).padStart(2,'0') + ':00';
-  const dateStr = `DAY${dayNumber} ${currentDate.getFullYear()}/${String(currentDate.getMonth()+1).padStart(2,'0')}/${String(currentDate.getDate()).padStart(2,'0')} ${hourStr} (${yName})`;
+  // ラスボス戦の間は、日時が分からないよう表示をすべて「?」にする
+  const dateStr = bossEvent
+    ? 'DAY?? ????/??/?? ??:?? (?)'
+    : `DAY${dayNumber} ${currentDate.getFullYear()}/${String(currentDate.getMonth()+1).padStart(2,'0')}/${String(currentDate.getDate()).padStart(2,'0')} ${hourStr} (${yName})`;
   const dateStrWidth = ctx.measureText(dateStr).width;
   const dateStrX = canvas.width - 12 - dateStrWidth;
   ctx.fillText(dateStr, dateStrX, 28);
