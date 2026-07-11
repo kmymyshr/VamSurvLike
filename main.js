@@ -4729,15 +4729,19 @@ function getCanvasPoint(event) {
   };
 }
 
-// マウス操作時：ポインタ位置がそのまま照準方向になる（PCでの挙動は変更しない）
+// マウス操作時：ポインタ位置がそのまま照準方向になる（PCでの挙動は変更しない）。
+// ただし自機をドラッグ移動中は、自機がカーソルへ追従し続けるため、ここで向きを更新すると
+// ドラッグした方向へ向きが引っ張られてしまう。ドラッグ中は向きの更新自体を止め、開始時の向きを維持する
 function updateMousePosition(event) {
   const p = getCanvasPoint(event);
   mousePosition.x = p.x;
   mousePosition.y = p.y;
-  player.angle = Math.atan2(
-    mousePosition.y - player.y,
-    mousePosition.x - player.x
-  );
+  if (!playerDragActive) {
+    player.angle = Math.atan2(
+      mousePosition.y - player.y,
+      mousePosition.x - player.x
+    );
+  }
 }
 
 // タッチでの移動・攻撃は画面外の専用コントロール（#moveJoystick / #btnMobileFire）が担当するため、
@@ -7920,14 +7924,14 @@ function update() {
     } else if (moveJoystickPointerId !== null && (touchMoveVector.x !== 0 || touchMoveVector.y !== 0)) {
       // 画面外の移動ジョイスティックを操作している間は、入力方向へ向きも変える
       player.angle = Math.atan2(touchMoveVector.y, touchMoveVector.x);
-    } else if (Math.hypot(mousePosition.x - player.x, mousePosition.y - player.y) > player.radius) {
+    } else if (!playerDragActive) {
       player.angle = Math.atan2(
         mousePosition.y - player.y,
         mousePosition.x - player.x
       );
     }
-    // カーソルが自機の当たり判定内にある間（ドラッグ移動中はカーソルが自機に重なり続けるため、常にこの状態になる）は、
-    // 距離がほぼ0になり向きの計算が不安定になるため更新せず、範囲に入る直前（外側にいた最後）の安定した向きを維持する
+    // ドラッグ移動中は、自機をクリックした瞬間の向きをそのまま維持する
+    // （向きの更新自体はupdateMousePosition側でも止めてあるので、ここは毎フレームの二重チェック）
 
     // 手動時は左クリック中だけ、自動時は常にカーソル方向へ攻撃する
     const fatigueRatio = Math.max(0, Math.min(1, fatigue / maxFatigue));
