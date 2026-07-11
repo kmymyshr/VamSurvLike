@@ -4822,8 +4822,11 @@ function resetJoystick() {
 
 function handleJoystickMove(event) {
   const rect = moveJoystickEl.getBoundingClientRect();
-  const dx = event.clientX - (rect.left + rect.width / 2);
-  const dy = event.clientY - (rect.top + rect.height / 2);
+  // rectは#stageのtransform: scale()を反映した実画面ピクセルなので、
+  // moveJoystickSensitivityRadius・moveJoystickVisualMaxOffset（#stage内のローカルピクセル基準）と
+  // 比較・反映する前に、現在の拡大率で割ってローカルピクセルへ変換する
+  const dx = (event.clientX - (rect.left + rect.width / 2)) / currentStageScale;
+  const dy = (event.clientY - (rect.top + rect.height / 2)) / currentStageScale;
   const dist = Math.hypot(dx, dy);
   const angle = Math.atan2(dy, dx);
   const magnitude = Math.min(1, dist / moveJoystickSensitivityRadius);
@@ -7227,18 +7230,17 @@ document.getElementById('btnPause').addEventListener('click', () => {
   lastUpdate = Date.now();
 });
 
-// ===== キャンバスをウィンドウに合わせて拡大縮小する（内部解像度は800x600のまま） =====
-// 画面下部は、移動用ジョイスティック・パリィ／連射ボタン（いずれも画面＝キャンバスの外に固定表示する
-// タッチ操作用のコントロール）のために、常にこの高さぶんを空けておく。#gameWrapperの高さもここから
-// 連動して縮め、キャンバスがどんな画面比率でもこの帯の中へ描画されないようにする
-const touchControlsReserveHeightPx = 170;
-const gameWrapperEl = document.getElementById('gameWrapper');
+// ===== 画面全体（#stage）をウィンドウに合わせて拡大縮小する（内部解像度は800x600のまま） =====
+// 戦闘画面（キャンバス800x600）の左右に、移動用ジョイスティック・パリィ／連射ボタンを置くための帯
+// （#leftControlPanel・#rightControlPanel、それぞれ130px）を加えた1060x600の「画面」を1つの塊として扱い、
+// この全体をtransform: scale()でウィンドウに収める。キャンバスと操作パネルは常に同じ比率で拡大縮小されるため、
+// パネルがキャンバス（プレイ画面）と重なることはない
+const stageEl = document.getElementById('stage');
+const stageWidth = 1060, stageHeight = 600;
+let currentStageScale = 1; // 移動用ジョイスティックなど、実画面ピクセルとローカルピクセルの変換に使う
 function fitCanvasToViewport() {
-  const availableHeight = Math.max(1, window.innerHeight - touchControlsReserveHeightPx);
-  gameWrapperEl.style.height = `${availableHeight}px`;
-  const scale = Math.min(window.innerWidth / canvas.width, availableHeight / canvas.height);
-  canvas.style.width = `${canvas.width * scale}px`;
-  canvas.style.height = `${canvas.height * scale}px`;
+  currentStageScale = Math.min(window.innerWidth / stageWidth, window.innerHeight / stageHeight);
+  stageEl.style.transform = `scale(${currentStageScale})`;
 }
 window.addEventListener('resize', fitCanvasToViewport);
 window.addEventListener('orientationchange', fitCanvasToViewport);

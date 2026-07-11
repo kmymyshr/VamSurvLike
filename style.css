@@ -11,15 +11,36 @@ html, body {
 
 #gameWrapper {
   position: relative;
-  display: flex;
-  justify-content: center;
-  align-items: center;
   width: 100%;
   height: 100%;
+  overflow: hidden;
+}
+
+/* 戦闘画面（キャンバス800x600）の左右に、操作パネルぶんの帯を加えた「画面」全体。
+   等倍のまま組み、JS側でこの全体をtransform: scale()して画面に収める（中央基準） */
+#stage {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 1060px;
+  height: 600px;
+  margin-left: -530px;
+  margin-top: -300px;
+  display: flex;
+  transform-origin: center center;
+}
+
+#canvasArea {
+  position: relative;
+  flex: 0 0 800px;
+  width: 800px;
+  height: 600px;
 }
 
 canvas {
   display: block;
+  width: 800px;
+  height: 600px;
   background: black;
   touch-action: none;
 }
@@ -45,17 +66,26 @@ canvas {
   touch-action: manipulation;
 }
 
-/* プレイ画面（キャンバス）の外、画面左下に固定表示する移動用のジョイスティック（土台） */
+/* 戦闘画面の左に広げた帯。移動用ジョイスティックを配置する */
+#leftControlPanel {
+  flex: 0 0 130px;
+  width: 130px;
+  height: 600px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 16px;
+  box-sizing: border-box;
+}
+
+/* 移動用ジョイスティック（土台） */
 #moveJoystick {
-  position: fixed;
-  left: max(16px, env(safe-area-inset-left));
-  bottom: max(16px, env(safe-area-inset-bottom));
+  position: relative;
   width: 90px;
   height: 90px;
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.10);
   border: 1px solid rgba(255, 255, 255, 0.35);
-  z-index: 20;
   touch-action: none;
 }
 
@@ -75,11 +105,22 @@ canvas {
   pointer-events: none;
 }
 
-/* プレイ画面（キャンバス）の外、画面右下に固定表示する、押している間連射する攻撃ボタン */
+/* 戦闘画面の右に広げた帯。パリィ・連射ボタンを縦に並べて配置する */
+#rightControlPanel {
+  flex: 0 0 130px;
+  width: 130px;
+  height: 600px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-bottom: 16px;
+  box-sizing: border-box;
+}
+
+/* 押している間連射する攻撃ボタン */
 #btnMobileFire {
-  position: fixed;
-  right: max(16px, env(safe-area-inset-right));
-  bottom: max(16px, env(safe-area-inset-bottom));
   width: 80px;
   height: 80px;
   border-radius: 50%;
@@ -89,14 +130,10 @@ canvas {
   font-weight: bold;
   border: 2px solid rgba(255, 138, 101, 0.65);
   touch-action: none;
-  z-index: 20;
 }
 
-/* 連射ボタンの真上に置く、パリィ（同僚弾のはじき返し）ボタン */
+/* 連射ボタンの上に置く、パリィ（同僚弾のはじき返し）ボタン */
 #btnMobileParry {
-  position: fixed;
-  right: max(16px, env(safe-area-inset-right));
-  bottom: calc(max(16px, env(safe-area-inset-bottom)) + 80px + 10px);
   width: 80px;
   height: 50px;
   border-radius: 14px;
@@ -106,7 +143,6 @@ canvas {
   font-weight: bold;
   border: 2px solid rgba(128, 222, 234, 0.75);
   touch-action: none;
-  z-index: 20;
 }
 
 /* 縦持ち（ポートレート）のときだけ、横向きを促すオーバーレイを表示する */

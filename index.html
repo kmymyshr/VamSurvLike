@@ -8,19 +8,26 @@
 </head>
 <body>
   <div id="gameWrapper">
-    <canvas id="gameCanvas" width="800" height="600"></canvas>
-    <div id="touchControls">
-      <button id="btnPause" type="button">II</button>
+    <div id="stage">
+      <!-- 戦闘画面の左側に広げた帯。移動用ジョイスティックを配置する -->
+      <div id="leftControlPanel">
+        <div id="moveJoystick">
+          <div id="moveJoystickKnob"></div>
+        </div>
+      </div>
+      <div id="canvasArea">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div id="touchControls">
+          <button id="btnPause" type="button">II</button>
+        </div>
+      </div>
+      <!-- 戦闘画面の右側に広げた帯。パリィ・連射ボタンを配置する -->
+      <div id="rightControlPanel">
+        <button id="btnMobileParry" type="button">パリィ</button>
+        <button id="btnMobileFire" type="button">連射</button>
+      </div>
     </div>
   </div>
-  <!-- プレイ画面（キャンバス）の外に置く、移動専用のジョイスティック -->
-  <div id="moveJoystick">
-    <div id="moveJoystickKnob"></div>
-  </div>
-  <!-- プレイ画面（キャンバス）の外に置く、押している間連射する攻撃ボタン -->
-  <button id="btnMobileFire" type="button">連射</button>
-  <!-- 連射ボタンの上に置く、パリィ（同僚弾のはじき返し）ボタン -->
-  <button id="btnMobileParry" type="button">パリィ</button>
   <div id="rotateOverlay">
     <p>スマートフォンを横向きにしてください</p>
   </div>
