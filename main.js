@@ -526,6 +526,15 @@ const slashEffectRangeRad = (270 * Math.PI) / 180;
 function spawnSlashEffect(x, y, angle, entityRadius) {
   slashEffect = { x, y, angle, radius: entityRadius, timer: slashEffectDurationMs };
 }
+
+// ===== 特殊スキル「ライトセーバー」：自機がパリィした瞬間、拡大した効果範囲ぶんを円形にワイプするエフェクト =====
+// 上のスラッシュエフェクトと同じ配色。パリィ範囲そのもの（getDeflectRange()）まで広がってからフェードアウトする
+let lightsaberRingEffect = null; // { x, y, radius, timer }
+const lightsaberRingEffectDurationMs = 320;
+function spawnLightsaberRingEffectIfActive(x, y) {
+  if (specialSkillEffects.deflectRangeMultiplier <= 1) return;
+  lightsaberRingEffect = { x, y, radius: getDeflectRange(), timer: lightsaberRingEffectDurationMs };
+}
 const baseFireRate = 175; // 基本の発射間隔（ミリ秒。以前の設定からさらに半分に短縮）
 let lastFire = 0;
 let score = 0;
@@ -3478,6 +3487,8 @@ function getDefaultSpecialSkillEffects() {
     communicationParryRelationshipBonus: 0,
     // 継続力：自機の弾の飛距離の倍率（レベルごとに1.2倍）
     bulletDistanceMultiplier: 1,
+    // ライトセーバー：自機のパリィ効果範囲の倍率
+    deflectRangeMultiplier: 1,
     // マルチタスクB：正面から90度ずつ回転させた計4方向へ同時発射する
     quadShotActive: false
   };
@@ -3507,6 +3518,7 @@ const specialSkills = [
   { id: 'teamwork', name: 'チームワーク', description: '自分と同僚、お互いの弾が着弾しそうな時（敵からの弾を除く）、お互いパリィが発動しやすくなる（Lv5で発動率80%）', maxLevel: 5 },
   { id: 'meal-foresight', name: '食通', description: '昼食に登場する料理に、出現する順番の番号が表示されるようになる（習得は1回のみ）', maxLevel: 1 },
   { id: 'auto-parry', name: 'オートパリィ', description: '敵（ラスボス・中ボス・固定敵）からの弾を被弾しそうな時、レベルごとに10%の確率で自動的にパリィする（Lv5で50%）', maxLevel: 5 },
+  { id: 'lightsaber', name: 'ライトセーバー', description: '自機のパリィの効果範囲が2倍になる', maxLevel: 1 },
   { id: 'persistence', name: '継続力', description: '自機の弾の飛距離が、レベルごとに1.4倍になる（Lv1:1.4倍 → Lv5:約5.38倍）', maxLevel: 5 },
   {
     id: 'encourage-a', name: '激励A',
@@ -3608,6 +3620,10 @@ function applySkillEffectForLevel(skillId, level) {
     case 'persistence':
       // 継続力：自機の弾の飛距離が、レベルごとに1.4倍になる
       specialSkillEffects.bulletDistanceMultiplier = Math.pow(1.4, level);
+      break;
+    case 'lightsaber':
+      // ライトセーバー：自機のパリィ効果範囲が2倍になる
+      specialSkillEffects.deflectRangeMultiplier = 2;
       break;
   }
 }
@@ -6821,7 +6837,11 @@ function damagePartnerByMidBossBullet() {
 }
 
 // ===== パリィ（バットのように、タイミングよく振ると同僚弾を最寄りの敵へ打ち返す） =====
-const deflectRange = 90; // これより近くにある同僚弾だけをパリィできる（やや緩めの判定）
+const deflectRangeBase = 90; // これより近くにある同僚弾だけをパリィできる（やや緩めの判定）
+// 特殊スキル「ライトセーバー」習得時は、自機のパリィ効果範囲が2倍になる
+function getDeflectRange() {
+  return deflectRangeBase * specialSkillEffects.deflectRangeMultiplier;
+}
 // 同僚が被弾しそうな時にパリィする確率。デフォルト30%で、夢の記憶ポイントの
 // 「同僚のオートパリィレベル」で最大100%まで強化できる
 let partnerParryChance = Math.min(1, 0.3 + dreamMemorySave.upgrades.partnerAutoParry * 0.14); // ゲーム開始時にapplyDreamMemoryUpgradesForNewGameで再計算
@@ -6854,6 +6874,7 @@ function damageEnemyDirectByParry(en) {
 function attemptDeflectPartnerBullet() {
   if (stunned) return;
   spawnSlashEffect(player.x, player.y, player.angle, player.radius); // 命中の有無に関わらず、振った動作自体を見せる
+  spawnLightsaberRingEffectIfActive(player.x, player.y);
   // 範囲内の条件を満たす弾は、まとめて同時にパリィする（1発だけに限らない）
   const targets = bullets.filter(b => {
     // ネットワークスペシャリスト：画面端で反射した自弾（1回目以降すべて）も、パリィで狩り直せる
@@ -6861,11 +6882,11 @@ function attemptDeflectPartnerBullet() {
     if (b.owner !== 'partner' && b.owner !== 'boss' && b.owner !== 'midBoss' &&
         b.owner !== 'fixedEnemy' && b.owner !== 'fixedEnemyDisguise' && b.owner !== 'support' && !isBouncedOwnBullet) return false;
     const d = Math.hypot(b.x - player.x, b.y - player.y);
-    return d <= deflectRange + b.radius;
+    return d <= getDeflectRange() + b.radius;
   });
   // パリィの効果範囲に本体が重なっている敵は、弾の有無に関わらず直接攻撃の対象にする。
   // 同僚（partner）はenemies配列に含まれないため、直接攻撃の対象には含まれない（同僚弾のはじき返しのみ引き続き有効）
-  const meleeTargets = enemies.filter(en => en !== partner && Math.hypot(en.x - player.x, en.y - player.y) <= deflectRange + en.radius);
+  const meleeTargets = enemies.filter(en => en !== partner && Math.hypot(en.x - player.x, en.y - player.y) <= getDeflectRange() + en.radius);
   if (targets.length === 0 && meleeTargets.length === 0) return;
 
   // パリィ（弾のはじき返し、または直接攻撃）に成功した時だけ、脳疲労が1蓄積する
@@ -6890,7 +6911,7 @@ function updateFullAutoSupportBulletParry() {
   }
   if (fullAutoSupportBulletParryAttempted || stunned) return;
   const d = Math.hypot(supportBullet.x - player.x, supportBullet.y - player.y);
-  if (d <= deflectRange + supportBullet.radius) {
+  if (d <= getDeflectRange() + supportBullet.radius) {
     fullAutoSupportBulletParryAttempted = true;
     attemptDeflectPartnerBullet();
   }
@@ -7114,8 +7135,8 @@ function tryCollectItemAtPoint(p) {
   return false;
 }
 
-// 完全オートモード中だけ有効：自機がアイテムに実際に触れたら、クリックなしで自動的に取得する
-function checkFullAutoItemTouchPickup() {
+// 自機アイコンがアイテムに接触するだけで自動取得する（クリック／タップでの取得も引き続き有効）
+function checkPlayerItemTouchPickup() {
   if (chocolate && chocolate.landed &&
       Math.hypot(player.x - chocolate.x, player.y - chocolate.y) <= player.radius + chocolate.radius) {
     consumeChocolate();
@@ -7442,6 +7463,11 @@ function update() {
   if (slashEffect) {
     slashEffect.timer -= dt * 1000;
     if (slashEffect.timer <= 0) slashEffect = null;
+  }
+  // ライトセーバーの円形ワイプエフェクトの表示時間を減らす
+  if (lightsaberRingEffect) {
+    lightsaberRingEffect.timer -= dt * 1000;
+    if (lightsaberRingEffect.timer <= 0) lightsaberRingEffect = null;
   }
 
   // 爆発後の短い時間、Canvas全体をランダムに揺らす
@@ -7922,8 +7948,8 @@ function update() {
     pushEntityOutsideScheduledReport(player);
     pushEntityOutsideFixedEnemy(player);
 
-    // 完全オートモード中だけ、自機がアイテムに直接触れたらその場で自動取得する
-    if (fullAutoModeEnabled) checkFullAutoItemTouchPickup();
+    // 自機がアイテムに直接触れたら、クリック／タップしなくてもその場で自動取得する
+    checkPlayerItemTouchPickup();
 
     // 無敵時間を減らし、0になったら解除する
     if (invincible) {
@@ -8138,11 +8164,12 @@ function update() {
     // 特殊スキル「オートパリィ」：ネットワークスペシャリストで画面端から反射した自弾も、
     // 近くまで来たら自動でパリィを試みる（1発につき1回だけ判定する）
     if (b.owner === 'player' && (b.bouncesUsed || 0) >= 1 && !b.autoParryChecked &&
-        Math.hypot(b.x - player.x, b.y - player.y) <= deflectRange + b.radius) {
+        Math.hypot(b.x - player.x, b.y - player.y) <= getDeflectRange() + b.radius) {
       b.autoParryChecked = true;
       if (Math.random() < specialSkillEffects.autoParryChance) {
         performBulletParry(b, player.x, player.y, player.angle, true);
         spawnSlashEffect(player.x, player.y, player.angle, player.radius);
+        spawnLightsaberRingEffectIfActive(player.x, player.y);
         showMessage('オートパリィ発動！', 1400, '#fff176');
         continue;
       }
@@ -11524,6 +11551,31 @@ function draw() {
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.arc(slashEffect.x, slashEffect.y, slashRadius, startAngle, sweepAngle);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // 特殊スキル「ライトセーバー」：パリィした瞬間、拡大した効果範囲ぶんを円形にワイプするエフェクトを描く
+  // （斬撃ワイプエフェクトと同じ配色。360度の円がすばやく広がってからフェードアウトする）
+  if (lightsaberRingEffect) {
+    const progress = 1 - lightsaberRingEffect.timer / lightsaberRingEffectDurationMs;
+    const sweepProgress = Math.min(1, progress / 0.6); // 最初の60%で円が広がりきる
+    const fadeAlpha = progress < 0.6 ? 1 : Math.max(0, 1 - (progress - 0.6) / 0.4); // 残りでフェードアウト
+    const ringRadius = lightsaberRingEffect.radius * sweepProgress;
+    ctx.save();
+    ctx.globalAlpha = fadeAlpha;
+    ctx.strokeStyle = '#e0f7fa';
+    ctx.lineWidth = 7;
+    ctx.shadowColor = '#80deea';
+    ctx.shadowBlur = 16;
+    ctx.beginPath();
+    ctx.arc(lightsaberRingEffect.x, lightsaberRingEffect.y, ringRadius, 0, Math.PI * 2);
+    ctx.stroke();
+    // 内側にもう1本重ねて、斬撃ワイプエフェクトと同じ太さの変化を出す
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(lightsaberRingEffect.x, lightsaberRingEffect.y, ringRadius, 0, Math.PI * 2);
     ctx.stroke();
     ctx.restore();
   }
