@@ -5916,7 +5916,7 @@ const bossTrueEndCues = [
 const bossTrueEndReturnAtMs = 13500; // このタイミングで「real-world time」画面へ進む（同僚が生存していない場合はここでタイトルへ戻る）
 const bossTrueEndLines = [
   '「…なんだか、長い夢を見ていた気がする。」',
-  '…訓練期間が終わる前に、就職活動を始めないと。'
+  '…訓練期間が終わる前に、就活を始めないと。'
 ];
 // ラスボス撃破時の「現実の時間帯」に応じて、目覚めの一文をランダムに選ぶ（同じ時間帯の中でも候補からランダム）
 const wakeUpLinesByTimeBand = {
