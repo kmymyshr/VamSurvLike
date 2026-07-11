@@ -10518,6 +10518,36 @@ function draw() {
     ctx.textAlign = 'left';
 
     const lastRun = dreamMemorySave.lastRun;
+
+    // 右上に、前回プレイの自機・同僚の組み合わせが分かるよう、それぞれのアイコンを並べて表示する
+    if (lastRun && lastRun.playerGender && lastRun.partnerIcon) {
+      const iconSize = 64;
+      const iconGap = 10;
+      const iconsRightMargin = 20;
+      const iconsY = 12;
+      const partnerIconX = canvas.width - iconsRightMargin - iconSize;
+      const playerIconX = partnerIconX - iconGap - iconSize;
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 11px sans-serif';
+      ctx.fillStyle = '#b3e5fc';
+      ctx.fillText('前回の組み合わせ', playerIconX + iconSize + iconGap / 2, iconsY - 4);
+      const playerImg = genderImageElements[lastRun.playerGender];
+      if (playerImg && playerImg.complete && playerImg.naturalWidth > 0) {
+        ctx.drawImage(playerImg, playerIconX, iconsY, iconSize, iconSize);
+      }
+      const partnerImg = partnerIconImageElements[lastRun.partnerIcon];
+      if (partnerImg && partnerImg.complete && partnerImg.naturalWidth > 0) {
+        ctx.drawImage(partnerImg, partnerIconX, iconsY, iconSize, iconSize);
+      }
+      ctx.strokeStyle = '#81d4fa';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(playerIconX, iconsY, iconSize, iconSize);
+      ctx.strokeRect(partnerIconX, iconsY, iconSize, iconSize);
+      ctx.restore();
+      ctx.textAlign = 'left';
+    }
+
     const relationshipCategoryLabel = { good: '良好', normal: '普通', bad: '悪い' };
     const carriedSkillNames = (dreamMemorySave.carriedRankSkillIds || [])
       .map(id => (rankSkillDefs.find(s => s.id === id) || {}).name)
