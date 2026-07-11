@@ -3619,13 +3619,11 @@ function chooseSpecialSkill(choiceIndex) {
   }
 }
 
+// レベルアップの特殊スキル選択は、その場では開かず、1日の終わり（次の日が始まる前）にまとめて行う。
+// ここでは選択待ちの数を積むだけにしておき、実際の選択画面は日終わりのフェードアウト後にopenSpecialSkillSelectionで開く
 function queueSpecialSkillSelections(count) {
   if (count <= 0) return;
   pendingSpecialSkillSelections += count;
-  if (!specialSkillSelectionActive) {
-    pendingSpecialSkillSelections--;
-    openSpecialSkillSelection('レベルアップ：特殊スキルを選択');
-  }
 }
 
 // ===== 特殊スキルの事前強化（夢の記憶ポイントで、次の周回をレベルアップ済みの状態から始められる） =====
@@ -3791,6 +3789,20 @@ function startDayTransition(advanceFn) {
   dayTransitionPhase = 'out';
   dayTransitionTimer = dayTransitionDurationMs;
   dayTransitionAdvanceFn = advanceFn;
+}
+
+// 画面が暗転しきった後（レベルアップの特殊スキル選択がある場合は、それをすべて終えた後）に呼ぶ。
+// 残っている仕事（敵）を配置し直して日付を進め、「DAY〇〇」の入力待ち画面へ移行する
+function finishDayTransitionOut() {
+  repositionRemainingEnemies();
+  const advanceFn = dayTransitionAdvanceFn;
+  dayTransitionAdvanceFn = null;
+  if (advanceFn) advanceFn();
+  if (gameOver || gameClear) return;
+  // 前日中に表示されていた一時メッセージ（イベント結果など）は、翌日の「DAY〇〇」画面には持ち越さず消す
+  messages.length = 0;
+  dayTransitionPhase = 'waiting';
+  dayTransitionWaitingTimerMs = 0;
 }
 
 // 一日の終わりに、まだ片付いていない仕事（敵）を新しい位置へ配置し直す
@@ -7066,18 +7078,26 @@ function update() {
       }
       return;
     }
+    if (dayTransitionPhase === 'skillSelect') {
+      // 完全オートモード中、レベルアップの特殊スキル選択画面が出てから3秒クリックがなければランダムに1つ選んだ扱いにする
+      if (specialSkillSelectionActive && fullAutoModeEnabled && Date.now() >= specialSkillSelectionAutoPickAt) {
+        chooseSpecialSkill(Math.floor(Math.random() * specialSkillChoices.length));
+      }
+      // その日ぶんの選択をすべて終えたら、通常の「DAY〇〇」入力待ちへ進む
+      if (!specialSkillSelectionActive) finishDayTransitionOut();
+      return;
+    }
     dayTransitionTimer -= rawDt * 1000;
     if (dayTransitionPhase === 'out' && dayTransitionTimer <= 0) {
-      // 画面が暗転しきったら、残っている仕事（敵）を配置し直してから日付を進め、入力待ちにする
-      repositionRemainingEnemies();
-      const advanceFn = dayTransitionAdvanceFn;
-      dayTransitionAdvanceFn = null;
-      if (advanceFn) advanceFn();
-      if (gameOver || gameClear) return;
-      // 前日中に表示されていた一時メッセージ（イベント結果など）は、翌日の「DAY〇〇」画面には持ち越さず消す
-      messages.length = 0;
-      dayTransitionPhase = 'waiting';
-      dayTransitionWaitingTimerMs = 0;
+      // 画面が暗転しきった時点で、その日ぶんのレベルアップによる特殊スキル選択が溜まっていれば、
+      // 翌日の「DAY〇〇」画面へ進む前にまとめて選択させる
+      if (pendingSpecialSkillSelections > 0) {
+        dayTransitionPhase = 'skillSelect';
+        pendingSpecialSkillSelections--;
+        openSpecialSkillSelection('レベルアップ：特殊スキルを選択');
+        return;
+      }
+      finishDayTransitionOut();
     } else if (dayTransitionPhase === 'in' && dayTransitionTimer <= 0) {
       dayTransitionPhase = null;
     }
@@ -7403,12 +7423,6 @@ function update() {
     answerQuiz(fullAutoQuizChoiceIndex);
   } else if (!quizState) {
     fullAutoQuizChoiceIndex = null;
-  }
-
-  // 完全オートモード中、レベルアップの特殊スキル選択画面が出てから3秒クリックがなければ、
-  // ランダムに1つ選んだ扱いにする
-  if (specialSkillSelectionActive && fullAutoModeEnabled && Date.now() >= specialSkillSelectionAutoPickAt) {
-    chooseSpecialSkill(Math.floor(Math.random() * specialSkillChoices.length));
   }
 
   if (playerReviveTimerMs > 0) {
@@ -11726,7 +11740,7 @@ function draw() {
     if (dayTransitionPhase === 'out') {
       const t = Math.max(0, Math.min(1, dayTransitionTimer / dayTransitionDurationMs));
       alpha = 1 - t;
-    } else if (dayTransitionPhase === 'waiting') {
+    } else if (dayTransitionPhase === 'waiting' || dayTransitionPhase === 'skillSelect') {
       alpha = 1;
     } else {
       const t = Math.max(0, Math.min(1, dayTransitionTimer / dayTransitionDurationMs));
@@ -11734,7 +11748,7 @@ function draw() {
     }
     ctx.fillStyle = `rgba(0, 0, 0, ${alpha})`;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    if (alpha > 0.6) {
+    if (alpha > 0.6 && dayTransitionPhase !== 'skillSelect') {
       ctx.fillStyle = `rgba(255, 255, 255, ${dayTransitionPhase === 'waiting' ? 1 : (alpha - 0.6) / 0.4})`;
       ctx.font = '36px sans-serif';
       ctx.textAlign = 'center';
