@@ -4742,18 +4742,18 @@ canvas.addEventListener('pointermove', (event) => {
     clampToPlayableFloor(player);
   }
 });
+// 右クリックはスペースキーと同様にパリィを試みる（メニュー移動や発射は行わない）
+canvas.addEventListener('pointerdown', (event) => {
+  if (event.pointerType === 'mouse' && event.button === 2 && !gameOver && !gameClear && !isPaused) {
+    attemptDeflectPartnerBullet();
+  }
+});
 // マウスの左ボタンを押した地点がアイテムの上なら、発射は行わずその場でアイテムだけを取得する
+// 自機本体の上なら、発射は行わずドラッグ移動を開始する
 // （setPointerCaptureより前に判定するため、この場合はboolean変数でclickイベント側に伝える）
 let itemConsumedByPointerDown = false;
 canvas.addEventListener('pointerdown', (event) => {
-  if (event.pointerType !== 'mouse') return;
-  // 右クリックはスペースキーと同様にパリィを試みる（メニュー移動や発射は行わない）
-  if (event.button === 2) {
-    updateMousePosition(event);
-    if (!gameOver && !gameClear && !isPaused) attemptDeflectPartnerBullet();
-    return;
-  }
-  if (event.button !== 0) return;
+  if (event.pointerType !== 'mouse' || event.button !== 0) return;
   updateMousePosition(event);
   if (isInCoreGameplayForClickActions() && tryCollectItemAtPoint(getCanvasPoint(event))) {
     itemConsumedByPointerDown = true;
@@ -7165,8 +7165,8 @@ canvas.addEventListener('click', (event) => {
   }
   if (clickedUiButton) return;
 
-  // マウスでの通常攻撃（押している間発射）のpointerdownで、既にアイテムを取得済みならここでは何もしない
-  // （同じ一回のクリックで、取得と発射／オート攻撃切替が二重に発生しないようにする）
+  // マウスでの通常攻撃（押している間発射）のpointerdownで、既にアイテムを取得済み／ドラッグ移動を開始済みなら
+  // ここでは何もしない（同じ一回のクリックで、取得と発射／オート攻撃切替が二重に発生しないようにする）
   if (itemConsumedByPointerDown) {
     itemConsumedByPointerDown = false;
     return;
@@ -7894,12 +7894,14 @@ function update() {
     } else if (moveJoystickPointerId !== null && (touchMoveVector.x !== 0 || touchMoveVector.y !== 0)) {
       // 画面外の移動ジョイスティックを操作している間は、入力方向へ向きも変える
       player.angle = Math.atan2(touchMoveVector.y, touchMoveVector.x);
-    } else {
+    } else if (Math.hypot(mousePosition.x - player.x, mousePosition.y - player.y) > player.radius) {
       player.angle = Math.atan2(
         mousePosition.y - player.y,
         mousePosition.x - player.x
       );
     }
+    // マウスカーソルが自機の当たり判定内にある間（ドラッグ移動中など）は、
+    // 距離がほぼ0になり方向がぶれやすいため、カーソルが範囲内に入った瞬間の向きをそのまま維持する
 
     // 手動時は左クリック中だけ、自動時は常にカーソル方向へ攻撃する
     const fatigueRatio = Math.max(0, Math.min(1, fatigue / maxFatigue));
