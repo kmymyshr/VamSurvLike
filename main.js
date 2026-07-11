@@ -1974,7 +1974,24 @@ function endWorkday() {
   if (daysFoughtSinceLastAdventure >= adventurePartDayInterval) {
     daysFoughtSinceLastAdventure = 0;
     adventureCheckpointCount++;
-    if (partner.active) {
+
+    if (!hasEverReachedNormalEnd()) {
+      // 一度もノーマルエンドを経ていない場合：アドベンチャーパート（会話）は一切発生させず、
+      // 第3回目に相当するタイミングでイベント戦（ノーマルルート負けイベント戦闘）に直行する。
+      // ここでの関係性がそのまま「前回プレイの関係性」として次の周回に引き継がれ、
+      // 次の周回からは通常どおりアドベンチャーパートに入り、夢ルートへ入れる可能性も生まれる
+      if (partner.active && adventureCheckpointCount >= adventureCheckpointCountForAdv3) {
+        startNormalEndBattleSequence();
+        return;
+      }
+      if (!partner.active && adventureCheckpointCount >= adventureCheckpointCountForAdv3) {
+        gameOver = true;
+        endingType = 'bad-lonely';
+        sendScore(score);
+        return;
+      }
+      // まだ規定回数に達していなければ、アドベンチャーパートを挟まずそのまま翌日へ進む
+    } else if (partner.active) {
       // アドベンチャーパートに入る前に、一度画面を暗転させ、これまでの統計情報を確認してから切り替える
       startSetupFadeOut(() => {
         showAdventureStatsSummary(() => {
@@ -1991,14 +2008,15 @@ function endWorkday() {
         });
       });
       return;
-    }
-    // 同僚がいない（未選択・離脱済み）場合は、アドベンチャーパートを挟まずそのまま翌日へ進む。
-    // ただし、第3回目のアドベンチャーパートに入るべきタイミングを同僚不在のまま迎えた場合は、孤独ENDへ至る
-    if (adventureCheckpointCount >= adventureCheckpointCountForLonelyEnd) {
-      gameOver = true;
-      endingType = 'bad-lonely';
-      sendScore(score);
-      return;
+    } else {
+      // 同僚がいない（未選択・離脱済み）場合は、アドベンチャーパートを挟まずそのまま翌日へ進む。
+      // ただし、第3回目のアドベンチャーパートに入るべきタイミングを同僚不在のまま迎えた場合は、孤独ENDへ至る
+      if (adventureCheckpointCount >= adventureCheckpointCountForAdv3) {
+        gameOver = true;
+        endingType = 'bad-lonely';
+        sendScore(score);
+        return;
+      }
     }
   }
   // 週の最終稼働日なら週次ノルマを判定し、それ以外は自動的に翌日へ進む
@@ -3906,11 +3924,13 @@ function getRelationshipCategory(relationship) {
 // この日数に達するたびに、その日の終業時に発生する
 const adventurePartDayInterval = 5;
 let daysFoughtSinceLastAdventure = 0;
-// 同僚が不在（未選択・離脱済み）の間は、上の判定タイミングが来てもアドベンチャーパートには入らない。
+// 同僚が不在（未選択・離脱済み）の間や、一度もノーマルエンドを経ていない間は、
+// 上の判定タイミングが来てもアドベンチャーパート（会話）には入らない。
 // その代わり、この判定タイミングを迎えた回数（アドベンチャーパートが実際に発生したかどうかに関わらず数える）を数えておき、
-// 第3回目のアドベンチャーパートに入るべきタイミングでも同僚が不在のままなら、孤独ENDへ至る
+// 第3回目のアドベンチャーパートに入るべきタイミングを迎えたら、同僚が不在なら孤独ENDへ、
+// 同僚がいるが一度もノーマルエンドを経ていなければイベント戦（ノーマルルート負けイベント戦闘）へ至る
 let adventureCheckpointCount = 0;
-const adventureCheckpointCountForLonelyEnd = 3;
+const adventureCheckpointCountForAdv3 = 3;
 
 // ===== アドベンチャーパートの分岐状態（エンディング分岐は、好感度とアドベンチャーの選択肢だけで決まる） =====
 let adventureRunCount = 0; // 「同僚と遊ぶ」を選んだ回数（ADV1・ADV2・ADV3・それ以降）
@@ -3994,6 +4014,12 @@ function getNormalEndingByRelationship() {
   if (!partner.active) return 'normal2';
   const category = getRelationshipCategory(partner.relationship);
   return category === 'good' ? 'normal1' : category === 'normal' ? 'normal2' : 'normal3';
+}
+
+// これまでに一度でもノーマルエンド（normal1〜3のいずれか）に到達したことがあるかどうか
+function hasEverReachedNormalEnd() {
+  return !!(dreamMemorySave.endingsCleared.normal1 || dreamMemorySave.endingsCleared.normal2 ||
+    dreamMemorySave.endingsCleared.normal3);
 }
 
 // シナリオデータ（partnerAdventureScenes）・言葉遣いの解決関数（resolveGenderedAdventureText）は
