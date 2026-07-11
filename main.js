@@ -9276,7 +9276,7 @@ function drawBossFinalTransition() {
   ctx.textAlign = 'center';
   if (seq.partnerAlive) {
     ctx.fillStyle = '#333333';
-    ctx.font = '22px sans-serif';
+    ctx.font = `22px ${trueEndTitleMinchoFont}`;
     const allLines = [seq.wakeUpLine, ...bossTrueEndLines];
     allLines.forEach((line, i) => {
       const cue = bossTrueEndCues[i];
@@ -9345,7 +9345,7 @@ function drawClearMessageScreen(seq) {
   ctx.globalAlpha = alpha;
   ctx.textAlign = 'center';
   ctx.fillStyle = '#222222';
-  ctx.font = 'bold 26px sans-serif';
+  ctx.font = `bold 26px ${trueEndTitleMinchoFont}`;
   bossClearMessageLines.forEach((line, i) => {
     ctx.fillText(line, canvas.width / 2, canvas.height / 2 - 20 + i * 44);
   });
@@ -10213,8 +10213,11 @@ function draw() {
       () => { dreamMemorySave.points += 1; saveDreamMemorySave(); },
       { fillStyle: 'rgba(20, 20, 60, 0.55)', strokeStyle: '#9fa8da', font: 'bold 13px sans-serif' });
 
-    // 左上に、特殊スキル（マルチタスクAなど）を事前に強化できる専用ページへのボタンを配置する
-    drawUiButton(12, 12, 150, 30, '特殊スキルの強化', () => { specialSkillPreShopActive = true; },
+    // 左上に、タイトル画面へ戻るボタンと、特殊スキル（マルチタスクAなど）を事前に強化できる専用ページへの
+    // ボタンを並べて配置する（戻るボタンの分、特殊スキルの強化ボタンは少し中央側に詰める）
+    drawUiButton(12, 12, 90, 30, '＜ 戻る', () => { dreamMemoryShopActive = false; },
+      { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae', font: 'bold 13px sans-serif' });
+    drawUiButton(110, 12, 150, 30, '特殊スキルの強化', () => { specialSkillPreShopActive = true; },
       { fillStyle: 'rgba(20, 90, 60, 0.55)', strokeStyle: '#80cbc4', font: 'bold 13px sans-serif' });
 
     // 項目数が多いため、2列に分けて見やすくする
@@ -10226,7 +10229,6 @@ function draw() {
     const cellHeight = 76; // 説明文が2行になっても「強化」「1つ戻す」ボタンに被らないよう、縦に広めにとる
     const cellGap = 6;
     const gridStartY = 64;
-    const rows = Math.ceil(dreamMemoryUpgradeDefs.length / cols);
 
     dreamMemoryUpgradeDefs.forEach((def, index) => {
       const col = index % cols;
@@ -10319,11 +10321,6 @@ function draw() {
       }
     });
 
-    const gridBottom = gridStartY + rows * (cellHeight + cellGap) - cellGap;
-    const backBtnW = 200, backBtnH = 28;
-    drawUiButton(canvas.width / 2 - backBtnW / 2, gridBottom + 8, backBtnW, backBtnH,
-      '強化終了', () => { dreamMemoryShopActive = false; },
-      { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
     return;
   }
 
@@ -10341,6 +10338,8 @@ function draw() {
     ctx.fillText('ここで上げたレベルは、次回プレイのDAY1から習得済みの状態で始まります', canvas.width / 2, 70);
     ctx.textAlign = 'left';
 
+    drawUiButton(10, 10, 90, 28, '＜ 戻る', () => { specialSkillPreShopActive = false; },
+      { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae', font: 'bold 12px sans-serif' });
     drawUiButton(canvas.width - 138, 10, 126, 28, '思い直す', respecSpecialSkillPreLevels,
       { fillStyle: 'rgba(84, 30, 30, 0.55)', strokeStyle: '#ef9a9a', font: 'bold 12px sans-serif' });
 
@@ -10352,7 +10351,6 @@ function draw() {
     const cellHeight = 66;
     const cellGap = 6;
     const gridStartY = 84;
-    const rows = Math.ceil(specialSkills.length / cols);
 
     specialSkills.forEach((skill, index) => {
       const col = index % cols;
@@ -10423,11 +10421,6 @@ function draw() {
       }
     });
 
-    const specialSkillGridBottom = gridStartY + rows * (cellHeight + cellGap) - cellGap;
-    const specialSkillBackBtnW = 200, specialSkillBackBtnH = 28;
-    drawUiButton(canvas.width / 2 - specialSkillBackBtnW / 2, specialSkillGridBottom + 8, specialSkillBackBtnW, specialSkillBackBtnH,
-      '戻る', () => { specialSkillPreShopActive = false; },
-      { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
     return;
   }
 
