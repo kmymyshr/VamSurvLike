@@ -48,13 +48,6 @@ const dreamMemoryUpgradeDefs = [
     costOverride: 1
   },
   {
-    id: 'invincibleTest', label: '無敵（テスト用）',
-    describeLevel: () => '自分・同僚ともSAN・寿命が0にならず、脳疲労も常に0のまま、攻撃力が50倍になる（テスト用）',
-    preview: 'SAN・寿命固定＋攻撃力50倍',
-    maxLevel: 1,
-    costOverride: 1
-  },
-  {
     id: 'betaMode', label: 'β版設定',
     describeLevel: () => '「無敵（テスト用）」と全く同じ効果（SAN・寿命が0にならず、脳疲労も常に0のまま、攻撃力が50倍）に加えて、' +
       '中ボス・ラスボス戦（イベント戦は除く）では1発ごとに相手の耐久力の最大値の20%ぶんダメージを与え、最低5発で撃破できる',
@@ -115,6 +108,13 @@ const dreamMemoryUpgradeDefs = [
     id: 'awakening', label: '目覚め',
     describeLevel: () => '第3回のアドベンチャーパートで、これまでの選択・関係性によらず必ず夢ルートに入る（真エンドの条件を満たしていると判定される）',
     preview: '第3回で必ず夢ルートに入る',
+    maxLevel: 1,
+    costOverride: 0
+  },
+  {
+    id: 'workaholic', label: 'ワーカホリック',
+    describeLevel: () => '脳疲労が一切蓄積しなくなる（常に0のまま）',
+    preview: '脳疲労が蓄積しなくなる',
     maxLevel: 1,
     costOverride: 0
   }
@@ -8113,8 +8113,8 @@ function update() {
 
   // 疲労値が0～最大値の範囲を超えないようにする
   fatigue = Math.max(0, Math.min(maxFatigue, fatigue));
-  // 「無敵（テスト用）」「β版設定」：脳疲労を常に0のままにする
-  if (isTestInvincibleUpgradeActive()) fatigue = 0;
+  // 「無敵（テスト用）」「β版設定」「ワーカホリック」：脳疲労を常に0のままにする
+  if (isTestInvincibleUpgradeActive() || dreamMemorySave.upgrades.workaholic >= 1) fatigue = 0;
 
   // 脳疲労が高い状態・SANが低い状態が一定時間続くと、寿命が少しずつ削れていく
   if (fatigue >= maxFatigue * highFatigueThresholdRatio) {
