@@ -77,14 +77,14 @@ const dreamMemoryUpgradeDefs = [
     maxLevel: 1
   },
   {
-    id: 'eternalLifePlayer', label: '永遠の命（自分）',
+    id: 'eternalLifePlayer', label: 'UnDead（自分）',
     describeLevel: () => '自分の寿命が0にならなくなる',
     preview: '自分の寿命が0にならなくなる',
     maxLevel: 1,
     costOverride: 0
   },
   {
-    id: 'eternalLifePartner', label: '永遠の命（同僚）',
+    id: 'eternalLifePartner', label: 'UnDead（同僚）',
     describeLevel: () => '同僚の寿命が0にならなくなる',
     preview: '同僚の寿命が0にならなくなる',
     maxLevel: 1,
