@@ -443,6 +443,24 @@ function spawnWave(count = maxEnemies) {
   for (let i = 0; i < count; i++) spawnEnemy();
 }
 
+// 一度もノーマルエンドを経ていない場合（チュートリアル的な特別な5日間のプレイ）の5日目：
+// 通常の敵はウェーブ式で出さず、1時間に5体相当のランダムな間隔で画面外から個別に襲来させる
+const prologueDay5EnemySpawnAvgMs = 3600000 / 5; // 1時間に5体 → 平均12分に1体
+const prologueDay5EnemySpawnMinMs = 60000; // 運が悪くても、これより短い間隔では襲来しない
+let prologueDay5EnemySpawnTimerMs = -1; // 5日目に入った直後、最初の1体はすぐに出現させる
+function isPrologueRandomEnemySpawnDay() {
+  return !hasEverReachedNormalEnd() && dayNumber >= prologueEventBattleDayCount;
+}
+function updatePrologueDay5EnemySpawning(dt) {
+  prologueDay5EnemySpawnTimerMs -= dt * 1000;
+  if (prologueDay5EnemySpawnTimerMs <= 0) {
+    spawnEnemy();
+    prologueDay5EnemySpawnTimerMs += Math.max(
+      prologueDay5EnemySpawnMinMs, -Math.log(1 - Math.random()) * prologueDay5EnemySpawnAvgMs
+    );
+  }
+}
+
 // 第2回のアドベンチャーパートを終えた後、第3回に入るまでの間だけ、小型の敵を並行して出現させ続ける
 function updateMiniEnemySpawning(dt) {
   if (adventureRunCount !== 2) return;
@@ -1215,6 +1233,13 @@ const fixedEnemyMaxConcurrentDefault = 5;
 // 第1回のアドベンチャーパートに入るまでの間は、固定敵の出現をかなり控えめにする
 const fixedEnemyMaxConcurrentEarly = 2;
 function getFixedEnemyMaxConcurrent() {
+  // 一度もノーマルエンドを経ていない場合（チュートリアル的な特別な5日間のプレイ）：
+  // 1日目は固定敵を出さず、2日目は最大2体、3日目以降は最大3体まで段階的に解禁する
+  if (!hasEverReachedNormalEnd()) {
+    if (dayNumber <= 1) return 0;
+    if (dayNumber === 2) return 2;
+    return 3;
+  }
   return adventureRunCount === 0 ? fixedEnemyMaxConcurrentEarly : fixedEnemyMaxConcurrentDefault;
 }
 const fixedEnemyDurabilityMultiplier = 3; // 耐久力（HP）を全体的に3倍にする
@@ -2017,55 +2042,60 @@ function endWorkday() {
     sendScore(score);
     return;
   }
-  // アドベンチャーパートは週末ではなく、実際に一日を戦い切った日数（カフェイン摂取で倒れてスキップした
-  // 日は含まない）が一定数に達するたびに、その日の終業時に発生する
-  daysFoughtSinceLastAdventure++;
-  if (daysFoughtSinceLastAdventure >= adventurePartDayInterval) {
-    daysFoughtSinceLastAdventure = 0;
-    adventureCheckpointCount++;
-
-    if (!hasEverReachedNormalEnd()) {
-      // 一度もノーマルエンドを経ていない場合：アドベンチャーパート（会話）は一切発生させず、
-      // 第3回目に相当するタイミングでイベント戦（ノーマルルート負けイベント戦闘）に直行する。
-      // ここでの関係性がそのまま「前回プレイの関係性」として次の周回に引き継がれ、
-      // 次の周回からは通常どおりアドベンチャーパートに入り、夢ルートへ入れる可能性も生まれる
-      if (partner.active && adventureCheckpointCount >= adventureCheckpointCountForAdv3) {
+  if (!hasEverReachedNormalEnd()) {
+    // 一度もノーマルエンドを経ていない場合：アドベンチャーパート（会話）は一切発生させない、
+    // チュートリアル的な特別なプレイとして扱う。実際に一日を戦い切った日数（カフェイン摂取で倒れて
+    // スキップした日は含まない。土日を挟んでも、実際に稼働した日数だけを数えるので影響を受けない）が
+    // 5日に達した時点でイベント戦（ノーマルルート負けイベント戦闘）に直行する。
+    // ここでの関係性がそのまま「前回プレイの関係性」として次の周回に引き継がれ、
+    // 次の周回からは通常どおりアドベンチャーパートに入り、夢ルートへ入れる可能性も生まれる
+    prologueDaysFought++;
+    if (prologueDaysFought >= prologueEventBattleDayCount) {
+      if (partner.active) {
         // ゆっくり黒くフェードアウトしてから、イベント戦（ノーマルルート負けイベント戦闘）に入る
         startPreFirstNormalEndFadeOut();
         return;
       }
-      if (!partner.active && adventureCheckpointCount >= adventureCheckpointCountForAdv3) {
-        gameOver = true;
-        endingType = 'bad-lonely';
-        sendScore(score);
-        return;
-      }
-      // まだ規定回数に達していなければ、アドベンチャーパートを挟まずそのまま翌日へ進む
-    } else if (partner.active) {
-      // アドベンチャーパートに入る前に、一度画面を暗転させ、これまでの統計情報を確認してから切り替える
-      startSetupFadeOut(() => {
-        showAdventureStatsSummary(() => {
-          startPartnerAdventure(() => {
-            if (adventureRunCount === 3 && dreamRouteCompleted) {
-              // 夢ルートを完走した場合：翌日の通常業務には入らず、「24:00」を経て特別なラスボス戦へ直行する
-              startDreamBossIntroSequence();
-            } else if (adventureRunCount === 3 && !dreamRouteCompleted) {
-              startNormalEndBattleSequence();
-            } else {
-              startDayTransition(autoAdvanceDay);
-            }
+      gameOver = true;
+      endingType = 'bad-lonely';
+      sendScore(score);
+      return;
+    }
+    // まだ5日に達していなければ、そのまま翌日へ進む（下の週次ノルマ判定へ続く）
+  } else {
+    // アドベンチャーパートは週末ではなく、実際に一日を戦い切った日数（カフェイン摂取で倒れてスキップした
+    // 日は含まない）が一定数に達するたびに、その日の終業時に発生する
+    daysFoughtSinceLastAdventure++;
+    if (daysFoughtSinceLastAdventure >= adventurePartDayInterval) {
+      daysFoughtSinceLastAdventure = 0;
+      adventureCheckpointCount++;
+
+      if (partner.active) {
+        // アドベンチャーパートに入る前に、一度画面を暗転させ、これまでの統計情報を確認してから切り替える
+        startSetupFadeOut(() => {
+          showAdventureStatsSummary(() => {
+            startPartnerAdventure(() => {
+              if (adventureRunCount === 3 && dreamRouteCompleted) {
+                // 夢ルートを完走した場合：翌日の通常業務には入らず、「24:00」を経て特別なラスボス戦へ直行する
+                startDreamBossIntroSequence();
+              } else if (adventureRunCount === 3 && !dreamRouteCompleted) {
+                startNormalEndBattleSequence();
+              } else {
+                startDayTransition(autoAdvanceDay);
+              }
+            });
           });
         });
-      });
-      return;
-    } else {
-      // 同僚がいない（未選択・離脱済み）場合は、アドベンチャーパートを挟まずそのまま翌日へ進む。
-      // ただし、第3回目のアドベンチャーパートに入るべきタイミングを同僚不在のまま迎えた場合は、孤独ENDへ至る
-      if (adventureCheckpointCount >= adventureCheckpointCountForAdv3) {
-        gameOver = true;
-        endingType = 'bad-lonely';
-        sendScore(score);
         return;
+      } else {
+        // 同僚がいない（未選択・離脱済み）場合は、アドベンチャーパートを挟まずそのまま翌日へ進む。
+        // ただし、第3回目のアドベンチャーパートに入るべきタイミングを同僚不在のまま迎えた場合は、孤独ENDへ至る
+        if (adventureCheckpointCount >= adventureCheckpointCountForAdv3) {
+          gameOver = true;
+          endingType = 'bad-lonely';
+          sendScore(score);
+          return;
+        }
       }
     }
   }
@@ -4018,6 +4048,12 @@ let daysFoughtSinceLastAdventure = 0;
 let adventureCheckpointCount = 0;
 const adventureCheckpointCountForAdv3 = 3;
 
+// 一度もノーマルエンドを経ていない場合：チュートリアル的な特別なプレイとして扱い、
+// アドベンチャーパートを挟まず、実際に一日を戦い切った日数（カフェイン摂取で倒れてスキップした日は含まない）が
+// この日数に達した時点（土日を挟んでも、実際に稼働した日数だけを数えるので影響を受けない）でイベント戦に入る
+const prologueEventBattleDayCount = 5;
+let prologueDaysFought = 0;
+
 // ===== アドベンチャーパートの分岐状態（エンディング分岐は、好感度とアドベンチャーの選択肢だけで決まる） =====
 let adventureRunCount = 0; // 「同僚と遊ぶ」を選んだ回数（ADV1・ADV2・ADV3・それ以降）
 let adv1Choice = null; // ADV1で選んだ方 'A' | 'B'
@@ -4340,6 +4376,12 @@ function getAllowedMaxTypeIndexByRank() {
   let capped = Math.max(0, Math.min(enemyTypeNames.length - 1, maxIdx));
   // 週のノルマを早期達成した週は、残りの期間は易しい仕事のみにする
   if (weeklyQuotaAchievedEarly) capped = Math.min(capped, 1);
+  // 一度もノーマルエンドを経ていない場合（チュートリアル的な特別な5日間のプレイ）：
+  // 実際のランクによらず、4日目から高ランクの敵、5日目には最高ランクの敵も出るようにする
+  if (!hasEverReachedNormalEnd()) {
+    if (dayNumber >= 5) capped = enemyTypeNames.length - 1;
+    else if (dayNumber >= 4) capped = Math.max(capped, Math.ceil((enemyTypeNames.length - 1) * 0.7));
+  }
   return capped;
 }
 
@@ -7452,9 +7494,12 @@ function update() {
     partnerOvertimeSanDrainAccumMs = 0;
   }
 
-  // 全滅したら少し間を置いて次のウェーブ（仕事）を出す。
-  // 「大規模プロジェクト」が出ている間は、通常の敵は一切出現しない。定時報告が出ている間は、同時出現数を1体にする
-  if (!midBossEvent && countActiveWorkEnemies() === 0) {
+  // 一度もノーマルエンドを経ていない場合の5日目：ウェーブ式ではなく、ランダムな間隔で画面外から個別に襲来させる
+  if (!midBossEvent && isPrologueRandomEnemySpawnDay()) {
+    updatePrologueDay5EnemySpawning(dt);
+  } else if (!midBossEvent && countActiveWorkEnemies() === 0) {
+    // 全滅したら少し間を置いて次のウェーブ（仕事）を出す。
+    // 「大規模プロジェクト」が出ている間は、通常の敵は一切出現しない。定時報告が出ている間は、同時出現数を1体にする
     if (waveCooldownMs > 0) {
       waveCooldownMs -= dt * 1000;
     } else {
