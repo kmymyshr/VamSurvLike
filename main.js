@@ -6893,10 +6893,9 @@ function updateFullAutoSupportBulletParry() {
   }
 }
 
-// スマホ用自動照準のターゲットを返す。定時報告が出ている間は、同僚の自律攻撃と同様にそちらを優先する
-// allowPartner: 完全オート・自動攻撃モードではない（自分の意思で撃っている）時にtrue。
-// この場合だけ、同僚も狙い先の候補に含める（同僚しか近くにいない場面などで、あえてその方向へ撃てるようにする）
-function findAutoAimTarget(allowPartner = false) {
+// 自動照準（スマホ用ボタン・完全オートモード共通）のターゲットを返す。同僚は狙い先の候補には含めない。
+// 定時報告が出ている間は、同僚の自律攻撃と同様にそちらを優先する
+function findAutoAimTarget() {
   if (scheduledReport) return { en: scheduledReport };
   if (fixedEnemies.length > 0) {
     const nearest = fixedEnemies.reduce((closest, fx) => {
@@ -6908,15 +6907,7 @@ function findAutoAimTarget(allowPartner = false) {
   // ラスボスの出現中は、生きている発射口も通常の敵と同様にオート照準の対象にする
   const bossHolePos = findNearestLivingBossHole(player.x, player.y);
   if (bossHolePos) return { en: bossHolePos };
-  const nearestEnemyTarget = findNearestEnemyToPlayer();
-  if (!allowPartner || !partner.active) return nearestEnemyTarget;
-  // オートでなく自分で操作して撃っている時は、同僚がいる方向にも狙いを向けられるようにする
-  const partnerDist = Math.hypot(partner.x - player.x, partner.y - player.y);
-  if (!nearestEnemyTarget ||
-      partnerDist < Math.hypot(nearestEnemyTarget.en.x - player.x, nearestEnemyTarget.en.y - player.y)) {
-    return { en: partner };
-  }
-  return nearestEnemyTarget;
+  return findNearestEnemyToPlayer();
 }
 
 // ===== 完全オートモードの移動AI =====
@@ -7943,10 +7934,9 @@ function update() {
     updateSkillEffects();
 
     // 攻撃モードに関係なく、自分は常にマウスカーソルの方向を向く。
-    // スマホ用の自動照準・完全オートモードが有効な間は、代わりに定時報告（出ていれば優先）か最も近い敵の方向を向く。
-    // ただし、オート攻撃・完全オートモードでない（自分で操作して撃っている）場合は、同僚の方向も狙い先の候補に含める
-    const allowPartnerAim = !autoFireEnabled && !fullAutoModeEnabled;
-    const autoAimTarget = (mobileAutoAimEnabled || fullAutoModeEnabled) ? findAutoAimTarget(allowPartnerAim) : null;
+    // スマホ用の自動照準・完全オートモードが有効な間は、代わりに定時報告（出ていれば優先）か最も近い敵の方向を向く
+    // （同僚は狙い先の候補には含めない）
+    const autoAimTarget = (mobileAutoAimEnabled || fullAutoModeEnabled) ? findAutoAimTarget() : null;
     if (gamepadAimActive) {
       // ゲームコントローラー：右スティックを倒している間は、その方向を最優先で照準にする
       player.angle = gamepadAimAngle;
@@ -12013,7 +12003,7 @@ function draw() {
         ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 11px sans-serif' }
         : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 11px sans-serif' });
     drawUiButton(toggleBtnX, toggleBtnStartY + (smallToggleBtnH + toggleBtnGap) * 2, toggleBtnW, toggleBtnH,
-      `スマホ用自動照準: ${mobileAutoAimEnabled ? 'ON' : 'OFF'}`,
+      `自動照準 ${mobileAutoAimEnabled ? 'ON' : 'OFF'}`,
       () => setMobileAutoAimEnabled(!mobileAutoAimEnabled),
       mobileAutoAimEnabled
         ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 12px sans-serif' }
@@ -12022,7 +12012,7 @@ function draw() {
     // 一度もノーマルエンドを経ていない場合でも、スマホ用自動照準だけは小型ボタンとして表示する
     const smallAutoAimBtnW = 96, smallAutoAimBtnH = 22;
     drawUiButton(12, 278, smallAutoAimBtnW, smallAutoAimBtnH,
-      `自動照準: ${mobileAutoAimEnabled ? 'ON' : 'OFF'}`,
+      `自動照準 ${mobileAutoAimEnabled ? 'ON' : 'OFF'}`,
       () => setMobileAutoAimEnabled(!mobileAutoAimEnabled),
       mobileAutoAimEnabled
         ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 11px sans-serif' }
