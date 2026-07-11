@@ -10900,15 +10900,19 @@ function draw() {
     drawTitleGlitchButton(20, bottomY, cornerBtnW, cornerBtnH, '開始する (1 / Enter)',
       () => selectMode(),
       { font: `bold 18px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' }, 101);
-    drawTitleGlitchButton(canvas.width - cornerBtnW - 20, bottomY, cornerBtnW, cornerBtnH,
-      `強化 (P: ${dreamMemorySave.points})`, () => { dreamMemoryShopActive = true; },
-      { fillStyle: 'rgba(74, 20, 140, 0.55)', strokeStyle: '#ce93d8', font: `bold 18px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' }, 202);
+    // 一度もノーマルエンドを経ていない場合：チュートリアル的な特別なプレイ中は、
+    // 「強化」「エンディングリスト」ボタンを表示しない
+    if (hasEverReachedNormalEnd()) {
+      drawTitleGlitchButton(canvas.width - cornerBtnW - 20, bottomY, cornerBtnW, cornerBtnH,
+        `強化 (P: ${dreamMemorySave.points})`, () => { dreamMemoryShopActive = true; },
+        { fillStyle: 'rgba(74, 20, 140, 0.55)', strokeStyle: '#ce93d8', font: `bold 18px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' }, 202);
 
-    const endingListBtnW = 220, endingListBtnH = 40;
-    drawTitleGlitchButton(canvas.width / 2 - endingListBtnW / 2, bottomY + (cornerBtnH - endingListBtnH) / 2,
-      endingListBtnW, endingListBtnH,
-      'エンディングリスト', () => { endingListActive = true; },
-      { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#ffd54f', font: `bold 14px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' }, 303);
+      const endingListBtnW = 220, endingListBtnH = 40;
+      drawTitleGlitchButton(canvas.width / 2 - endingListBtnW / 2, bottomY + (cornerBtnH - endingListBtnH) / 2,
+        endingListBtnW, endingListBtnH,
+        'エンディングリスト', () => { endingListActive = true; },
+        { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#ffd54f', font: `bold 14px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' }, 303);
+    }
 
     const helpTextY = bottomY - 60;
 
