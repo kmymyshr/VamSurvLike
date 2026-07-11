@@ -644,34 +644,35 @@ function getFatigueRecoveryFloor() {
   return dayProgress * fatigueFloorAtDayEnd;
 }
 
-// 脳疲労を増やし、上限に達したらstun（行動不能）を発生させる共通処理
+// 行動不能（stun）を発生させる共通処理。durationMultiplierを3にすると、通常の3倍の時間stunする
+// （時間が長くなるだけで、効果自体は通常のstunと同じ）
+function triggerStun(durationMultiplier = 1) {
+  stunned = true;
+  stunTimer = stunDuration * durationMultiplier * specialSkillEffects.stunDurationMultiplier;
+  if (partner.active) showRandomPartnerSpeechBubbleIfFriendly(partnerStunWorryLines, '#90caf9', partnerStunWorryStressedLines);
+  // 疲労が限界に達したら行動不能にし、SANも減らす
+  const sanMultiplier = Math.max(0.5, 1 - skillLevel * 0.04);
+  damageSan(Math.ceil(
+    stunSanPenalty * sanMultiplier * specialSkillEffects.sanDamageMultiplier
+  ));
+  const stunLifespanPenalty = stunLifespanPenaltyMin + Math.floor(
+    Math.random() * (stunLifespanPenaltyMax - stunLifespanPenaltyMin + 1)
+  );
+  lifespan = Math.max(0, lifespan - stunLifespanPenalty);
+  checkVitalsGameOver();
+}
+
+// 脳疲労を増やし、上限に達したらstun（行動不能）を発生させる共通処理。
+// コーヒーの効果中は、脳疲労が上限（maxFatigue）に達さず、maxFatigue-1で頭打ちになりstunしない
+// （効果が切れた瞬間に、頭打ちのままなら通常の3倍の時間のstunが発生する。coffeeBuffTimerMsの減算処理側で判定する）
 function applyFatigueGain(amount) {
   if (amount <= 0) return;
-  fatigue = Math.min(maxFatigue, fatigue + amount);
+  const fatigueCap = coffeeBuffTimerMs > 0 ? maxFatigue - 1 : maxFatigue;
+  fatigue = Math.min(fatigueCap, fatigue + amount);
+  if (coffeeBuffTimerMs > 0 || stunned) return;
   if (fatigue >= maxFatigue) {
     fatigue = maxFatigue;
-    // 既にstun中、またはコーヒーのstun回避が発動中なら、上限到達の処理（ペナルティ含む）を再度行わない
-    if (stunned || coffeeStunImmunityTimerMs > 0) return;
-    // コーヒーの「stun回避」が残っていれば、行動不能にせず通常通り動けるようにする（その日のうち1杯につき1回）
-    if (coffeeStunImmunityCharges > 0) {
-      coffeeStunImmunityCharges--;
-      coffeeStunImmunityTimerMs = stunDuration * specialSkillEffects.stunDurationMultiplier;
-      showMessage('コーヒーの効果でstunを回避した！', 2200, '#a1887f');
-    } else {
-      stunned = true;
-      stunTimer = stunDuration * specialSkillEffects.stunDurationMultiplier;
-      if (partner.active) showRandomPartnerSpeechBubbleIfFriendly(partnerStunWorryLines, '#90caf9', partnerStunWorryStressedLines);
-    }
-    // 疲労が限界に達したら行動不能にし、SANも減らす
-    const sanMultiplier = Math.max(0.5, 1 - skillLevel * 0.04);
-    damageSan(Math.ceil(
-      stunSanPenalty * sanMultiplier * specialSkillEffects.sanDamageMultiplier
-    ));
-    const stunLifespanPenalty = stunLifespanPenaltyMin + Math.floor(
-      Math.random() * (stunLifespanPenaltyMax - stunLifespanPenaltyMin + 1)
-    );
-    lifespan = Math.max(0, lifespan - stunLifespanPenalty);
-    checkVitalsGameOver();
+    triggerStun(1);
   }
 }
 
@@ -903,16 +904,15 @@ function consumeEnergyDrink() {
 const coffeeRadius = 22;
 const coffeeSanRecovery = 10; // SAN値を10回復する
 const coffeeLifespanCost = 2; // その代わり寿命を2消費する
-const coffeeBuffDurationMs = energyDrinkBuffDurationMs; // 持続時間は栄養ドリンクと同じ長さ
+const coffeeBuffDurationMs = energyDrinkBuffDurationMs * 1.5; // 持続時間は栄養ドリンクの1.5倍
 const coffeeMoveSpeedBuffMultiplier = 1.2; // 効果中の移動速度倍率
 const coffeeFireRateBuffMultiplier = 1 / 1.2; // 効果中の発射間隔倍率（連射速度120%）
 const coffeeCrossDrinkLifespanCost = 5; // 栄養ドリンクの効果中にコーヒーを飲む（またはその逆）と、追加で寿命を消費する
+const coffeeAfterEffectStunMultiplier = 3; // 効果が切れた瞬間、脳疲労が頭打ちのままなら発生するstunの、通常時間に対する倍率
 let coffee = null;
 let coffeeSpawnTimerMs = getRandomCoffeeSpawnDelay();
-let coffeeBuffTimerMs = 0; // 残り時間。0より大きい間は移動・発射が強化される（効果切れによる反動はない）
+let coffeeBuffTimerMs = 0; // 残り時間。0より大きい間は移動・発射が強化され、脳疲労もmaxFatigue-1で頭打ちになる
 let coffeeDailyCount = 0; // 本日すでに飲んだコーヒーの本数。日付が変わるとリセットする
-let coffeeStunImmunityCharges = 0; // コーヒー1杯につき1回分。脳疲労が100になってもstunを回避できる（その日のうちのみ）
-let coffeeStunImmunityTimerMs = 0; // stunを回避している間、通常通り行動できる残り時間
 
 // コーヒーによる移動速度の倍率
 function getCoffeeMoveSpeedMultiplier() {
@@ -946,7 +946,6 @@ function spawnCoffee() {
 // クリック／タップ、または完全オートモードで取得された時に呼ばれる
 function consumeCoffee() {
   coffeeDailyCount++;
-  coffeeStunImmunityCharges++;
   const isCrossDrink = energyDrinkBuffTimerMs > 0;
   const totalLifespanCost = coffeeLifespanCost + (isCrossDrink ? coffeeCrossDrinkLifespanCost : 0);
   san = Math.min(maxSan, san + coffeeSanRecovery);
@@ -954,7 +953,7 @@ function consumeCoffee() {
   coffeeBuffTimerMs = coffeeBuffDurationMs;
   if (currentHour >= dayEndHour) eveningDrinkRecoveryPenalty = true;
   showMessage(
-    `コーヒー取得！ SAN +${coffeeSanRecovery} / 寿命 -${totalLifespanCost}` +
+    `コーヒーを飲んだので、眠くない！ SAN +${coffeeSanRecovery} / 寿命 -${totalLifespanCost}` +
     (isCrossDrink ? '（栄養ドリンクとの飲み合わせ…）' : ''),
     1800, '#a1887f'
   );
@@ -1738,6 +1737,21 @@ const lunchExpirationDurationMs = 1800;
 const lunchFoodRadius = 20;
 const lunchFoodIcons = ['🍙', '🥪', '🍎', '🥗', '🍜', '🍌', '🍱', '🥛'];
 const lunchIncompleteLifespanPenalty = 5;
+// 昼食を順番どおり完食した時（等倍ボーナス時）のみ付与される、一定時間の特殊な効果
+const lunchBuffDurationMs = hourMs; // ゲーム内1時間
+const lunchBuffMoveSpeedMultiplier = 1.2;
+const lunchBuffFireRateMultiplier = 0.75; // 発射間隔の倍率（小さいほど速く連射できる）
+const lunchBuffDamageTakenMultiplier = 0.5; // 被ダメージ（SAN・寿命とも）が半分になる
+let lunchBuffTimerMs = 0;
+function getLunchBuffMoveSpeedMultiplier() {
+  return lunchBuffTimerMs > 0 ? lunchBuffMoveSpeedMultiplier : 1;
+}
+function getLunchBuffFireRateMultiplier() {
+  return lunchBuffTimerMs > 0 ? lunchBuffFireRateMultiplier : 1;
+}
+function getLunchBuffDamageTakenMultiplier() {
+  return lunchBuffTimerMs > 0 ? lunchBuffDamageTakenMultiplier : 1;
+}
 const lunchPartnerShareRatio = 0.3; // 昼食の回復効果のうち同僚にも分け与える割合
 let lunchState = null;
 
@@ -1774,13 +1788,17 @@ function collectLunchItem(itemIndex) {
   if (lunchState.collectedCount >= lunchFoodCount) {
     const bonusMultiplier = lunchState.orderMistake ? 0.5 : 1;
     san = Math.min(maxSan, san + 10 * bonusMultiplier);
-    lifespan = Math.min(maxLifespan, lifespan + 4 * bonusMultiplier);
-    fatigue = Math.max(0, fatigue - 15 * bonusMultiplier);
+    lifespan = Math.min(maxLifespan, lifespan + 15 * bonusMultiplier);
+    fatigue = Math.max(0, fatigue - 50 * bonusMultiplier);
     partner.san = Math.min(maxSan, partner.san + 10 * bonusMultiplier * lunchPartnerShareRatio);
-    partner.lifespan = Math.min(maxLifespan, partner.lifespan + 4 * bonusMultiplier * lunchPartnerShareRatio);
-    partner.fatigue = Math.max(0, partner.fatigue - 15 * bonusMultiplier * lunchPartnerShareRatio);
+    partner.lifespan = Math.min(maxLifespan, partner.lifespan + 15 * bonusMultiplier * lunchPartnerShareRatio);
+    partner.fatigue = Math.max(0, partner.fatigue - 50 * bonusMultiplier * lunchPartnerShareRatio);
+    // 順番どおり完食できた（等倍ボーナス）時だけ、ゲーム内1時間、移動速度・発射間隔・被ダメージが強化される
+    if (!lunchState.orderMistake) {
+      lunchBuffTimerMs = lunchBuffDurationMs;
+    }
     showMessage(
-      lunchState.orderMistake ? '昼食完了。' : '昼食を順番どおり完食！ フルボーナス',
+      lunchState.orderMistake ? '昼食完了。' : '昼食を順番どおり完食！ フルボーナス（1時間、移動・攻撃・被ダメージ軽減の効果）',
       3000,
       lunchState.orderMistake ? '#ffb74d' : '#69f0ae',
       '22px sans-serif'
@@ -2063,8 +2081,9 @@ let lowSanTimerMs = 0; // 低SAN状態が続いている時間
 // SANへダメージを与える共通処理。寿命への影響とゲームオーバー判定もまとめて行う
 function damageSan(amount) {
   if (amount <= 0 || gameOver) return;
-  san = Math.max(0, san - amount);
-  lifespan = Math.max(0, lifespan - amount * sanDamageToLifespanRatio);
+  const actualAmount = amount * getLunchBuffDamageTakenMultiplier();
+  san = Math.max(0, san - actualAmount);
+  lifespan = Math.max(0, lifespan - actualAmount * sanDamageToLifespanRatio);
   checkVitalsGameOver();
 }
 
@@ -2805,9 +2824,9 @@ function damagePlayerByFriendlyFire(lines = partnerHitPlayerLines, stressedLines
   // Lv3ではさらに、この被弾によるSAN低下がなくなる
   if (!(encourageAReady && encourageALevel >= 3)) {
     san = Math.max(0, san - playerFriendlyFireSanDamage *
-      specialSkillEffects.sanDamageMultiplier * specialSkillEffects.friendlyFireDamageMultiplier);
+      specialSkillEffects.sanDamageMultiplier * specialSkillEffects.friendlyFireDamageMultiplier * getLunchBuffDamageTakenMultiplier());
   }
-  lifespan = Math.max(0, lifespan - playerFriendlyFireLifespanDamage * specialSkillEffects.friendlyFireDamageMultiplier);
+  lifespan = Math.max(0, lifespan - playerFriendlyFireLifespanDamage * specialSkillEffects.friendlyFireDamageMultiplier * getLunchBuffDamageTakenMultiplier());
   friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
   friendlyFireHitFlashTimer = friendlyFireHitEffectDuration;
   explosionShakeTimer = Math.max(explosionShakeTimer, friendlyFireHitEffectDuration);
@@ -3834,7 +3853,6 @@ function autoAdvanceDay() {
   synergyUsesToday = 0;
   energyDrinkDailyCount = 0;
   coffeeDailyCount = 0;
-  coffeeStunImmunityCharges = 0;
   chocolateDailyCount = 0;
   if (partner.active) partner.chocolateDailyCount = 0;
   if (currentDate.getDay() === 1) {
@@ -3857,7 +3875,6 @@ function jumpToNextMondayAndResetWeek() {
   synergyUsesToday = 0;
   energyDrinkDailyCount = 0;
   coffeeDailyCount = 0;
-  coffeeStunImmunityCharges = 0;
   chocolateDailyCount = 0;
   if (partner.active) partner.chocolateDailyCount = 0;
   startNewWeek();
@@ -5524,8 +5541,8 @@ function checkBossContactDamage() {
     if (playerBarrierCharges > 0) {
       playerBarrierCharges--;
     } else {
-      san = Math.max(0, san - bossContactSanDamage * specialSkillEffects.sanDamageMultiplier);
-      lifespan = Math.max(0, lifespan - bossContactLifespanDamage);
+      san = Math.max(0, san - bossContactSanDamage * specialSkillEffects.sanDamageMultiplier * getLunchBuffDamageTakenMultiplier());
+      lifespan = Math.max(0, lifespan - bossContactLifespanDamage * getLunchBuffDamageTakenMultiplier());
       checkVitalsGameOver();
     }
     invincible = true;
@@ -5614,8 +5631,8 @@ function damagePlayerByBossBullet(damageMultiplier = 1) {
     friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
     return;
   }
-  san = Math.max(0, san - bossBulletDamageSan * damageMultiplier * specialSkillEffects.sanDamageMultiplier);
-  lifespan = Math.max(0, lifespan - bossBulletDamageLifespan * damageMultiplier);
+  san = Math.max(0, san - bossBulletDamageSan * damageMultiplier * specialSkillEffects.sanDamageMultiplier * getLunchBuffDamageTakenMultiplier());
+  lifespan = Math.max(0, lifespan - bossBulletDamageLifespan * damageMultiplier * getLunchBuffDamageTakenMultiplier());
   friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
   friendlyFireHitFlashTimer = friendlyFireHitEffectDuration;
   explosionShakeTimer = Math.max(explosionShakeTimer, friendlyFireHitEffectDuration);
@@ -5646,8 +5663,8 @@ function damagePlayerByFixedEnemyBullet(bullet) {
   }
   const sanDmg = def ? def.bulletSan : 8; // バックドア設置の不意打ちなど、定義が見当たらない場合の既定値
   const lifespanDmg = def ? (def.bulletLifespan || 1) : 2;
-  san = Math.max(0, san - sanDmg * specialSkillEffects.sanDamageMultiplier);
-  lifespan = Math.max(0, lifespan - lifespanDmg);
+  san = Math.max(0, san - sanDmg * specialSkillEffects.sanDamageMultiplier * getLunchBuffDamageTakenMultiplier());
+  lifespan = Math.max(0, lifespan - lifespanDmg * getLunchBuffDamageTakenMultiplier());
   friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
   friendlyFireHitFlashTimer = friendlyFireHitEffectDuration;
   explosionShakeTimer = Math.max(explosionShakeTimer, friendlyFireHitEffectDuration);
@@ -6412,8 +6429,8 @@ function damagePlayerByMidBossBullet() {
     friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
     return;
   }
-  san = Math.max(0, san - midBossBulletDamageSan * specialSkillEffects.sanDamageMultiplier);
-  lifespan = Math.max(0, lifespan - midBossBulletDamageLifespan);
+  san = Math.max(0, san - midBossBulletDamageSan * specialSkillEffects.sanDamageMultiplier * getLunchBuffDamageTakenMultiplier());
+  lifespan = Math.max(0, lifespan - midBossBulletDamageLifespan * getLunchBuffDamageTakenMultiplier());
   friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
   friendlyFireHitFlashTimer = friendlyFireHitEffectDuration;
   explosionShakeTimer = Math.max(explosionShakeTimer, friendlyFireHitEffectDuration);
@@ -7223,6 +7240,11 @@ function update() {
     }
   }
 
+  // 昼食を順番どおり完食した時の効果時間を減らす（残っている間は移動・発射・被ダメージが強化される）
+  if (lunchBuffTimerMs > 0) {
+    lunchBuffTimerMs = Math.max(0, lunchBuffTimerMs - dt * 1000);
+  }
+
   // 栄養ドリンクの効果時間を減らす（残っている間は脳疲労が蓄積しにくく、移動・発射が強化される）。
   // 効果が切れた瞬間、10秒間の反動状態（移動・発射が鈍る）を開始する
   if (energyDrinkBuffTimerMs > 0) {
@@ -7253,10 +7275,15 @@ function update() {
     }
   }
 
-  // コーヒーの効果時間を減らす（効果切れによる反動はない）
-  coffeeBuffTimerMs = Math.max(0, coffeeBuffTimerMs - dt * 1000);
-  // コーヒーによるstun回避の残り時間を減らす
-  coffeeStunImmunityTimerMs = Math.max(0, coffeeStunImmunityTimerMs - dt * 1000);
+  // コーヒーの効果時間を減らす。効果が切れた瞬間、脳疲労が頭打ち（maxFatigue-1）のままなら、
+  // 通常の3倍の時間のstunが発生する（効果自体は通常のstunと同じ）
+  if (coffeeBuffTimerMs > 0) {
+    coffeeBuffTimerMs = Math.max(0, coffeeBuffTimerMs - dt * 1000);
+    if (coffeeBuffTimerMs <= 0 && !stunned && fatigue >= maxFatigue - 1) {
+      fatigue = maxFatigue;
+      triggerStun(coffeeAfterEffectStunMultiplier);
+    }
+  }
 
   // コーヒーの出現待ち、取得判定、時間切れを処理する
   if (coffee && !coffee.landed) {
@@ -7384,7 +7411,8 @@ function update() {
     let moving = false;
     const beforeMoveX = player.x, beforeMoveY = player.y;
     const currentMoveSpeed = player.speed * specialSkillEffects.moveSpeedMultiplier *
-      getEnergyDrinkMoveSpeedMultiplier() * getCoffeeMoveSpeedMultiplier() * getFixedEnemyMoveSpeedMultiplier();
+      getEnergyDrinkMoveSpeedMultiplier() * getCoffeeMoveSpeedMultiplier() * getFixedEnemyMoveSpeedMultiplier() *
+      getLunchBuffMoveSpeedMultiplier();
     if (fixedEnemyMoveHijackTimerMs > 0) {
       // リモートコード実行：一定時間、移動が乗っ取られランダムな方向へ動かされる
       player.x += Math.cos(fixedEnemyMoveHijackAngle) * currentMoveSpeed;
@@ -7454,7 +7482,7 @@ function update() {
     const conditionRatio = 1 - fatigueRatio;
     const currentFireRate = baseFireRate * (1 + fatigueRatio * fireRateMultiplier) *
       specialSkillEffects.fireRateMultiplier * getEnergyDrinkFireRateMultiplier() *
-      getCoffeeFireRateMultiplier() * getFixedEnemyFireRateMultiplier();
+      getCoffeeFireRateMultiplier() * getFixedEnemyFireRateMultiplier() * getLunchBuffFireRateMultiplier();
     const autoFiringActive = autoFireEnabled || fullAutoModeEnabled;
     // 自動攻撃モード・完全オートモードは、射線上に同僚がいる間は誤射を避けて撃たない。
     // 完全オートモードはさらに、射線のすぐ近くに同僚がいる場合も余裕を持って撃つのを控える
@@ -7465,8 +7493,8 @@ function update() {
     if (wantsToFire && !stunned && fixedEnemyFireLockTimerMs <= 0) {
       if (now - lastFire >= currentFireRate) {
         updateSkillEffects();
-        // 通常は脳疲労が上限に達すると撃てなくなるが、コーヒーのstun回避中は通常通り行動できる
-        if (fatigue < maxFatigue || coffeeStunImmunityTimerMs > 0) {
+        // 通常は脳疲労が上限に達すると撃てなくなるが、コーヒーの効果中は脳疲労がmaxFatigue-1で頭打ちになるため撃ち続けられる
+        if (fatigue < maxFatigue) {
           lastFire = now;
           const shotAngle = player.angle;
           // 第4段階「承認欲求」：狙って撃っただけで（当たらなくても）耐久力が少し回復してしまう
@@ -9585,7 +9613,7 @@ function getPlayerActiveEffectsList() {
   if (playerBarrierCharges > 0) list.push(`ファイヤーウォール 残${playerBarrierCharges}回`);
   if (energyDrinkBuffTimerMs > 0) list.push(`栄養ドリンク効果 ${(energyDrinkBuffTimerMs / 1000).toFixed(1)}s`);
   if (coffeeBuffTimerMs > 0) list.push(`コーヒー効果 ${(coffeeBuffTimerMs / 1000).toFixed(1)}s`);
-  if (coffeeStunImmunityTimerMs > 0) list.push(`stun回避中（コーヒー） ${(coffeeStunImmunityTimerMs / 1000).toFixed(1)}s`);
+  if (lunchBuffTimerMs > 0) list.push(`昼食完食ボーナス効果 ${(lunchBuffTimerMs / 1000).toFixed(1)}s`);
   if (fixedEnemyControlsReversedTimerMs > 0) list.push(`操作反転（XSS） ${(fixedEnemyControlsReversedTimerMs / 1000).toFixed(1)}s`);
   if (fixedEnemyMoveHijackTimerMs > 0) list.push(`移動乗っ取り ${(fixedEnemyMoveHijackTimerMs / 1000).toFixed(1)}s`);
   if (fixedEnemyMoveSpeedDebuffTimerMs > 0) list.push(`移動速度低下 ${(fixedEnemyMoveSpeedDebuffTimerMs / 1000).toFixed(1)}s`);
@@ -10474,6 +10502,28 @@ function draw() {
     ctx.stroke();
     ctx.restore();
   }
+  // 昼食を順番どおり完食した効果が有効な間は、自機の周りに淡い光るエフェクトを表示する
+  if (lunchBuffTimerMs > 0) {
+    const lunchPulse = 0.5 + 0.5 * Math.sin(gameClockMs / 150);
+    const lunchGlowRadius = player.radius * 2.2 + lunchPulse * 4;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, lunchGlowRadius, 0, Math.PI * 2);
+    const lunchGlowGradient = ctx.createRadialGradient(
+      player.x, player.y, player.radius * 0.4,
+      player.x, player.y, lunchGlowRadius
+    );
+    lunchGlowGradient.addColorStop(0, 'rgba(255, 204, 128, 0.4)');
+    lunchGlowGradient.addColorStop(1, 'rgba(255, 204, 128, 0)');
+    ctx.fillStyle = lunchGlowGradient;
+    ctx.fill();
+    ctx.strokeStyle = `rgba(255, 204, 128, ${0.5 + lunchPulse * 0.3})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, player.radius * 1.6, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
   // 「ファイヤーウォール」の効果が残っている間、自機の周りにバリアを表示する
   drawBarrierShield(player.x, player.y, player.radius, playerBarrierCharges);
   // 自分のアイコン（性別選択で選んだimages/self内の画像を使用）。
@@ -11123,6 +11173,9 @@ function draw() {
   }
   if (coffeeBuffTimerMs > 0) {
     activeBuffIcons.push({ text: '☕コーヒー効果中', color: '#a1887f' });
+  }
+  if (lunchBuffTimerMs > 0) {
+    activeBuffIcons.push({ text: '🍱昼食完食ボーナス効果中', color: '#ffcc80' });
   }
   if (activeBuffIcons.length > 0) {
     const buffBlinkOn = Math.floor(gameClockMs / 500) % 2 === 0;
