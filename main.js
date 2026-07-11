@@ -10917,7 +10917,7 @@ function draw() {
     ctx.font = `16px ${uiFontFamily}`;
     ctx.textAlign = 'center';
     ctx.fillText('P = 一時停止 / 再開　F = 自動攻撃切替　Space = パリィ（はじきかえす）', canvas.width / 2, helpTextY);
-    ctx.fillText('WASD・十字ボタン = 移動　マウスポインタ = 向き　左クリック = アイテム取得・自動攻撃ＯＮ／　　ＯＦＦ', canvas.width / 2, helpTextY + 26);
+    ctx.fillText('WASD・十字ボタン = 移動　マウスポインタ = 向き　左クリック = アイテム取得・自動攻撃ON/OFF', canvas.width / 2, helpTextY + 26);
     ctx.textAlign = 'left';
 
     // リセット確認ダイアログ：「やり直しますか？」→はい/いいえ
