@@ -9969,7 +9969,7 @@ function draw() {
     const gridX = 40;
     const gridWidth = canvas.width - gridX * 2;
     const cellWidth = (gridWidth - colGap * (cols - 1)) / cols;
-    const cellHeight = 52;
+    const cellHeight = 76; // 説明文が2行になっても「強化」「1つ戻す」ボタンに被らないよう、縦に広めにとる
     const cellGap = 6;
     const gridStartY = 64;
     const rows = Math.ceil(dreamMemoryUpgradeDefs.length / cols);
