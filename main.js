@@ -3223,6 +3223,8 @@ function updatePartner(dt) {
           partner.barrierCharges--;
         } else {
           damagePartnerSan(Math.ceil((en.type || 1) * partnerContactSanMultiplier * getEnemyDifficultyMultiplier()));
+          // 同僚にダメージを与えたこの敵をあとで倒すと、お礼を言ってくれる
+          en.damagedPartner = true;
         }
         partner.invincible = true;
         partner.invincibleTimer = partnerInvincibleDuration;
@@ -4431,6 +4433,11 @@ function defeatEnemyInstantly(enemyIndex) {
   exp += en.type * 5 * specialSkillEffects.expGainMultiplier;
   updateSkillEffects();
   spawnHitSpark(en.x, en.y, true);
+  // 同僚にダメージを与えていた敵を倒すと、お礼を言ってくれて関係性が上がる
+  if (en.damagedPartner && partner.active) {
+    showRandomPartnerSpeechBubbleIfFriendly(partnerThanksLines, '#69f0ae', partnerThanksStressedLines);
+    adjustPartnerRelationship(2);
+  }
   recordJobDefeatForStats(en.text);
   enemies.splice(enemyIndex, 1);
   weeklyKills++;
@@ -8363,6 +8370,10 @@ function update() {
             if (Math.random() < partnerThanksRelationshipChance) {
               adjustPartnerRelationship(1);
             }
+          } else if (en.damagedPartner && partner.active) {
+            // 同僚にダメージを与えていた敵を倒すと、お礼を言ってくれて関係性が上がる
+            showRandomPartnerSpeechBubbleIfFriendly(partnerThanksLines, '#69f0ae', partnerThanksStressedLines);
+            adjustPartnerRelationship(2);
           }
           recordJobDefeatForStats(en.text);
           enemies.splice(j, 1);
