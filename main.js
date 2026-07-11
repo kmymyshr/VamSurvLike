@@ -7237,8 +7237,15 @@ document.getElementById('btnPause').addEventListener('click', () => {
 });
 
 // ===== キャンバスをウィンドウに合わせて拡大縮小する（内部解像度は800x600のまま） =====
+// 画面下部は、移動用ジョイスティック・パリィ／連射ボタン（いずれも画面＝キャンバスの外に固定表示する
+// タッチ操作用のコントロール）のために、常にこの高さぶんを空けておく。#gameWrapperの高さもここから
+// 連動して縮め、キャンバスがどんな画面比率でもこの帯の中へ描画されないようにする
+const touchControlsReserveHeightPx = 170;
+const gameWrapperEl = document.getElementById('gameWrapper');
 function fitCanvasToViewport() {
-  const scale = Math.min(window.innerWidth / canvas.width, window.innerHeight / canvas.height);
+  const availableHeight = Math.max(1, window.innerHeight - touchControlsReserveHeightPx);
+  gameWrapperEl.style.height = `${availableHeight}px`;
+  const scale = Math.min(window.innerWidth / canvas.width, availableHeight / canvas.height);
   canvas.style.width = `${canvas.width * scale}px`;
   canvas.style.height = `${canvas.height * scale}px`;
 }

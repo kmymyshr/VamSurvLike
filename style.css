@@ -80,12 +80,12 @@ canvas {
   position: fixed;
   right: max(16px, env(safe-area-inset-right));
   bottom: max(16px, env(safe-area-inset-bottom));
-  width: 100px;
-  height: 100px;
+  width: 80px;
+  height: 80px;
   border-radius: 50%;
   background: rgba(255, 138, 101, 0.30);
   color: white;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: bold;
   border: 2px solid rgba(255, 138, 101, 0.65);
   touch-action: none;
@@ -96,13 +96,13 @@ canvas {
 #btnMobileParry {
   position: fixed;
   right: max(16px, env(safe-area-inset-right));
-  bottom: calc(max(16px, env(safe-area-inset-bottom)) + 100px + 12px);
-  width: 100px;
-  height: 64px;
-  border-radius: 16px;
+  bottom: calc(max(16px, env(safe-area-inset-bottom)) + 80px + 10px);
+  width: 80px;
+  height: 50px;
+  border-radius: 14px;
   background: rgba(128, 222, 234, 0.30);
   color: white;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: bold;
   border: 2px solid rgba(128, 222, 234, 0.75);
   touch-action: none;
