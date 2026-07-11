@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>ここで寝たらただのサラリーマン</title>
   <link rel="stylesheet" href="style.css">
+  <!-- タイトル画面の背景（通常時／ノーマルエンド経験後のどちらか一方が必ず使われる）を、
+       スクリプトの解析・実行を待たずに先読みしておく。読み込み遅延で背景だけ後から表示される現象を軽減する -->
+  <link rel="preload" as="image" href="images/background/start_01.png">
+  <link rel="preload" as="image" href="images/background/after_normalEND.png">
 </head>
 <body>
   <div id="gameWrapper">
