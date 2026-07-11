@@ -527,13 +527,14 @@ function spawnSlashEffect(x, y, angle, entityRadius) {
   slashEffect = { x, y, angle, radius: entityRadius, timer: slashEffectDurationMs };
 }
 
-// ===== 特殊スキル「ライトセーバー」：自機がパリィした瞬間、拡大した効果範囲ぶんを円形にワイプするエフェクト =====
-// 上のスラッシュエフェクトと同じ配色。パリィ範囲そのもの（getDeflectRange()）まで広がってからフェードアウトする
-let lightsaberRingEffect = null; // { x, y, radius, timer }
-const lightsaberRingEffectDurationMs = 320;
-function spawnLightsaberRingEffectIfActive(x, y) {
+// ===== 特殊スキル「ライトセーバー」：自機がパリィした瞬間、光る棒（一端は自機）が
+// 自機の向きを中心に270度ワイプするエフェクト =====
+// 上のスラッシュエフェクトと同じ配色。棒の長さ＝パリィの効果範囲（getDeflectRange()。ライトセーバー習得中は2倍）
+let lightsaberEffect = null; // { x, y, angle, length, timer }
+const lightsaberEffectDurationMs = 320;
+function spawnLightsaberBladeEffectIfActive(x, y, angle) {
   if (specialSkillEffects.deflectRangeMultiplier <= 1) return;
-  lightsaberRingEffect = { x, y, radius: getDeflectRange(), timer: lightsaberRingEffectDurationMs };
+  lightsaberEffect = { x, y, angle, length: getDeflectRange(), timer: lightsaberEffectDurationMs };
 }
 const baseFireRate = 175; // 基本の発射間隔（ミリ秒。以前の設定からさらに半分に短縮）
 let lastFire = 0;
@@ -6874,7 +6875,7 @@ function damageEnemyDirectByParry(en) {
 function attemptDeflectPartnerBullet() {
   if (stunned) return;
   spawnSlashEffect(player.x, player.y, player.angle, player.radius); // 命中の有無に関わらず、振った動作自体を見せる
-  spawnLightsaberRingEffectIfActive(player.x, player.y);
+  spawnLightsaberBladeEffectIfActive(player.x, player.y, player.angle);
   // 範囲内の条件を満たす弾は、まとめて同時にパリィする（1発だけに限らない）
   const targets = bullets.filter(b => {
     // ネットワークスペシャリスト：画面端で反射した自弾（1回目以降すべて）も、パリィで狩り直せる
@@ -7490,10 +7491,10 @@ function update() {
     slashEffect.timer -= dt * 1000;
     if (slashEffect.timer <= 0) slashEffect = null;
   }
-  // ライトセーバーの円形ワイプエフェクトの表示時間を減らす
-  if (lightsaberRingEffect) {
-    lightsaberRingEffect.timer -= dt * 1000;
-    if (lightsaberRingEffect.timer <= 0) lightsaberRingEffect = null;
+  // ライトセーバーのワイプエフェクトの表示時間を減らす
+  if (lightsaberEffect) {
+    lightsaberEffect.timer -= dt * 1000;
+    if (lightsaberEffect.timer <= 0) lightsaberEffect = null;
   }
 
   // 爆発後の短い時間、Canvas全体をランダムに揺らす
@@ -8197,7 +8198,7 @@ function update() {
       if (Math.random() < specialSkillEffects.autoParryChance) {
         performBulletParry(b, player.x, player.y, player.angle, true);
         spawnSlashEffect(player.x, player.y, player.angle, player.radius);
-        spawnLightsaberRingEffectIfActive(player.x, player.y);
+        spawnLightsaberBladeEffectIfActive(player.x, player.y, player.angle);
         showMessage('オートパリィ発動！', 1400, '#fff176');
         continue;
       }
@@ -11583,27 +11584,33 @@ function draw() {
     ctx.restore();
   }
 
-  // 特殊スキル「ライトセーバー」：パリィした瞬間、拡大した効果範囲ぶんを円形にワイプするエフェクトを描く
-  // （斬撃ワイプエフェクトと同じ配色。360度の円がすばやく広がってからフェードアウトする）
-  if (lightsaberRingEffect) {
-    const progress = 1 - lightsaberRingEffect.timer / lightsaberRingEffectDurationMs;
-    const sweepProgress = Math.min(1, progress / 0.6); // 最初の60%で円が広がりきる
+  // 特殊スキル「ライトセーバー」：パリィした瞬間、自機を一端とする光る棒が、自機の向きを中心に
+  // 270度ワイプするエフェクトを描く（斬撃ワイプエフェクトと同じ配色。棒の長さ＝パリィの効果範囲）
+  if (lightsaberEffect) {
+    const progress = 1 - lightsaberEffect.timer / lightsaberEffectDurationMs;
+    const sweepProgress = Math.min(1, progress / 0.6); // 最初の60%で振り切る
     const fadeAlpha = progress < 0.6 ? 1 : Math.max(0, 1 - (progress - 0.6) / 0.4); // 残りでフェードアウト
-    const ringRadius = lightsaberRingEffect.radius * sweepProgress;
+    const startAngle = lightsaberEffect.angle - slashEffectRangeRad / 2;
+    const currentAngle = startAngle + slashEffectRangeRad * sweepProgress;
+    const tipX = lightsaberEffect.x + Math.cos(currentAngle) * lightsaberEffect.length;
+    const tipY = lightsaberEffect.y + Math.sin(currentAngle) * lightsaberEffect.length;
     ctx.save();
     ctx.globalAlpha = fadeAlpha;
+    ctx.lineCap = 'round';
     ctx.strokeStyle = '#e0f7fa';
     ctx.lineWidth = 7;
     ctx.shadowColor = '#80deea';
     ctx.shadowBlur = 16;
     ctx.beginPath();
-    ctx.arc(lightsaberRingEffect.x, lightsaberRingEffect.y, ringRadius, 0, Math.PI * 2);
+    ctx.moveTo(lightsaberEffect.x, lightsaberEffect.y);
+    ctx.lineTo(tipX, tipY);
     ctx.stroke();
     // 内側にもう1本重ねて、斬撃ワイプエフェクトと同じ太さの変化を出す
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.arc(lightsaberRingEffect.x, lightsaberRingEffect.y, ringRadius, 0, Math.PI * 2);
+    ctx.moveTo(lightsaberEffect.x, lightsaberEffect.y);
+    ctx.lineTo(tipX, tipY);
     ctx.stroke();
     ctx.restore();
   }
