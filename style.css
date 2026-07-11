@@ -45,27 +45,6 @@ canvas {
   touch-action: none;
 }
 
-#touchControls {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  display: flex;
-  gap: 8px;
-  z-index: 10;
-}
-
-#touchControls button {
-  min-width: 44px;
-  min-height: 44px;
-  padding: 6px 10px;
-  font-size: 14px;
-  background: rgba(255, 255, 255, 0.15);
-  color: white;
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  border-radius: 8px;
-  touch-action: manipulation;
-}
-
 /* 戦闘画面の左に広げた帯。移動用ジョイスティックを配置する */
 #leftControlPanel {
   flex: 0 0 130px;
@@ -105,8 +84,9 @@ canvas {
   pointer-events: none;
 }
 
-/* 戦闘画面の右に広げた帯。パリィ・連射ボタンを縦に並べて配置する */
+/* 戦闘画面の右に広げた帯。パリィ・連射ボタンを下端に、一時停止ボタンを上端に固定表示する */
 #rightControlPanel {
+  position: relative;
   flex: 0 0 130px;
   width: 130px;
   height: 600px;
@@ -117,6 +97,23 @@ canvas {
   gap: 10px;
   padding-bottom: 16px;
   box-sizing: border-box;
+}
+
+/* 一時停止ボタン。パリィ・連射ボタンとは離して、帯の上端に固定表示する */
+#btnPause {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 44px;
+  min-height: 44px;
+  padding: 6px 10px;
+  font-size: 14px;
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 8px;
+  touch-action: manipulation;
 }
 
 /* 押している間連射する攻撃ボタン */
