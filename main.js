@@ -4436,7 +4436,7 @@ function defeatEnemyInstantly(enemyIndex) {
   // 同僚にダメージを与えていた敵を倒すと、お礼を言ってくれて関係性が上がる
   if (en.damagedPartner && partner.active) {
     showRandomPartnerSpeechBubbleIfFriendly(partnerThanksLines, '#69f0ae', partnerThanksStressedLines);
-    adjustPartnerRelationship(2);
+    adjustPartnerRelationship(5);
   }
   recordJobDefeatForStats(en.text);
   enemies.splice(enemyIndex, 1);
@@ -8377,7 +8377,7 @@ function update() {
           } else if (en.damagedPartner && partner.active) {
             // 同僚にダメージを与えていた敵を倒すと、お礼を言ってくれて関係性が上がる
             showRandomPartnerSpeechBubbleIfFriendly(partnerThanksLines, '#69f0ae', partnerThanksStressedLines);
-            adjustPartnerRelationship(2);
+            adjustPartnerRelationship(5);
           }
           recordJobDefeatForStats(en.text);
           enemies.splice(j, 1);
