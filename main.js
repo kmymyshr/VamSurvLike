@@ -8652,12 +8652,12 @@ function drawTrueEndTitleScreen() {
 }
 
 // 目覚めエンド専用タイトル画面の「寝る」を押した後の演出：
-// 黒フェードアウト（3秒）→nightmare_again.pngが拡大しながらフェードイン→
-// 拡大を続けたまま黒フェードアウト（3秒）→タイトルへ（再読み込み後、タイトルがフェードインする）
-let nightmareAgainSequence = null; // null、または { phase: 'fadeOut' | 'imageIn' | 'imageOut', phaseTimerMs, scale, zoomElapsedMs }
+// 黒フェードアウト（3秒）→nightmare_again.pngが拡大しながらフェードイン（4.4秒）→
+// 完全にフェードインしたら、フェードアウトではなく即座に暗転→3秒待つ→タイトルへ（再読み込み後、タイトルがフェードインする）
+let nightmareAgainSequence = null; // null、または { phase: 'fadeOut' | 'imageIn' | 'blackout', phaseTimerMs, scale, zoomElapsedMs }
 const nightmareAgainFadeOutDurationMs = 3000;
-const nightmareAgainImageFadeInDurationMs = 2200;
-const nightmareAgainImageFadeOutDurationMs = 3000;
+const nightmareAgainImageFadeInDurationMs = 4400;
+const nightmareAgainBlackoutHoldDurationMs = 3000;
 // 拡大速度は一定ではなく、拡大が始まってからの経過時間とともに徐々に増していく
 // （t秒後の拡大速度 = base + accel × t。フェードイン・フェードアウトを通じてずっと加速し続ける）
 const nightmareAgainImageZoomBaseRatePerSec = 0.04;
@@ -8687,9 +8687,10 @@ function updateNightmareAgainSequence(rawDt) {
     seq.phase = 'imageIn';
     seq.phaseTimerMs = 0;
   } else if (seq.phase === 'imageIn' && seq.phaseTimerMs >= nightmareAgainImageFadeInDurationMs) {
-    seq.phase = 'imageOut';
+    // フェードアウトではなく、即座に暗転させてから一定時間待つ
+    seq.phase = 'blackout';
     seq.phaseTimerMs = 0;
-  } else if (seq.phase === 'imageOut' && seq.phaseTimerMs >= nightmareAgainImageFadeOutDurationMs) {
+  } else if (seq.phase === 'blackout' && seq.phaseTimerMs >= nightmareAgainBlackoutHoldDurationMs) {
     nightmareAgainSequence = null;
     // 再読み込み後の最初のタイトル表示だけ、黒からフェードインさせる
     try { sessionStorage.setItem('vamSurvLike_titleFadeIn', '1'); } catch (e) {}
@@ -8714,6 +8715,9 @@ function drawNightmareAgainSequence() {
   ctx.fillStyle = '#000000';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+  // 暗転フェーズ（blackout）では、画像は描かず即座に真っ黒のまま待つ
+  if (seq.phase === 'blackout') return;
+
   const img = nightmareAgainImage;
   if (img.complete && img.naturalWidth > 0) {
     // 常に画面全体を覆う基準サイズ（cover）に、さらに拡大分を掛け合わせる
@@ -8721,19 +8725,11 @@ function drawNightmareAgainSequence() {
     const drawScale = coverScale * seq.scale;
     const drawW = img.naturalWidth * drawScale;
     const drawH = img.naturalHeight * drawScale;
-    const imgAlpha = seq.phase === 'imageIn'
-      ? Math.min(1, seq.phaseTimerMs / nightmareAgainImageFadeInDurationMs)
-      : 1;
+    const imgAlpha = Math.min(1, seq.phaseTimerMs / nightmareAgainImageFadeInDurationMs);
     ctx.save();
     ctx.globalAlpha = imgAlpha;
     ctx.drawImage(img, canvas.width / 2 - drawW / 2, canvas.height / 2 - drawH / 2, drawW, drawH);
     ctx.restore();
-  }
-
-  if (seq.phase === 'imageOut') {
-    const p = Math.min(1, seq.phaseTimerMs / nightmareAgainImageFadeOutDurationMs);
-    ctx.fillStyle = `rgba(0, 0, 0, ${p})`;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
 }
 
