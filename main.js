@@ -869,8 +869,8 @@ function consumeChocolate() {
 
 // ===== コーヒー・栄養ドリンクの自動配置位置（コーヒーメーカー・冷蔵庫自体は表示しない） =====
 // 画面下部の固定位置に、それぞれコーヒー・栄養ドリンクを生成し続ける
-const coffeeMakerPosition = { x: 90, y: 520 };
-const fridgePosition = { x: 710, y: 520 };
+const coffeeMakerPosition = { x: 130, y: 520 };
+const fridgePosition = { x: 670, y: 520 };
 const coffeeItemSpawnPosition = { x: coffeeMakerPosition.x, y: coffeeMakerPosition.y };
 const energyDrinkItemSpawnPosition = { x: fridgePosition.x, y: fridgePosition.y };
 const stationRespawnDelayMs = 3000; // 取得後、この位置にまた出現するまでの時間
@@ -4566,12 +4566,12 @@ function beginGameplay() {
   dayTransitionWaitingTimerMs = 0;
 
   // 一度もノーマルエンドを経ていない場合（チュートリアル的な特別なプレイ）：
-  // 完全オートモード・3倍加速・スマホ用自動照準はボタンごと非表示にするため、念のためここで強制的にOFFにしておく
+  // 完全オートモード・3倍加速はボタンごと非表示にするため、念のためここで強制的にOFFにしておく
+  // （スマホ用自動照準はこの間も小型ボタンで操作できるため、対象外）
   if (!hasEverReachedNormalEnd()) {
     fullAutoModeEnabled = false;
     gameTimeScale = 1;
     threeXModeEnabled = false;
-    mobileAutoAimEnabled = false;
   }
 }
 
@@ -4807,7 +4807,7 @@ canvas.addEventListener('contextmenu', (event) => {
 const moveJoystickEl = document.getElementById('moveJoystick');
 const moveJoystickKnobEl = document.getElementById('moveJoystickKnob');
 const moveJoystickSensitivityRadius = 26;
-const moveJoystickVisualMaxOffset = 45;
+const moveJoystickVisualMaxOffset = 27; // 土台を60%サイズに縮小したのに合わせて、見た目上の可動範囲も同じ比率で縮小
 let moveJoystickPointerId = null;
 
 function updateJoystickKnobPosition(offsetX, offsetY) {
@@ -11989,26 +11989,37 @@ function draw() {
   // クイズや固定敵の説明パネル（窓付近・画面上部）とは被らない位置。
   // 一度もノーマルエンドを経ていない場合（チュートリアル的な特別なプレイ）は、これらのボタン自体を表示しない
   if (hasEverReachedNormalEnd()) {
-    const toggleBtnW = 170, toggleBtnH = 26, toggleBtnGap = 6;
+    // 完全オートモード・3倍加速は少し小さめに表示する
+    const smallToggleBtnW = 140, smallToggleBtnH = 22, toggleBtnGap = 6;
+    const toggleBtnW = 170, toggleBtnH = 26;
     const toggleBtnX = 12, toggleBtnStartY = 278;
-    drawUiButton(toggleBtnX, toggleBtnStartY, toggleBtnW, toggleBtnH,
+    drawUiButton(toggleBtnX, toggleBtnStartY, smallToggleBtnW, smallToggleBtnH,
       `完全オートモード: ${fullAutoModeEnabled ? 'ON' : 'OFF'}`,
       () => { fullAutoModeEnabled = !fullAutoModeEnabled; },
       fullAutoModeEnabled
-        ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 12px sans-serif' }
-        : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 12px sans-serif' });
-    drawUiButton(toggleBtnX, toggleBtnStartY + (toggleBtnH + toggleBtnGap), toggleBtnW, toggleBtnH,
+        ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 11px sans-serif' }
+        : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 11px sans-serif' });
+    drawUiButton(toggleBtnX, toggleBtnStartY + (smallToggleBtnH + toggleBtnGap), smallToggleBtnW, smallToggleBtnH,
       `3倍加速: ${gameTimeScale === 3 ? 'ON' : 'OFF'}`,
       () => { gameTimeScale = gameTimeScale === 3 ? 1 : 3; },
       gameTimeScale === 3
-        ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 12px sans-serif' }
-        : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 12px sans-serif' });
-    drawUiButton(toggleBtnX, toggleBtnStartY + (toggleBtnH + toggleBtnGap) * 2, toggleBtnW, toggleBtnH,
+        ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 11px sans-serif' }
+        : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 11px sans-serif' });
+    drawUiButton(toggleBtnX, toggleBtnStartY + (smallToggleBtnH + toggleBtnGap) * 2, toggleBtnW, toggleBtnH,
       `スマホ用自動照準: ${mobileAutoAimEnabled ? 'ON' : 'OFF'}`,
       () => setMobileAutoAimEnabled(!mobileAutoAimEnabled),
       mobileAutoAimEnabled
         ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 12px sans-serif' }
         : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 12px sans-serif' });
+  } else {
+    // 一度もノーマルエンドを経ていない場合でも、スマホ用自動照準だけは小型ボタンとして表示する
+    const smallAutoAimBtnW = 96, smallAutoAimBtnH = 22;
+    drawUiButton(12, 278, smallAutoAimBtnW, smallAutoAimBtnH,
+      `自動照準: ${mobileAutoAimEnabled ? 'ON' : 'OFF'}`,
+      () => setMobileAutoAimEnabled(!mobileAutoAimEnabled),
+      mobileAutoAimEnabled
+        ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 11px sans-serif' }
+        : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 11px sans-serif' });
   }
 
   // 「自己犠牲」「献身」：習得済みかつ同僚が健在で、まだこの周回で使っていない時だけ、
