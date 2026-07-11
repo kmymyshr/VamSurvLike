@@ -145,7 +145,8 @@ function loadDreamMemorySave() {
   const fallback = {
     points: 0, upgrades: fallbackUpgrades, lastRun: null,
     trueEndCleared: false, endingsCleared: fallbackEndingsCleared,
-    carriedRank: 1, carriedRankSkillIds: [], carriedScore: 0
+    carriedRank: 1, carriedRankSkillIds: [], carriedScore: 0,
+    specialSkillPreLevels: {}
   };
   try {
     const raw = localStorage.getItem(dreamMemoryStorageKey);
@@ -168,6 +169,14 @@ function loadDreamMemorySave() {
     const rawEndingsCleared = parsed.endingsCleared || {};
     const endingsCleared = {};
     endingListDefs.forEach(def => { endingsCleared[def.id] = !!rawEndingsCleared[def.id]; });
+    // 特殊スキルの事前強化（夢の記憶ポイントで購入した分）。specialSkills配列はこの時点ではまだ定義されていないため、
+    // ここでは大まかな型チェックのみ行い、実際の上限（maxLevel）でのクランプはapplyDreamMemoryUpgradesForNewGame側で行う
+    const rawSpecialSkillPreLevels = parsed.specialSkillPreLevels || {};
+    const specialSkillPreLevels = {};
+    Object.keys(rawSpecialSkillPreLevels).forEach(id => {
+      const lv = Math.floor(rawSpecialSkillPreLevels[id]);
+      if (Number.isFinite(lv) && lv > 0) specialSkillPreLevels[id] = lv;
+    });
     return {
       points: Math.max(0, Math.floor(parsed.points) || 0),
       upgrades,
@@ -177,7 +186,8 @@ function loadDreamMemorySave() {
       // 周回プレイの引き継ぎ：役職（ランク）・役職スキル・Scoreは、前回終了時点の状態をそのまま次回開始時に復元する
       carriedRank: Math.max(1, Math.floor(parsed.carriedRank) || 1),
       carriedRankSkillIds: Array.isArray(parsed.carriedRankSkillIds) ? parsed.carriedRankSkillIds.filter(id => typeof id === 'string') : [],
-      carriedScore: Math.max(0, Math.floor(parsed.carriedScore) || 0)
+      carriedScore: Math.max(0, Math.floor(parsed.carriedScore) || 0),
+      specialSkillPreLevels
     };
   } catch (e) {
     return fallback;
@@ -495,6 +505,7 @@ let gameClear = false;
 let startScreen = true;
 let setupStep = null;
 let dreamMemoryShopActive = false; // タイトル画面から開く、夢の記憶ポイントでの強化画面
+let specialSkillPreShopActive = false; // 強化画面から開く、特殊スキルの事前強化専用ページ
 let endingListActive = false; // タイトル画面から開く、到達済みエンディング一覧画面
 let controllerHelpActive = false; // タイトル画面から開く、ゲームコントローラーの操作説明画面
 let titleResetConfirmActive = false; // タイトル画面左上の「リセット」ボタンを押した後の確認ダイアログ表示中かどうか
@@ -3578,6 +3589,55 @@ function queueSpecialSkillSelections(count) {
   }
 }
 
+// ===== 特殊スキルの事前強化（夢の記憶ポイントで、次の周回をレベルアップ済みの状態から始められる） =====
+// タイトル画面の「夢の記憶ポイントで強化」から開ける専用ページで使う。
+// 費用はdreamMemoryUpgradeDefsの通常強化と同じ計算式（dreamMemoryUpgradeCost）を共用する
+function getSpecialSkillPreLevel(id) {
+  return dreamMemorySave.specialSkillPreLevels[id] || 0;
+}
+function purchaseSpecialSkillPreLevel(id) {
+  const skill = specialSkills.find(s => s.id === id);
+  if (!skill) return;
+  const level = getSpecialSkillPreLevel(id);
+  if (level >= skill.maxLevel) return;
+  const cost = dreamMemoryUpgradeCost(level);
+  if (dreamMemorySave.points < cost) return;
+  dreamMemorySave.points -= cost;
+  dreamMemorySave.specialSkillPreLevels[id] = level + 1;
+  // マルチタスクA/Bなど、同時に習得できない組み合わせ：片方を上げたら、もう片方の事前レベルは全額払い戻して0に戻す
+  const exclusiveWithId = mutuallyExclusiveSkillIds[id];
+  if (exclusiveWithId) {
+    const otherLevel = getSpecialSkillPreLevel(exclusiveWithId);
+    if (otherLevel > 0) {
+      let refund = 0;
+      for (let lv = 0; lv < otherLevel; lv++) refund += dreamMemoryUpgradeCost(lv);
+      dreamMemorySave.points += refund;
+      dreamMemorySave.specialSkillPreLevels[exclusiveWithId] = 0;
+    }
+  }
+  saveDreamMemorySave();
+}
+// 「1つ戻す」：指定した特殊スキルの事前強化を1レベル下げ、そのレベルに費やしたポイントを払い戻す
+function revertSpecialSkillPreLevel(id) {
+  const level = getSpecialSkillPreLevel(id);
+  if (level <= 0) return;
+  dreamMemorySave.points += dreamMemoryUpgradeCost(level - 1);
+  dreamMemorySave.specialSkillPreLevels[id] = level - 1;
+  saveDreamMemorySave();
+}
+// 「思い直す」：特殊スキルの事前強化に費やしたポイントを全額払い戻し、レベルを0に戻す
+function respecSpecialSkillPreLevels() {
+  let refund = 0;
+  specialSkills.forEach(skill => {
+    const level = getSpecialSkillPreLevel(skill.id);
+    for (let lv = 0; lv < level; lv++) refund += dreamMemoryUpgradeCost(lv);
+    dreamMemorySave.specialSkillPreLevels[skill.id] = 0;
+  });
+  if (refund <= 0) return;
+  dreamMemorySave.points += refund;
+  saveDreamMemorySave();
+}
+
 function updateSkillEffects() {
   // 現在のexpが、次のレベルの必要経験値を超えている間、1レベルずつ上げていく
   // （必要経験値はexpThresholdForLevelにより後半ほど増えるため、レベルは徐々に上がりにくくなる）
@@ -4289,6 +4349,12 @@ function applyDreamMemoryUpgradesForNewGame() {
   weeklyQuotaEaseMultiplier = 1;
   partnerParryChance = Math.min(1, 0.3 + dreamMemorySave.upgrades.partnerAutoParry * 0.14);
   player.speed = 6; // 初期速度（以前の設定の150%）
+  // 夢の記憶ポイントで事前に強化した特殊スキルを、DAY1から習得済みの状態で始める
+  specialSkillLevels.clear();
+  specialSkills.forEach(skill => {
+    const preLevel = Math.min(getSpecialSkillPreLevel(skill.id), skill.maxLevel);
+    if (preLevel > 0) specialSkillLevels.set(skill.id, preLevel);
+  });
   recomputeSpecialSkillEffects();
 }
 
@@ -4428,7 +4494,7 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   // スタート画面では、1 / Enterキーで開始する（夢の記憶ポイントの強化画面・リセット確認中は無効）
-  if (startScreen && !dreamMemoryShopActive && !titleResetConfirmActive) {
+  if (startScreen && !dreamMemoryShopActive && !specialSkillPreShopActive && !titleResetConfirmActive) {
     if (event.key === '1' || event.key === 'Enter') {
       selectMode();
     }
@@ -4436,6 +4502,10 @@ document.addEventListener("keydown", (event) => {
   }
   if (dreamMemoryShopActive && event.key === 'Escape') {
     dreamMemoryShopActive = false;
+    return;
+  }
+  if (specialSkillPreShopActive && event.key === 'Escape') {
+    specialSkillPreShopActive = false;
     return;
   }
 
@@ -9889,6 +9959,10 @@ function draw() {
       () => { dreamMemorySave.points += 1; saveDreamMemorySave(); },
       { fillStyle: 'rgba(20, 20, 60, 0.55)', strokeStyle: '#9fa8da', font: 'bold 13px sans-serif' });
 
+    // 左上に、特殊スキル（マルチタスクAなど）を事前に強化できる専用ページへのボタンを配置する
+    drawUiButton(12, 12, 150, 30, '特殊スキルの強化', () => { specialSkillPreShopActive = true; },
+      { fillStyle: 'rgba(20, 90, 60, 0.55)', strokeStyle: '#80cbc4', font: 'bold 13px sans-serif' });
+
     // 項目数が多いため、2列に分けて見やすくする
     const cols = 2;
     const colGap = 16;
@@ -9995,6 +10069,110 @@ function draw() {
     const backBtnW = 200, backBtnH = 28;
     drawUiButton(canvas.width / 2 - backBtnW / 2, gridBottom + 8, backBtnW, backBtnH,
       '強化終了', () => { dreamMemoryShopActive = false; },
+      { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
+    return;
+  }
+
+  if (specialSkillPreShopActive) {
+    drawSetupBackground();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#80cbc4';
+    ctx.font = 'bold 22px sans-serif';
+    ctx.fillText('特殊スキルの強化', canvas.width / 2, 32);
+    ctx.fillStyle = '#e1bee7';
+    ctx.font = 'bold 14px sans-serif';
+    ctx.fillText(`保有ポイント: ${dreamMemorySave.points}`, canvas.width / 2, 52);
+    ctx.font = '12px sans-serif';
+    ctx.fillStyle = '#cfd8dc';
+    ctx.fillText('ここで上げたレベルは、次回プレイのDAY1から習得済みの状態で始まります', canvas.width / 2, 70);
+    ctx.textAlign = 'left';
+
+    drawUiButton(canvas.width - 138, 10, 126, 28, '思い直す', respecSpecialSkillPreLevels,
+      { fillStyle: 'rgba(84, 30, 30, 0.55)', strokeStyle: '#ef9a9a', font: 'bold 12px sans-serif' });
+
+    const cols = 3;
+    const colGap = 12;
+    const gridX = 24;
+    const gridWidth = canvas.width - gridX * 2;
+    const cellWidth = (gridWidth - colGap * (cols - 1)) / cols;
+    const cellHeight = 66;
+    const cellGap = 6;
+    const gridStartY = 84;
+    const rows = Math.ceil(specialSkills.length / cols);
+
+    specialSkills.forEach((skill, index) => {
+      const col = index % cols;
+      const row = Math.floor(index / cols);
+      const cellX = gridX + col * (cellWidth + colGap);
+      const cellY = gridStartY + row * (cellHeight + cellGap);
+
+      const level = getSpecialSkillPreLevel(skill.id);
+      const maxed = level >= skill.maxLevel;
+      const cost = maxed ? null : dreamMemoryUpgradeCost(level);
+      const affordable = !maxed && dreamMemorySave.points >= cost;
+
+      const levelRatio = level > 0 ? level / skill.maxLevel : 0;
+      const cellBorderColor = level > 0 ? mixHexColors('#80cbc4', '#ffd700', levelRatio) : '#616161';
+      const cellBgColor = level > 0
+        ? mixHexColorsRgba('#1b5e50', '#8a6a10', levelRatio, 0.30)
+        : 'rgba(60, 60, 60, 0.35)';
+
+      ctx.fillStyle = cellBgColor;
+      ctx.fillRect(cellX, cellY, cellWidth, cellHeight);
+      ctx.strokeStyle = cellBorderColor;
+      ctx.lineWidth = maxed ? 2 : 1;
+      ctx.strokeRect(cellX, cellY, cellWidth, cellHeight);
+
+      const btnW = 74, btnH = 20;
+      const btnX = cellX + cellWidth - btnW - 8;
+      const btnY = cellY + cellHeight - btnH - 5;
+      const revertBtnW = 44;
+      const revertBtnX = btnX - revertBtnW - 5;
+      const textMaxWidth = cellWidth - 16;
+
+      // 「戻す」：このスキルの事前強化を1レベル下げ、そのレベル分のポイントを払い戻す（レベル0の間は押せない）
+      if (level > 0) {
+        drawUiButton(revertBtnX, btnY, revertBtnW, btnH, '戻す',
+          () => revertSpecialSkillPreLevel(skill.id),
+          { fillStyle: 'rgba(84, 30, 30, 0.55)', strokeStyle: '#ef9a9a', font: 'bold 10px sans-serif' });
+      }
+
+      ctx.fillStyle = maxed ? '#ffe082' : 'white';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.fillText(`${skill.name} Lv.${level}/${skill.maxLevel}`, cellX + 8, cellY + 13);
+      ctx.fillStyle = '#cfd8dc';
+      ctx.font = '10px sans-serif';
+      const descLines = wrapTextToWidth(skill.description, textMaxWidth).slice(0, 3);
+      descLines.forEach((line, i) => {
+        ctx.fillText(line, cellX + 8, cellY + 25 + i * 11);
+      });
+
+      if (maxed) {
+        ctx.fillStyle = 'rgba(60, 60, 60, 0.6)';
+        ctx.fillRect(btnX, btnY, btnW, btnH);
+        ctx.strokeStyle = '#757575';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(btnX, btnY, btnW, btnH);
+        ctx.fillStyle = '#9e9e9e';
+        ctx.font = 'bold 10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('MAX', btnX + btnW / 2, btnY + btnH / 2);
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
+      } else {
+        drawUiButton(btnX, btnY, btnW, btnH, `強化(${cost}P)`,
+          () => purchaseSpecialSkillPreLevel(skill.id),
+          affordable
+            ? { fillStyle: 'rgba(20, 120, 90, 0.7)', strokeStyle: '#80cbc4', font: 'bold 10px sans-serif' }
+            : { fillStyle: 'rgba(60, 60, 60, 0.5)', strokeStyle: '#616161', textColor: '#9e9e9e', font: 'bold 10px sans-serif' });
+      }
+    });
+
+    const specialSkillGridBottom = gridStartY + rows * (cellHeight + cellGap) - cellGap;
+    const specialSkillBackBtnW = 200, specialSkillBackBtnH = 28;
+    drawUiButton(canvas.width / 2 - specialSkillBackBtnW / 2, specialSkillGridBottom + 8, specialSkillBackBtnW, specialSkillBackBtnH,
+      '戻る', () => { specialSkillPreShopActive = false; },
       { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
     return;
   }
