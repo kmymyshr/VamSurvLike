@@ -8491,9 +8491,12 @@ function drawEndingScreen() {
   ctx.fillStyle = '#ce93d8';
   ctx.fillText(`「…という、夢…？」を選ぶと、役職「${rankNames[rank - 1]}」を次周に引き継げます`,
     canvas.width / 2, canvas.height / 2 + 76);
-  ctx.font = 'bold 26px sans-serif';
-  ctx.fillStyle = cfg.labelColor;
-  ctx.fillText('E N D', canvas.width / 2, canvas.height / 2 + 104);
+  // 寿命0・SAN0エンドでは、この下の「E N D」表記は出さない
+  if (endingType !== 'bad-san' && endingType !== 'bad-lifespan') {
+    ctx.font = 'bold 26px sans-serif';
+    ctx.fillStyle = cfg.labelColor;
+    ctx.fillText('E N D', canvas.width / 2, canvas.height / 2 + 104);
+  }
 
   ctx.textAlign = 'left';
   drawEndScreenButtons(canvas.height / 2 + 128);
@@ -10651,7 +10654,10 @@ function draw() {
 
     // 右上に、前回プレイの自機・同僚の組み合わせが分かるよう、それぞれのアイコンを並べて表示する
     if (lastRun && lastRun.playerGender && lastRun.partnerIcon) {
-      const iconSize = 64;
+      const iconSize = 77; // 従来の64pxの約1.2倍
+      const iconImageOverflow = 16; // 箱より一回り大きく、顔がはみ出すように描く
+      const iconImageSize = iconSize + iconImageOverflow;
+      const iconImageOffset = -iconImageOverflow / 2;
       const iconGap = 10;
       const iconsRightMargin = 20;
       const iconsY = 12;
@@ -10664,12 +10670,13 @@ function draw() {
       ctx.fillText('前回の組み合わせ', playerIconX + iconSize + iconGap / 2, iconsY - 4);
       const playerImg = genderImageElements[lastRun.playerGender];
       if (playerImg && playerImg.complete && playerImg.naturalWidth > 0) {
-        ctx.drawImage(playerImg, playerIconX, iconsY, iconSize, iconSize);
+        ctx.drawImage(playerImg, playerIconX + iconImageOffset, iconsY + iconImageOffset, iconImageSize, iconImageSize);
       }
       const partnerImg = partnerIconImageElements[lastRun.partnerIcon];
       if (partnerImg && partnerImg.complete && partnerImg.naturalWidth > 0) {
-        ctx.drawImage(partnerImg, partnerIconX, iconsY, iconSize, iconSize);
+        ctx.drawImage(partnerImg, partnerIconX + iconImageOffset, iconsY + iconImageOffset, iconImageSize, iconImageSize);
       }
+      // 枠は画像より後に描き直し、はみ出した部分の上からでも見えるようにする
       ctx.strokeStyle = '#81d4fa';
       ctx.lineWidth = 2;
       ctx.strokeRect(playerIconX, iconsY, iconSize, iconSize);
