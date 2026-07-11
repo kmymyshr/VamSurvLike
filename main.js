@@ -394,7 +394,7 @@ const enemyCollisionRadius = 32;
 const minDeadlineMs = 5000 * 0.7; // 納期の最短時間（元の70%）
 const maxDeadlineMs = 15000; // 納期の最長時間（15秒）
 // 納期が短い敵ほど移動速度が速くなる（最短の敵はこの倍率、最長の敵は等倍のまま）
-const enemyDeadlineSpeedMaxMultiplier = 1.5;
+const enemyDeadlineSpeedMaxMultiplier = 2.2;
 let specialDeadlineMultiplier = 1;
 let waveCooldownMs = 0; // 次のウェーブ出現までの残り時間
 
