@@ -558,6 +558,9 @@ function triggerWakingNightmareDebug() {
     endingType: 'normal1',
     viaAdv3NormalEnd: true
   };
+  // 初回プレイであっても、通常のノーマルエンド後と同じ扱いにする（アドベンチャーパートを発生させ、
+  // 戦闘画面・タイトル背景も初回とは異なる設定にする）ため、ノーマルエンド経験済みとして記録する
+  dreamMemorySave.endingsCleared.normal1 = true;
   saveDreamMemorySave();
   // 即座に切り替えず、タイトル画面を暗転（フェードアウト）させてから画面遷移する
   startSetupFadeOut(() => location.reload());
@@ -6175,7 +6178,7 @@ function drawNormalEndEndingScreen() {
     ctx.save();
     ctx.globalAlpha = contentAlpha;
     ctx.fillStyle = 'white';
-    ctx.font = 'bold 20px sans-serif';
+    ctx.font = `bold 20px ${trueEndTitleMinchoFont}`;
     ctx.textAlign = 'center';
     ctx.fillText(`${pronoun}を助けないと…`, canvas.width / 2, canvas.height / 2);
     ctx.restore();
@@ -11786,7 +11789,7 @@ function draw() {
     const encBtnW = 460, encBtnH = 50;
     const encBtnX = canvas.width / 2 - encBtnW / 2;
     drawUiButton(encBtnX, canvas.height / 2 - 20, encBtnW, encBtnH,
-      `① 現実から目をそらす（自分・同僚とも SAN +${bossEncounterAvoidSanRecovery}）`,
+      `① 現実から目をそらす（SAN +${bossEncounterAvoidSanRecovery}）`,
       chooseBossEncounterAvoid,
       { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
     drawUiButton(encBtnX, canvas.height / 2 + 40, encBtnW, encBtnH,
