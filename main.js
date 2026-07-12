@@ -1182,7 +1182,6 @@ const dayTransitionAutoAdvanceMs = 3000;
 // ===== DAYカウンターと日次ノルマシステム =====
 // dayNumber変数は、敵の強さ調整に使うためファイル前半で宣言済み
 let dailyKillQuota = 0; // 本日の撃破ノルマ
-let dailyScoreQuota = 0; // 本日のスコア獲得ノルマ
 let dailyKills = 0; // 本日の撃破数
 let dailyScoreGained = 0; // 本日のスコア獲得量（減点は含まない）
 let fixedEnemyOvertimeChoiceActive = false; // 18時に固定敵が残っている時の「残業しますか？」の選択待ち
@@ -3429,17 +3428,16 @@ let dailyQuotaEaseMultiplier = 1;
 // ランクに応じて本日のノルマを再設定する（週次ノルマの基準値を5日ぶんで割った水準）。
 // 集中して手を止めずにプレイしてようやく届く程度の、ぎりぎり達成できる水準にしてある
 function resetDailyQuotaForNewDay() {
-  dailyKillQuota = Math.round((4 + (rank - 1) * 1) * dailyQuotaEaseMultiplier);
-  dailyScoreQuota = Math.round((16 + (rank - 1) * 6) * dailyQuotaEaseMultiplier);
+  dailyKillQuota = Math.round((4 + (rank - 1) * 1) * 2 * dailyQuotaEaseMultiplier);
   dailyKills = 0;
   dailyScoreGained = 0;
   dailyQuotaAchievedEarly = false;
   dailyQuizCount = 0;
 }
 
-// 現在のノルマを達成しているかどうかを返す（達成済みフラグ・撃破数・スコアいずれかの条件で判定）
+// 現在のノルマを達成しているかどうかを返す（達成済みフラグ・撃破数のいずれかの条件で判定）
 function isDailyQuotaMet() {
-  return dailyQuotaAchievedEarly || dailyKills >= dailyKillQuota || dailyScoreGained >= dailyScoreQuota;
+  return dailyQuotaAchievedEarly || dailyKills >= dailyKillQuota;
 }
 
 // 日の途中でノルマを達成したかどうかをキル時にチェックする。
@@ -12429,7 +12427,7 @@ function draw() {
   ctx.font = '13px sans-serif';
   ctx.fillStyle = dailyQuotaAchievedEarly ? '#69f0ae' : '#b0bec5';
   ctx.fillText(
-    `本日のノルマ: 撃破 ${dailyKills}/${dailyKillQuota}  Score ${dailyScoreGained}/${dailyScoreQuota}` +
+    `本日のノルマ: 撃破 ${dailyKills}/${dailyKillQuota}` +
     (dailyQuotaAchievedEarly ? '（達成！）' : ''),
     12, 250
   );
