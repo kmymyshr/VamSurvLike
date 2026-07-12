@@ -504,6 +504,18 @@ function spawnHitSpark(x, y, big = false) {
   });
 }
 
+// ===== 特殊スキル「闇を切り裂く剣」の直接攻撃が敵に命中した瞬間の、派手な専用インパクトエフェクト =====
+const darkSwordImpactEffects = [];
+const darkSwordImpactDurationMs = 420;
+function spawnDarkSwordImpactEffect(x, y) {
+  darkSwordImpactEffects.push({
+    x, y,
+    timer: darkSwordImpactDurationMs,
+    // 放射状に飛び散る線の角度をあらかじめランダムに決めておく（通常のヒットエフェクトより本数多め）
+    rays: Array.from({ length: 14 }, () => Math.random() * Math.PI * 2)
+  });
+}
+
 // ===== 役職スキル「AIエージェント」で弾が反射した瞬間の専用エフェクト =====
 const synergyBeams = [];
 const synergyBeamDurationMs = 350;
@@ -7013,6 +7025,8 @@ function damageEnemyDirectByParry(en) {
   lastFire = gameClockMs;
   en.hp = (en.hp || 1) - actualDmg;
   spawnHitSpark(en.x, en.y, en.hp <= 0);
+  // 「闇を切り裂く剣」習得中は、直接攻撃の命中に派手な専用エフェクトを重ねる
+  if ((specialSkillLevels.get('dark-cleaving-sword') || 0) > 0) spawnDarkSwordImpactEffect(en.x, en.y);
   if (en.hp > 0) return;
   const pts = Math.ceil(en.type * 3 * specialSkillEffects.scoreGainMultiplier);
   score += pts;
@@ -7645,6 +7659,11 @@ function update() {
   for (let hi = hitSparks.length - 1; hi >= 0; hi--) {
     hitSparks[hi].timer -= dt * 1000;
     if (hitSparks[hi].timer <= 0) hitSparks.splice(hi, 1);
+  }
+  // 「闇を切り裂く剣」の直接攻撃インパクトエフェクトの表示時間を減らす
+  for (let di = darkSwordImpactEffects.length - 1; di >= 0; di--) {
+    darkSwordImpactEffects[di].timer -= dt * 1000;
+    if (darkSwordImpactEffects[di].timer <= 0) darkSwordImpactEffects.splice(di, 1);
   }
 
   // 「AIエージェント」の反射エフェクトの表示時間を減らす
@@ -11857,6 +11876,58 @@ function draw() {
       ctx.lineTo(
         spark.x + Math.cos(angle) * (innerR + rayLength),
         spark.y + Math.sin(angle) * (innerR + rayLength)
+      );
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // 特殊スキル「闇を切り裂く剣」の直接攻撃が命中した瞬間の、派手な専用インパクトエフェクトを描く
+  // （通常のヒットエフェクトより大きく・本数多く・二重リング＋一瞬の閃光つき）
+  for (const impact of darkSwordImpactEffects) {
+    const progress = 1 - impact.timer / darkSwordImpactDurationMs;
+    const alpha = Math.max(0, 1 - progress);
+    const outerRadius = 14 + 40 * progress;
+    const innerRadius = 8 + 22 * progress;
+    const rayLength = 30 * (1 - progress * 0.4);
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    // 命中直後の一瞬だけ、白い閃光を大きく広げて「弾けた」瞬間を強調する
+    if (progress < 0.35) {
+      const flashAlpha = alpha * (1 - progress / 0.35);
+      ctx.globalAlpha = flashAlpha;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(impact.x, impact.y, outerRadius * 1.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = alpha;
+    }
+    // 二重リング（外側：金色の発光リング／内側：明るい黄色のリング）
+    ctx.strokeStyle = '#fbc02d';
+    ctx.lineWidth = 4;
+    ctx.shadowColor = '#fbc02d';
+    ctx.shadowBlur = 20;
+    ctx.beginPath();
+    ctx.arc(impact.x, impact.y, outerRadius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = '#fff176';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(impact.x, impact.y, innerRadius, 0, Math.PI * 2);
+    ctx.stroke();
+    // 放射状に飛び散る光の線（通常のヒットエフェクトより本数多め・長め）
+    ctx.strokeStyle = '#fffde7';
+    ctx.lineWidth = 3;
+    ctx.shadowColor = '#fff176';
+    ctx.shadowBlur = 10;
+    for (const angle of impact.rays) {
+      const innerR = outerRadius * 0.6;
+      ctx.beginPath();
+      ctx.moveTo(impact.x + Math.cos(angle) * innerR, impact.y + Math.sin(angle) * innerR);
+      ctx.lineTo(
+        impact.x + Math.cos(angle) * (innerR + rayLength * progress),
+        impact.y + Math.sin(angle) * (innerR + rayLength * progress)
       );
       ctx.stroke();
     }
