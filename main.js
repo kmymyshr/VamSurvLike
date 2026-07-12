@@ -113,8 +113,8 @@ const dreamMemoryUpgradeDefs = [
   },
   {
     id: 'workaholic', label: 'ワーカホリック',
-    describeLevel: () => '脳疲労が一切蓄積しなくなる（常に0のまま）',
-    preview: '脳疲労が蓄積しなくなる',
+    describeLevel: () => 'ゲーム内2時間ごとに、脳疲労が10軽減される',
+    preview: 'ゲーム内2時間ごとに脳疲労-10',
     maxLevel: 1,
     costOverride: 0
   }
@@ -527,18 +527,20 @@ function spawnSlashEffect(x, y, angle, entityRadius) {
   slashEffect = { x, y, angle, radius: entityRadius, timer: slashEffectDurationMs };
 }
 
-// ===== 特殊スキル「ライトセーバー」：自機がパリィした瞬間、光る棒（一端は自機）が
+// ===== 特殊スキル「ライトセーバー」「闇を切り裂く剣」：自機がパリィした瞬間、光る棒（一端は自機）が
 // 自機の向きを中心に270度ワイプするエフェクト =====
-// 棒の長さ＝パリィの効果範囲（getDeflectRange()。ライトセーバー習得中は1.2倍）。
+// 棒の長さ＝パリィの効果範囲（getDeflectRange()。ライトセーバーは1.2倍、闇を切り裂く剣は2倍）。
 // 回転の中心は自機の中心ではなく、自機アイコンの高さ（player.radius * 4.8）の下から40%の位置
 // （中心よりやや下寄り）にする
-let lightsaberEffect = null; // { x, y, angle, length, timer }
+let lightsaberEffect = null; // { x, y, angle, length, timer, isDarkBlade }
 const lightsaberEffectDurationMs = 320;
 function spawnLightsaberBladeEffectIfActive() {
   if (specialSkillEffects.deflectRangeMultiplier <= 1) return;
   const selfImgSize = player.radius * 4.8;
   const pivotY = player.y + selfImgSize * (0.5 - 0.4);
-  lightsaberEffect = { x: player.x, y: pivotY, angle: player.angle, length: getDeflectRange(), timer: lightsaberEffectDurationMs };
+  // 「闇を切り裂く剣」習得中は、刃の色を紫系に変えて演出を差別化する
+  const isDarkBlade = (specialSkillLevels.get('dark-cleaving-sword') || 0) > 0;
+  lightsaberEffect = { x: player.x, y: pivotY, angle: player.angle, length: getDeflectRange(), timer: lightsaberEffectDurationMs, isDarkBlade };
 }
 const baseFireRate = 175; // 基本の発射間隔（ミリ秒。以前の設定からさらに半分に短縮）
 let lastFire = 0;
@@ -767,6 +769,25 @@ function updatePassiveFatigueGain(dt) {
   if (partner.active) {
     const partnerRatePerHour = getPassiveFatigueRatePerHour(true) * partnerFatigueGainMultiplier;
     partner.fatigue = Math.min(maxFatigue, partner.fatigue + (partnerRatePerHour / realSecondsPerGameHour) * dt);
+  }
+}
+
+// 夢の記憶ポイント「ワーカホリック」：ゲーム内2時間ごとに脳疲労を10軽減する
+// （通常時の蓄積ペース＝1時間あたり6とほぼ相殺できる程度。残業中・オート連射中はそれでも蓄積が上回る）
+const workaholicFatigueReductionAmount = 10;
+const workaholicFatigueReductionIntervalHours = 2;
+let workaholicFatigueReductionTimerMs = 0;
+function updateWorkaholicFatigueReduction(dt) {
+  if (dreamMemorySave.upgrades.workaholic < 1) {
+    workaholicFatigueReductionTimerMs = 0;
+    return;
+  }
+  const realSecondsPerGameHour = hourMs / 1000;
+  const intervalMs = workaholicFatigueReductionIntervalHours * realSecondsPerGameHour * 1000;
+  workaholicFatigueReductionTimerMs += dt * 1000;
+  if (workaholicFatigueReductionTimerMs >= intervalMs) {
+    workaholicFatigueReductionTimerMs -= intervalMs;
+    fatigue = Math.max(0, fatigue - workaholicFatigueReductionAmount);
   }
 }
 
@@ -3492,54 +3513,94 @@ function getDefaultSpecialSkillEffects() {
     communicationParryRelationshipBonus: 0,
     // 継続力：自機の弾の飛距離の倍率（レベルごとに1.2倍）
     bulletDistanceMultiplier: 1,
-    // ライトセーバー：自機のパリィ効果範囲の倍率
+    // ライトセーバー／闇を切り裂く剣：自機のパリィ効果範囲の倍率
     deflectRangeMultiplier: 1,
+    // ライトセーバー／闇を切り裂く剣：パリィの直接攻撃ダメージの倍率
+    parryDirectDamageMultiplier: 1,
+    // 闇を切り裂く剣：ノーマルルート終了時の負けイベント戦闘でも、発射口をパリィ3回で破壊できるようにする
+    darkSwordBreaksIndestructibleHoles: false,
+    // ワーカーズハイ：脳疲労が常に0のまま、一切蓄積しなくなる
+    fatigueLocked: false,
     // マルチタスクB：正面から90度ずつ回転させた計4方向へ同時発射する
     quadShotActive: false
   };
 }
 const specialSkillEffects = getDefaultSpecialSkillEffects();
 
+// rarity: 'C'（普通）/ 'R'（レア）/ 'SR'（スーパーレア）/ 'UR'（ウルトラレア）。
+// 選択肢に出現する確率の重みに使う（getSpecialSkillRarityWeightsForCurrentDraw参照）
 const specialSkills = [
-  { id: 'dual-shot', name: 'マルチタスクA', description: 'レベルごとに同時発射する弾が1発増える。追加の弾は正面から±20度以内のランダムな方向へ飛ぶ', maxLevel: 1 },
   {
-    id: 'dual-shot-b', name: 'マルチタスクB',
+    id: 'dual-shot', name: 'マルチタスクA', rarity: 'R',
+    description: 'レベルごとに同時発射する弾が1発増える。追加の弾は正面から±20度以内のランダムな方向へ飛ぶ', maxLevel: 1
+  },
+  {
+    id: 'dual-shot-b', name: 'マルチタスクB', rarity: 'R',
     description: '正面と、そこから90度ずつ回転させた計4方向に同時発射する（各弾の飛距離は単発時の80%）。マルチタスクAとは同時に習得できない',
     maxLevel: 1
   },
-  { id: 'speed-up', name: 'フットワーク', description: '移動速度が上がる（Lv1:1.1倍 → Lv5:2.0倍）', maxLevel: 5 },
-  { id: 'fatigue-save', name: '脳疲労耐性', description: '時間経過による脳疲労の蓄積を軽減する（Lv1:-35% → Lv5:-50%）', maxLevel: 5 },
-  { id: 'rapid-fire', name: '処理速度A', description: '発射間隔を短縮する（Lv1:当初の75% → Lv5:当初の30%）', maxLevel: 5 },
-  { id: 'high-speed-bullet', name: '処理速度B', description: '弾の速度を上げる（Lv1:当初の140% → Lv5:当初の300%）', maxLevel: 5 },
-  { id: 'short-sleeper', name: 'パワーナップ', description: '行動不能（stun）時間を半分にする', maxLevel: 1 },
-  { id: 'learning-power', name: '理解力', description: 'EXP獲得量を上げる（Lv1:当初の130% → Lv5:当初の200%）', maxLevel: 5 },
-  { id: 'business-manner', name: 'ビジネスマナー', description: '印象が良く、敵接触時のスコア減点を軽減（Lv1:-30% → Lv5:-50%）。同僚の寿命減少-10%', maxLevel: 5 },
-  { id: 'communication', name: 'コミュニケーション能力', description: '同僚の弾をパリィした時、または同僚が自機の弾をパリィした時、関係性がレベルごとにさらに+2上がる', maxLevel: 5 },
+  { id: 'speed-up', name: 'フットワーク', rarity: 'C', description: '移動速度が上がる（Lv1:1.1倍 → Lv5:2.0倍）', maxLevel: 5 },
+  { id: 'fatigue-save', name: '脳疲労耐性', rarity: 'C', description: '時間経過による脳疲労の蓄積を軽減する（Lv1:-35% → Lv5:-50%）', maxLevel: 5 },
+  { id: 'rapid-fire', name: '処理速度A', rarity: 'C', description: '発射間隔を短縮する（Lv1:当初の75% → Lv5:当初の30%）', maxLevel: 5 },
+  { id: 'high-speed-bullet', name: '処理速度B', rarity: 'C', description: '弾の速度を上げる（Lv1:当初の140% → Lv5:当初の300%）', maxLevel: 5 },
+  { id: 'idea-power', name: '発想力', rarity: 'C', description: '特殊スキル選択時のリロール可能回数が、レベルごとに+3される（Lv1:+3 → Lv5:+15）', maxLevel: 5 },
+  { id: 'short-sleeper', name: 'パワーナップ', rarity: 'R', description: '行動不能（stun）時間を半分にする', maxLevel: 1 },
+  { id: 'learning-power', name: '理解力', rarity: 'C', description: 'EXP獲得量を上げる（Lv1:当初の130% → Lv5:当初の200%）', maxLevel: 5 },
+  { id: 'business-manner', name: 'ビジネスマナー', rarity: 'C', description: '印象が良く、敵接触時のスコア減点を軽減（Lv1:-30% → Lv5:-50%）。同僚の寿命減少-10%', maxLevel: 5 },
   {
-    id: 'network-specialist', name: 'ネットワークスペシャリスト',
+    id: 'communication', name: 'コミュニケーション能力', rarity: 'R',
+    description: '同僚の弾をパリィした時、または同僚が自機の弾をパリィした時、関係性がレベルごとにさらに+2上がる', maxLevel: 5
+  },
+  {
+    id: 'network-specialist', name: 'ネットワークスペシャリスト', rarity: 'SR',
     description: '弾が画面端でレベルごとに1回多く跳ね返る。画面端で反射した自弾（1回目以降すべて）は、自機がパリィ（オートパリィ含む）で打ち直せ、同僚が自動でパリィする確率も2倍になる',
     maxLevel: 3
   },
-  { id: 'teamwork', name: 'チームワーク', description: '自分と同僚、お互いの弾が着弾しそうな時（敵からの弾を除く）、お互いパリィが発動しやすくなる（Lv5で発動率80%）', maxLevel: 5 },
-  { id: 'meal-foresight', name: '食通', description: '昼食に登場する料理に、出現する順番の番号が表示されるようになる（習得は1回のみ）', maxLevel: 1 },
-  { id: 'auto-parry', name: 'オートパリィ', description: '敵（ラスボス・中ボス・固定敵）からの弾を被弾しそうな時、レベルごとに10%の確率で自動的にパリィする（Lv5で50%）', maxLevel: 5 },
-  { id: 'lightsaber', name: 'ライトセーバー', description: '自機のパリィの効果範囲が1.2倍になる', maxLevel: 1 },
-  { id: 'persistence', name: '継続力', description: '自機の弾の飛距離が、レベルごとに1.4倍になる（Lv1:1.4倍 → Lv5:約5.38倍）', maxLevel: 5 },
   {
-    id: 'encourage-a', name: '激励A',
+    id: 'teamwork', name: 'チームワーク', rarity: 'R',
+    description: '自分と同僚、お互いの弾が着弾しそうな時（敵からの弾を除く）、お互いパリィが発動しやすくなる（Lv5で発動率80%）', maxLevel: 5
+  },
+  { id: 'meal-foresight', name: '食通', rarity: 'C', description: '昼食に登場する料理に、出現する順番の番号が表示されるようになる（習得は1回のみ）', maxLevel: 1 },
+  {
+    id: 'auto-parry', name: 'オートパリィ', rarity: 'R',
+    description: '敵（ラスボス・中ボス・固定敵）からの弾を被弾しそうな時、レベルごとに10%の確率で自動的にパリィする（Lv5で50%）', maxLevel: 5
+  },
+  {
+    id: 'lightsaber', name: 'ライトセーバー', rarity: 'SR',
+    description: '自機のパリィの効果範囲が1.2倍になる。パリィの直接攻撃ダメージが3倍になる。「闇を切り裂く剣」とは同時に習得できない',
+    maxLevel: 1
+  },
+  {
+    id: 'dark-cleaving-sword', name: '闇を切り裂く剣', rarity: 'UR',
+    description: 'ライトセーバーの上位互換。自機のパリィの効果範囲が3倍になる。パリィの直接攻撃ダメージが10倍になる（ライトセーバーは3倍）。専用の禍々しい紫の刃で演出される。' +
+      '例外として、ノーマルルート終了時の負けイベント戦闘でも、本来決して破壊できない発射口を、パリィで打ち返した弾を3回当てるか、パリィの直接攻撃（ワイプ範囲）を3回当てることで破壊でき、撃破すれば目覚めエンドに至れる。「ライトセーバー」とは同時に習得できない',
+    maxLevel: 1
+  },
+  {
+    id: 'persistence', name: '継続力', rarity: 'R',
+    description: '自機の弾の飛距離が、レベルごとに1.4倍になる（Lv1:1.4倍 → Lv5:約5.38倍）', maxLevel: 5
+  },
+  {
+    id: 'encourage-a', name: '激励A', rarity: 'C',
     description: '同僚からの弾を被弾すると脳疲労が減少する（ゲーム内3時間に1回まで。Lv1:-10 → Lv2:-15 → Lv3:-25、Lv3ではさらに被弾してもSAN値が低下しなくなる）',
     maxLevel: 3
   },
   {
-    id: 'encourage-b', name: '激励B',
+    id: 'encourage-b', name: '激励B', rarity: 'C',
     description: '自機からの弾を同僚が被弾すると、同僚のSAN・寿命が回復し脳疲労が0になる（ゲーム内3時間に1回まで。Lv1:+5 → Lv2:+10 → Lv3:+20、Lv3ではさらに被弾してもSAN値が低下しなくなる）',
     maxLevel: 3
+  },
+  {
+    id: 'worker-high', name: 'ワーカーズハイ', rarity: 'SR',
+    description: '脳疲労が即座に0になり、以後一切蓄積しなくなる', maxLevel: 1
   }
 ];
 
 // 同時に習得できない組み合わせ（片方を取ると、もう片方は未取得の状態に戻り、再度選択肢に表示されるようになる）
 const mutuallyExclusiveSkillIds = {
   'dual-shot': 'dual-shot-b',
+  'lightsaber': 'dark-cleaving-sword',
+  'dark-cleaving-sword': 'lightsaber',
   'dual-shot-b': 'dual-shot'
 };
 
@@ -3627,8 +3688,20 @@ function applySkillEffectForLevel(skillId, level) {
       specialSkillEffects.bulletDistanceMultiplier = Math.pow(1.4, level);
       break;
     case 'lightsaber':
-      // ライトセーバー：自機のパリィ効果範囲が1.2倍になる（以前の2倍の60%）
+      // ライトセーバー：自機のパリィ効果範囲が1.2倍、直接攻撃ダメージが3倍になる
       specialSkillEffects.deflectRangeMultiplier = 1.2;
+      specialSkillEffects.parryDirectDamageMultiplier = 3;
+      break;
+    case 'dark-cleaving-sword':
+      // 闇を切り裂く剣：ライトセーバーの上位互換。効果範囲が3倍、直接攻撃ダメージが10倍になる。
+      // さらに、ノーマルルート終了時の負けイベント戦闘で本来破壊できない発射口も、パリィ3回で破壊できるようにする
+      specialSkillEffects.deflectRangeMultiplier = 3;
+      specialSkillEffects.parryDirectDamageMultiplier = 10;
+      specialSkillEffects.darkSwordBreaksIndestructibleHoles = true;
+      break;
+    case 'worker-high':
+      // ワーカーズハイ：脳疲労が常に0のまま、一切蓄積しなくなる
+      specialSkillEffects.fatigueLocked = true;
       break;
   }
 }
@@ -3650,14 +3723,20 @@ const specialSkillSelectionLockDurationMs = 1000; // 表示直後の連続タッ
 let specialSkillSelectionUnlockAt = 0; // この時刻（Date.now()基準）を過ぎるまで選択を受け付けない
 const specialSkillMaxRerolls = 3; // 1回のプレイ（ゲーム開始～終了）を通して選び直せる合計回数。選択のたびに回復はしない
 let specialSkillRerollsRemaining = specialSkillMaxRerolls;
+const ideaPowerRerollBonusPerLevel = 3; // 特殊スキル「発想力」：レベルごとに、リロール可能回数がこの数だけ増える
 // 完全オートモード中、選択画面が表示されてからこの時間クリックがなければ、ランダムに1つ選んだ扱いにする
 const specialSkillSelectionAutoPickDelayMs = 3000;
 let specialSkillSelectionAutoPickAt = 0;
 
-// 取得済みスキルも候補に含め、再取得するとレベルアップできる（ただしmaxLevelに達したスキルは除外する）
+// 取得済みスキルも候補に含め、再取得するとレベルアップできる（ただしmaxLevelに達したスキルは除外する）。
+// マルチタスクA/Bのように同時に習得できない組み合わせは、片方を取得済みの間はもう片方を候補から除外する
 function getAvailableSpecialSkillsPool() {
-  return specialSkills.filter(skill =>
-    !(skill.maxLevel && (specialSkillLevels.get(skill.id) || 0) >= skill.maxLevel));
+  return specialSkills.filter(skill => {
+    if (skill.maxLevel && (specialSkillLevels.get(skill.id) || 0) >= skill.maxLevel) return false;
+    const exclusiveWithId = mutuallyExclusiveSkillIds[skill.id];
+    if (exclusiveWithId && (specialSkillLevels.get(exclusiveWithId) || 0) > 0) return false;
+    return true;
+  });
 }
 
 // Fisher-Yates法で配列をシャッフルした新しい配列を返す（元の配列は変更しない）
@@ -3670,8 +3749,44 @@ function shuffleArray(array) {
   return result;
 }
 
+// レアリティ別の出現確率（%、合計100）。C=普通・R=レア・SR=スーパーレア・UR=ウルトラレア
+const specialSkillRarityWeightPercent = { C: 65, R: 25, SR: 8, UR: 2 };
+
+// 候補プール内のスキルそれぞれに、レアリティ内で均等分配した重みを付ける
+// （例：Cの合計65%を、候補プール中のC枠スキル数で均等に割る。maxLevel到達等で候補から外れているスキルは無視する）
+function getWeightedSpecialSkillEntries(pool) {
+  const countByRarity = {};
+  pool.forEach(skill => {
+    const rarity = skill.rarity || 'C';
+    countByRarity[rarity] = (countByRarity[rarity] || 0) + 1;
+  });
+  return pool.map(skill => {
+    const rarity = skill.rarity || 'C';
+    const tierWeight = specialSkillRarityWeightPercent[rarity] ?? specialSkillRarityWeightPercent.C;
+    return { skill, weight: tierWeight / countByRarity[rarity] };
+  });
+}
+
+// レアリティの重みに応じて、指定件数ぶんユニークなスキルを重複なく抽選する
+function pickWeightedUniqueSkills(pool, count) {
+  const entries = getWeightedSpecialSkillEntries(pool);
+  const picked = [];
+  while (picked.length < count && entries.length > 0) {
+    const totalWeight = entries.reduce((sum, entry) => sum + entry.weight, 0);
+    let roll = Math.random() * totalWeight;
+    let pickedIndex = entries.length - 1;
+    for (let i = 0; i < entries.length; i++) {
+      roll -= entries[i].weight;
+      if (roll <= 0) { pickedIndex = i; break; }
+    }
+    picked.push(entries[pickedIndex].skill);
+    entries.splice(pickedIndex, 1);
+  }
+  return picked;
+}
+
 function openSpecialSkillSelection(title) {
-  specialSkillChoices = shuffleArray(getAvailableSpecialSkillsPool()).slice(0, 3);
+  specialSkillChoices = pickWeightedUniqueSkills(getAvailableSpecialSkillsPool(), 3);
   specialSkillSelectionTitle = title;
   specialSkillSelectionActive = true;
   specialSkillSelectionUnlockAt = Date.now() + specialSkillSelectionLockDurationMs;
@@ -3683,7 +3798,7 @@ function openSpecialSkillSelection(title) {
 function rerollSpecialSkillChoices() {
   if (Date.now() < specialSkillSelectionUnlockAt || specialSkillRerollsRemaining <= 0) return;
   specialSkillRerollsRemaining--;
-  specialSkillChoices = shuffleArray(getAvailableSpecialSkillsPool()).slice(0, 3);
+  specialSkillChoices = pickWeightedUniqueSkills(getAvailableSpecialSkillsPool(), 3);
 }
 
 function chooseSpecialSkill(choiceIndex) {
@@ -3697,9 +3812,11 @@ function chooseSpecialSkill(choiceIndex) {
     ? Math.min(skill.maxLevel, (specialSkillLevels.get(skill.id) || 0) + 1)
     : (specialSkillLevels.get(skill.id) || 0) + 1;
   specialSkillLevels.set(skill.id, newSkillLevel);
-  // 同時に習得できないスキル（マルチタスクA/B）：片方を取ったら、もう片方は未取得の状態に戻す
+  // 同時に習得できないスキル（マルチタスクA/B、ライトセーバー/闇を切り裂く剣）：片方を取ったら、もう片方は未取得の状態に戻す
   const exclusiveWithId = mutuallyExclusiveSkillIds[skill.id];
   if (exclusiveWithId) specialSkillLevels.delete(exclusiveWithId);
+  // 発想力：レベルが1つ上がるたびに、リロール可能回数がその場で+3される
+  if (skill.id === 'idea-power') specialSkillRerollsRemaining += ideaPowerRerollBonusPerLevel;
   recomputeSpecialSkillEffects();
   recordSkillAcquiredForStats(`${skill.name} Lv.${newSkillLevel}`);
   showMessage(
@@ -4554,6 +4671,9 @@ function applyDreamMemoryUpgradesForNewGame() {
     if (preLevel > 0) specialSkillLevels.set(skill.id, preLevel);
   });
   recomputeSpecialSkillEffects();
+  // 発想力を事前レベルアップしていた場合、その分のリロール可能回数をDAY1から反映する
+  specialSkillRerollsRemaining = specialSkillMaxRerolls +
+    (specialSkillLevels.get('idea-power') || 0) * ideaPowerRerollBonusPerLevel;
 }
 
 // 性別・アイコンの選択が完了した時点で、実際にゲームを開始する
@@ -5850,10 +5970,30 @@ function finalizeBossHoleDestruction(hole) {
   }
 }
 
-// 発射口に命中した弾を処理する。破壊しきい値に達したら穴を破壊する
-function registerBossHoleHit(hole, hitX, hitY) {
-  // ノーマルルート終了時の負けイベント戦闘：発射口は決して破壊できない（当たった見た目だけ出す）
+// 闇を切り裂く剣：ノーマルルート終了時の負けイベント戦闘でも、パリィ（反射弾・直接攻撃どちらも）を
+// この回数当てれば例外的に発射口を破壊できる
+const darkCleavingSwordIndestructibleHoleParryHits = 3;
+// 本来破壊できない発射口に、闇を切り裂く剣によるパリィ攻撃（反射弾・直接攻撃どちらも）が命中した時の共通処理
+function registerDarkSwordHitOnIndestructibleHole(hole, hitX, hitY) {
+  hole.darkSwordParryHits = (hole.darkSwordParryHits || 0) + 1;
+  hole.flashTimerMs = bossHoleFlashDurationMs;
+  const willBreak = hole.darkSwordParryHits >= darkCleavingSwordIndestructibleHoleParryHits;
+  spawnHitSpark(hitX, hitY, willBreak);
+  if (willBreak) {
+    showMessage('闇を切り裂く剣が、決して破れないはずの装甲を貫いた！', 2200, '#b388ff', '22px sans-serif');
+    finalizeBossHoleDestruction(hole);
+  }
+}
+// 発射口に命中した弾を処理する。破壊しきい値に達したら穴を破壊する。
+// isParryHit：パリィで打ち返した弾（owner === 'deflected'）による命中かどうか
+function registerBossHoleHit(hole, hitX, hitY, isParryHit = false) {
+  // ノーマルルート終了時の負けイベント戦闘：発射口は本来決して破壊できない（当たった見た目だけ出す）が、
+  // 特殊スキル「闇を切り裂く剣」習得中は例外的に、パリィで打ち返した弾を規定回数当てると破壊できる
   if (hole.indestructible) {
+    if (isParryHit && specialSkillEffects.darkSwordBreaksIndestructibleHoles) {
+      registerDarkSwordHitOnIndestructibleHole(hole, hitX, hitY);
+      return;
+    }
     hole.flashTimerMs = bossHoleFlashDurationMs;
     spawnHitSpark(hitX, hitY, false);
     return;
@@ -6843,7 +6983,7 @@ function damagePartnerByMidBossBullet() {
 
 // ===== パリィ（バットのように、タイミングよく振ると同僚弾を最寄りの敵へ打ち返す） =====
 const deflectRangeBase = 90; // これより近くにある同僚弾だけをパリィできる（やや緩めの判定）
-// 特殊スキル「ライトセーバー」習得時は、自機のパリィ効果範囲が1.2倍になる
+// 特殊スキル「ライトセーバー」（1.2倍）「闇を切り裂く剣」（2倍）習得時は、自機のパリィ効果範囲が広がる
 function getDeflectRange() {
   return deflectRangeBase * specialSkillEffects.deflectRangeMultiplier;
 }
@@ -6859,14 +6999,12 @@ function getParryOriginY() {
 let partnerParryChance = Math.min(1, 0.3 + dreamMemorySave.upgrades.partnerAutoParry * 0.14); // ゲーム開始時にapplyDreamMemoryUpgradesForNewGameで再計算
 const deflectDamageMultiplier = 2; // パリィした弾は通常の2倍のダメージになる
 // パリィによる直接攻撃：パリィの効果範囲に敵本体の判定範囲が重なっている場合、直接ダメージを与える。
-// ライトセーバー習得中は、この直接攻撃のダメージが通常の3倍になる
+// ライトセーバー／闇を切り裂く剣習得中は、specialSkillEffects.parryDirectDamageMultiplierぶんダメージが増える
 const parryDirectDamage = 2;
-const lightsaberParryDirectDamageMultiplier = 3;
 function damageEnemyDirectByParry(en) {
   updateSkillEffects();
   const damageBonus = 1 + skillLevel * 0.08;
-  const lightsaberBonus = specialSkillEffects.deflectRangeMultiplier > 1 ? lightsaberParryDirectDamageMultiplier : 1;
-  const actualDmg = Math.max(1, Math.round(parryDirectDamage * damageBonus * lightsaberBonus));
+  const actualDmg = Math.max(1, Math.round(parryDirectDamage * damageBonus * specialSkillEffects.parryDirectDamageMultiplier));
   // パリィの直接攻撃で敵にダメージを与えた時も、弾を発射したのと同様に「攻撃した」扱いにする
   // （サボり判定で同僚に「仕事してください」と言われないようにする）
   lastFire = gameClockMs;
@@ -6891,7 +7029,7 @@ function damageEnemyDirectByParry(en) {
 }
 function attemptDeflectPartnerBullet() {
   if (stunned) return;
-  // ライトセーバー習得中は専用エフェクトのみを表示し、通常の斬撃ワイプエフェクトは出さない
+  // ライトセーバー／闇を切り裂く剣習得中は専用エフェクトのみを表示し、通常の斬撃ワイプエフェクトは出さない
   if (specialSkillEffects.deflectRangeMultiplier > 1) {
     spawnLightsaberBladeEffectIfActive();
   } else {
@@ -6909,7 +7047,15 @@ function attemptDeflectPartnerBullet() {
   // パリィの効果範囲に本体が重なっている敵は、弾の有無に関わらず直接攻撃の対象にする。
   // 同僚（partner）はenemies配列に含まれないため、直接攻撃の対象には含まれない（同僚弾のはじき返しのみ引き続き有効）
   const meleeTargets = enemies.filter(en => en !== partner && Math.hypot(en.x - player.x, en.y - getParryOriginY()) <= getDeflectRange() + en.radius);
-  if (targets.length === 0 && meleeTargets.length === 0) return;
+  // 闇を切り裂く剣：ノーマルルート終了時の負けイベント戦闘中は、パリィの直接攻撃（ワイプ範囲）が
+  // 本来破壊できない発射口にも届き、反射弾と同様に規定回数当てれば破壊できる
+  const meleeHoleTargets = (bossEvent && specialSkillEffects.darkSwordBreaksIndestructibleHoles)
+    ? bossEvent.holes
+        .filter(hole => !hole.destroyed && hole.indestructible)
+        .map(hole => ({ hole, pos: getBossHoleAbsolutePosition(hole) }))
+        .filter(({ pos }) => Math.hypot(pos.x - player.x, pos.y - getParryOriginY()) <= getDeflectRange() + bossHoleRadius)
+    : [];
+  if (targets.length === 0 && meleeTargets.length === 0 && meleeHoleTargets.length === 0) return;
 
   // パリィ（弾のはじき返し、または直接攻撃）に成功した時だけ、脳疲労が1蓄積する
   applyFatigueGain(fatigueParryGain);
@@ -6917,9 +7063,11 @@ function attemptDeflectPartnerBullet() {
     performBulletParry(target, player.x, player.y, player.angle);
   }
   meleeTargets.forEach(en => damageEnemyDirectByParry(en));
+  meleeHoleTargets.forEach(({ hole, pos }) => registerDarkSwordHitOnIndestructibleHole(hole, pos.x, pos.y));
   const messageParts = [];
   if (targets.length > 0) messageParts.push(targets.length > 1 ? `弾${targets.length}発` : '弾');
   if (meleeTargets.length > 0) messageParts.push(meleeTargets.length > 1 ? `敵${meleeTargets.length}体` : '敵');
+  if (meleeHoleTargets.length > 0) messageParts.push(meleeHoleTargets.length > 1 ? `発射口${meleeHoleTargets.length}箇所` : '発射口');
   showMessage(`パリィ成功！（${messageParts.join('・')}）`, 1400, '#fff176');
 }
 
@@ -8428,7 +8576,7 @@ function update() {
           continue;
         }
         if (b.owner === 'deflected') lastFire = now;
-        registerBossHoleHit(hitHole, b.x, b.y);
+        registerBossHoleHit(hitHole, b.x, b.y, b.owner === 'deflected');
         bullets.splice(i, 1);
         continue;
       }
@@ -8503,8 +8651,10 @@ function update() {
 
   // 疲労値が0～最大値の範囲を超えないようにする
   fatigue = Math.max(0, Math.min(maxFatigue, fatigue));
-  // 「無敵（テスト用）」「β版設定」「ワーカホリック」：脳疲労を常に0のままにする
-  if (isTestInvincibleUpgradeActive() || dreamMemorySave.upgrades.workaholic >= 1) fatigue = 0;
+  // 「無敵（テスト用）」「β版設定」「特殊スキル『ワーカーズハイ』」：脳疲労を常に0のままにする
+  if (isTestInvincibleUpgradeActive() || specialSkillEffects.fatigueLocked) fatigue = 0;
+  // 夢の記憶ポイント「ワーカホリック」：脳疲労を定期的に軽減する
+  updateWorkaholicFatigueReduction(dt);
 
   // 脳疲労が高い状態・SANが低い状態が一定時間続くと、寿命が少しずつ削れていく
   if (fatigue >= maxFatigue * highFatigueThresholdRatio) {
@@ -11369,8 +11519,8 @@ function draw() {
   // 「ファイヤーウォール」の効果が残っている間、自機の周りにバリアを表示する
   drawBarrierShield(player.x, player.y, player.radius, playerBarrierCharges);
 
-  // 特殊スキル「ライトセーバー」：パリィした瞬間、自機を一端とする光る棒が、自機の向きを中心に
-  // 270度ワイプするエフェクトを描く（斬撃ワイプエフェクトと同じ配色。棒の長さ＝パリィの効果範囲）。
+  // 特殊スキル「ライトセーバー」「闇を切り裂く剣」：パリィした瞬間、自機を一端とする光る棒が、
+  // 自機の向きを中心に270度ワイプするエフェクトを描く（棒の長さ＝パリィの効果範囲）。
   // 自機アイコンより先に描くことで、自機の裏を通るように見せる。少し前の角度もうっすら重ねて残像を表現する
   if (lightsaberEffect) {
     const progress = 1 - lightsaberEffect.timer / lightsaberEffectDurationMs;
@@ -11378,6 +11528,9 @@ function draw() {
     const fadeAlpha = progress < 0.6 ? 1 : Math.max(0, 1 - (progress - 0.6) / 0.4); // 60%を過ぎたらフェードアウト
     const trailCount = 5;
     const trailStepProgress = 0.05; // 残像1本ごとに遡る、スイング進行度（0〜1）の量
+    // 「闇を切り裂く剣」は禍々しい紫、通常の「ライトセーバー」は水色の刃にする
+    const outerColor = lightsaberEffect.isDarkBlade ? '#b388ff' : '#e0f7fa';
+    const glowColor = lightsaberEffect.isDarkBlade ? '#4a148c' : '#80deea';
     ctx.save();
     ctx.lineCap = 'round';
     for (let i = trailCount; i >= 0; i--) {
@@ -11390,9 +11543,9 @@ function draw() {
       // 一番新しい（i=0）ものだけくっきり、古い残像ほど薄くする
       const trailAlpha = fadeAlpha * (i === 0 ? 1 : (1 - i / (trailCount + 1)) * 0.55);
       ctx.globalAlpha = trailAlpha;
-      ctx.strokeStyle = '#e0f7fa';
+      ctx.strokeStyle = outerColor;
       ctx.lineWidth = 7;
-      ctx.shadowColor = '#80deea';
+      ctx.shadowColor = glowColor;
       ctx.shadowBlur = 16;
       ctx.beginPath();
       ctx.moveTo(lightsaberEffect.x, lightsaberEffect.y);
@@ -12652,16 +12805,36 @@ function draw() {
     const cardGap = 14;
     ctx.font = descFont;
     let cardY = 128;
+    // レアリティごとのカード配色（C=普通・R=レア・SR=スーパーレア・UR=ウルトラレア）
+    const rarityCardStyle = {
+      C: { fill: 'rgba(96, 125, 139, 0.40)', stroke: '#90a4ae', badge: '#cfd8dc', glow: 0 },
+      R: { fill: 'rgba(103, 58, 183, 0.45)', stroke: '#ce93d8', badge: '#ce93d8', glow: 0 },
+      SR: { fill: 'rgba(255, 179, 0, 0.30)', stroke: '#ffd54f', badge: '#ffd54f', glow: 14 },
+      UR: { fill: 'rgba(233, 30, 99, 0.30)', stroke: '#ff4081', badge: '#ff80ab', glow: 20 }
+    };
     specialSkillChoices.forEach((skill, index) => {
       const descLines = wrapTextToWidth(skill.description, cardWidth - 44);
       const cardHeight = Math.max(95, cardTextTop + descLines.length * descLineHeight + cardPaddingBottom);
       const currentSkillLevel = specialSkillLevels.get(skill.id) || 0;
+      const style = rarityCardStyle[skill.rarity] || rarityCardStyle.C;
 
-      ctx.fillStyle = 'rgba(103, 58, 183, 0.45)';
+      ctx.save();
+      if (style.glow > 0) {
+        ctx.shadowColor = style.stroke;
+        ctx.shadowBlur = style.glow;
+      }
+      ctx.fillStyle = style.fill;
       ctx.fillRect(cardX, cardY, cardWidth, cardHeight);
-      ctx.strokeStyle = '#ce93d8';
+      ctx.strokeStyle = style.stroke;
       ctx.lineWidth = 2;
       ctx.strokeRect(cardX, cardY, cardWidth, cardHeight);
+      ctx.restore();
+
+      // レアリティのバッジ（カード右上）
+      ctx.textAlign = 'right';
+      ctx.fillStyle = style.badge;
+      ctx.font = 'bold 16px sans-serif';
+      ctx.fillText(skill.rarity || 'C', cardX + cardWidth - 14, cardY + 24);
 
       ctx.textAlign = 'left';
       ctx.fillStyle = 'white';
