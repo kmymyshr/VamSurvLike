@@ -6377,6 +6377,8 @@ function pickWakeUpLineForHour(hour) {
 }
 // 真エンド（同僚生存）限定：ENDの後、現実の日時を表示する画面 →（クリックで）クリアメッセージ画面 → タイトルへ
 const bossClearMessageFadeMs = 1200;
+// クリアメッセージは、クリックしなくてもこの時間が経てば自動的にフェードアウトしてタイトルへ進む
+const bossClearMessageShownDurationMs = 3000;
 const bossClearMessageLines = [
   'クリアおめでとうございます。'
   ];
@@ -6686,10 +6688,14 @@ function updateBossFinalSequence(dt) {
   } else if (seq.phase === 'clearMessageFadeIn' && seq.phaseTimerMs >= bossClearMessageFadeMs) {
     seq.phase = 'clearMessageShown';
     seq.phaseTimerMs = 0;
+  } else if (seq.phase === 'clearMessageShown' && seq.phaseTimerMs >= bossClearMessageShownDurationMs) {
+    // クリックしなくても、表示から一定時間経てば自動的にフェードアウトしてタイトルへ進む
+    seq.phase = 'clearMessageFadeOut';
+    seq.phaseTimerMs = 0;
   } else if (seq.phase === 'clearMessageFadeOut' && seq.phaseTimerMs >= bossClearMessageFadeMs) {
     finishBossTrueEnd();
   }
-  // 'realWorldTime'・'clearMessageShown' はクリック待ちのため、ここでは時間経過だけでは進行しない
+  // 'realWorldTime' はクリック待ちのため、ここでは時間経過だけでは進行しない
 }
 
 // 真エンドに到達したので、クリア済フラグと役職・Scoreの引き継ぎを保存してタイトルへ戻る。
@@ -9387,7 +9393,10 @@ function updateNightmareAgainSequence(rawDt) {
     seq.phase = 'blackout';
     seq.phaseTimerMs = 0;
   } else if (seq.phase === 'blackout' && seq.phaseTimerMs >= nightmareAgainBlackoutHoldDurationMs) {
-    nightmareAgainSequence = null;
+    // location.reload()は即座には反映されないため、ここでnullに戻すと再読み込みが完了するまでの
+    // 一瞬、裏で止まっていた戦闘画面がそのまま描画されてしまう。真っ黒な状態を維持したまま
+    // 再読み込みを待つ専用フェーズに切り替え、update・draw双方がこのまま黒画面を描き続けるようにする
+    seq.phase = 'reloading';
     // 再読み込み後の最初のタイトル表示だけ、黒からフェードインさせる
     try { sessionStorage.setItem('vamSurvLike_titleFadeIn', '1'); } catch (e) {}
     location.reload();
@@ -9411,8 +9420,8 @@ function drawNightmareAgainSequence() {
   ctx.fillStyle = '#000000';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // 暗転フェーズ（blackout）では、画像は描かず即座に真っ黒のまま待つ
-  if (seq.phase === 'blackout') return;
+  // 暗転フェーズ（blackout）・再読み込み待ち（reloading）では、画像は描かず即座に真っ黒のまま待つ
+  if (seq.phase === 'blackout' || seq.phase === 'reloading') return;
 
   const img = nightmareAgainImage;
   if (img.complete && img.naturalWidth > 0) {
@@ -10180,7 +10189,7 @@ function drawRealWorldTimeScreen() {
   ctx.restore();
 }
 
-// 真エンド（同僚生存）限定：最後のクリアメッセージ（フェードイン→表示→クリックでフェードアウト→タイトルへ）
+// 真エンド（同僚生存）限定：最後のクリアメッセージ（フェードイン→表示→一定時間後に自動でフェードアウト→タイトルへ）
 function drawClearMessageScreen(seq) {
   let alpha = 1;
   if (seq.phase === 'clearMessageFadeIn') {
@@ -10197,15 +10206,6 @@ function drawClearMessageScreen(seq) {
     ctx.fillText(line, canvas.width / 2, canvas.height / 2 - 20 + i * 44);
   });
   ctx.restore();
-
-  if (seq.phase === 'clearMessageShown') {
-    ctx.save();
-    ctx.textAlign = 'center';
-    ctx.font = '15px sans-serif';
-    ctx.fillStyle = '#888888';
-    ctx.fillText('クリックしてタイトルへ', canvas.width / 2, canvas.height / 2 + 100);
-    ctx.restore();
-  }
 }
 
 // 中ボス「大規模プロジェクト」の見た目を描く（正式な画像を用意するまでの仮の矩形）
