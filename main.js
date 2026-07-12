@@ -1285,7 +1285,9 @@ function getNonOverlappingEventPosition(radius, minGap = 70) {
 // --- 定時報告：3日ごとの16時に現れる、移動しない高耐久ターゲット ---
 const scheduledReportIntervalDays = 3;
 const scheduledReportHour = 16;
-const scheduledReportBaseHp = 45; // 倒しやすいよう引き下げ
+// 固定敵（HPは同じ日数倍率でdef.hpBase×durabilityMultiplier(=3)まで育つ）と比べて明らかに脆すぎたため、
+// 単体の固定敵の平均的な耐久力に並ぶ水準まで引き上げた
+const scheduledReportBaseHp = 90;
 const scheduledReportRadius = 38;
 let scheduledReport = null;
 
@@ -1827,8 +1829,9 @@ function updateFixedEnemyDecoy(fx, dt) {
       fx.decoy = { x: dp.x, y: dp.y, radius: decoyRadius };
     }
   } else if (Math.hypot(player.x - fx.decoy.x, player.y - fx.decoy.y) <= player.radius + fx.decoy.radius) {
-    damageSan(decoyBaseSanDamage);
-    fatigue = Math.min(maxFatigue, fatigue + decoyBaseFatigueDamage);
+    // 弾ダメージと同様、日数に応じて成長させる
+    damageSan(decoyBaseSanDamage * getEnemyDifficultyMultiplier());
+    fatigue = Math.min(maxFatigue, fatigue + decoyBaseFatigueDamage * getEnemyDifficultyMultiplier());
     applyFixedEnemyEffect(def.effect, 'player');
     showMessage(`${def.name} の罠だった…`, 1800, '#ff8a80');
     fx.decoy = null;
@@ -6255,8 +6258,10 @@ function damagePlayerByFixedEnemyBullet(bullet) {
     friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
     return;
   }
-  const sanDmg = def ? def.bulletSan : 8; // バックドア設置の不意打ちなど、定義が見当たらない場合の既定値
-  const lifespanDmg = def ? (def.bulletLifespan || 1) : 2;
+  // 雑魚敵の接触ダメージ・固定敵自身のHPは日数に応じて成長するのに、この攻撃力だけ据え置きだったため、
+  // 同じgetEnemyDifficultyMultiplier()を掛けて終盤も脅威であり続けるようにする
+  const sanDmg = (def ? def.bulletSan : 8) * getEnemyDifficultyMultiplier(); // バックドア設置の不意打ちなど、定義が見当たらない場合の既定値
+  const lifespanDmg = (def ? (def.bulletLifespan || 1) : 2) * getEnemyDifficultyMultiplier();
   san = Math.max(0, san - sanDmg * specialSkillEffects.sanDamageMultiplier * getLunchBuffDamageTakenMultiplier());
   lifespan = Math.max(0, lifespan - lifespanDmg * getLunchBuffDamageTakenMultiplier());
   friendlyFireInvincibleTimer = friendlyFireInvincibleDuration;
@@ -7415,12 +7420,13 @@ function isInCoreGameplayForClickActions() {
 
 // タイトル・エンディング・アドベンチャー（挨拶等の会話シーン）・各種選択画面ではない、
 // 「戦闘画面」として操作パネル（ジョイスティック・ポーズ／パリィ／連射／自動連射ボタン）を表示すべきかどうか。
-// ポーズ中・イベント戦（normalEndSequence）・ラスボス撃破後演出（bossFinalSequence）・確認ダイアログ表示中は
-// いずれも戦闘画面の上に乗る状態なので、引き続き操作パネルを表示する
+// ポーズ中・イベント戦（normalEndSequence）・確認ダイアログ表示中は戦闘画面の上に乗る状態なので、
+// 引き続き操作パネルを表示する。一方、ラスボス撃破後演出（bossFinalSequence、「ふと目を覚ますと」等の
+// エンディング演出）はもう戦闘中ではないため、タイトル・エンディングと同様に操作パネルを隠す
 function isBattleScreenActive() {
   return !startScreen && setupStep === null && !dreamMemoryShopActive &&
     !endingListActive && !memoryStatusActive && !specialSkillSelectionActive && !adventureState && !reunionSceneActive &&
-    iconGreetingPhase === null &&
+    iconGreetingPhase === null && !bossFinalSequence &&
     !gameOver && !gameClear && dayTransitionPhase === null;
 }
 
