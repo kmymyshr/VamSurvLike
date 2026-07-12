@@ -539,7 +539,7 @@ function spawnSlashEffect(x, y, angle, entityRadius) {
   slashEffect = { x, y, angle, radius: entityRadius, timer: slashEffectDurationMs };
 }
 // 「闇を切り裂く剣」限定：ワイプの範囲（ライトセーバー／通常のパリィは270度のまま）
-const darkCleavingSwordRangeRad = (330 * Math.PI) / 180;
+const darkCleavingSwordRangeRad = (300 * Math.PI) / 180;
 
 // ===== 特殊スキル「ライトセーバー」「闇を切り裂く剣」：自機がパリィした瞬間、光る棒（一端は自機）が
 // 自機の向きを中心に270度ワイプするエフェクト =====
