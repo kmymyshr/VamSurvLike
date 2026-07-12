@@ -4277,6 +4277,14 @@ function adjustPartnerRelationship(amount) {
   partner.relationship = Math.max(0, Math.min(partnerRelationshipMax, partner.relationship + amount));
 }
 
+// 第1回・第2回アドベンチャーパートで、2番目の選択肢（距離を置く方）を選んだ時専用。
+// 通常の減少幅（-10）よりずっと重い代償として、その時点の関係性を半分にする
+function halvePartnerRelationshipBySecondChoice() {
+  // 「固い絆」：関係性が低下するイベントを一切無効化する（この選択肢による半減も対象に含める）
+  if (dreamMemorySave.upgrades.unbreakableBond >= 1) return;
+  partner.relationship = Math.floor(partner.relationship / 2);
+}
+
 // 関係性の値を「良好／普通／悪い」の3段階に分類する（再会シーンの5段階のうち、tier1・2=良好／tier3=普通／tier4・5=悪い、と同じ閾値）
 function getRelationshipCategory(relationship) {
   if (relationship >= 60) return 'good';

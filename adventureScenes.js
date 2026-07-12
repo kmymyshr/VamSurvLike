@@ -1,6 +1,6 @@
 // ===== 「同僚と遊ぶ」アドベンチャーパートのシナリオデータ =====
 // main.js より前に読み込まれる、素のスクリプト（グローバル変数として定義する）。
-// ここで使う adjustPartnerRelationship / recordAdv1Choice / recordAdv2Choice /
+// ここで使う adjustPartnerRelationship / halvePartnerRelationshipBySecondChoice / recordAdv1Choice / recordAdv2Choice /
 // markDreamRouteCompleted / routeToRelationshipEnding は main.js 側で定義されるが、
 // 実際に呼ばれるのはプレイ中（main.js 読み込み後）なので問題ない。
 //
@@ -98,7 +98,7 @@ Object.assign(partnerAdventureScenes, { adv1: buildAdvScene('adv1', [
   },
   {
     label: '「あとでいい？ 先にメールだけ返したい」',
-    effects: () => { adjustPartnerRelationship(-10); recordAdv1Choice('B'); },
+    effects: () => { halvePartnerRelationshipBySecondChoice(); recordAdv1Choice('B'); },
     outcomePages: [
       '？？？「あとでいい？ 先にメールだけ返したい」\n' +
       '同僚「はい。わかりました」\n' +
@@ -137,7 +137,7 @@ Object.assign(partnerAdventureScenes, { adv2A: buildAdvScene('adv2A', [
   },
   {
     label: '「先にこっちで案を作るよ」',
-    effects: () => { adjustPartnerRelationship(-10); recordAdv2Choice('D'); },
+    effects: () => { halvePartnerRelationshipBySecondChoice(); recordAdv2Choice('D'); },
     outcomePages: [
       '？？？「先にこっちで案を作るよ。そのほうが早いと思う」\n' +
       '同僚「はい。助かります。でも……」\n' +
@@ -171,7 +171,7 @@ Object.assign(partnerAdventureScenes, { adv2B: buildAdvScene('adv2B', [
   },
   {
     label: '「先に自分で直してから見せる」',
-    effects: () => { adjustPartnerRelationship(-10); recordAdv2Choice('F'); },
+    effects: () => { halvePartnerRelationshipBySecondChoice(); recordAdv2Choice('F'); },
     outcomePages: [
       '？？？「先に自分で直してから見せる」\n' +
       '同僚「……また一人でやるんですね」\n' +
