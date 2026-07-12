@@ -533,7 +533,7 @@ function spawnSlashEffect(x, y, angle, entityRadius) {
 // 回転の中心は自機の中心ではなく、自機アイコンの高さ（player.radius * 4.8）の下から40%の位置
 // （中心よりやや下寄り）にする
 let lightsaberEffect = null; // { x, y, angle, length, timer }
-const lightsaberEffectDurationMs = 480;
+const lightsaberEffectDurationMs = 320;
 function spawnLightsaberBladeEffectIfActive() {
   if (specialSkillEffects.deflectRangeMultiplier <= 1) return;
   const selfImgSize = player.radius * 4.8;
@@ -6843,20 +6843,30 @@ function damagePartnerByMidBossBullet() {
 
 // ===== パリィ（バットのように、タイミングよく振ると同僚弾を最寄りの敵へ打ち返す） =====
 const deflectRangeBase = 90; // これより近くにある同僚弾だけをパリィできる（やや緩めの判定）
-// 特殊スキル「ライトセーバー」習得時は、自機のパリィ効果範囲が2倍になる
+// 特殊スキル「ライトセーバー」習得時は、自機のパリィ効果範囲が1.2倍になる
 function getDeflectRange() {
   return deflectRangeBase * specialSkillEffects.deflectRangeMultiplier;
+}
+// パリィの判定に使う基準Y座標。ライトセーバー習得中は、光る棒の回転中心と同じ、
+// 自機のやや下寄りの点（アイコンの高さの下から40%）を使い、見た目と判定のズレをなくす
+function getParryOriginY() {
+  if (specialSkillEffects.deflectRangeMultiplier <= 1) return player.y;
+  const selfImgSize = player.radius * 4.8;
+  return player.y + selfImgSize * (0.5 - 0.4);
 }
 // 同僚が被弾しそうな時にパリィする確率。デフォルト30%で、夢の記憶ポイントの
 // 「同僚のオートパリィレベル」で最大100%まで強化できる
 let partnerParryChance = Math.min(1, 0.3 + dreamMemorySave.upgrades.partnerAutoParry * 0.14); // ゲーム開始時にapplyDreamMemoryUpgradesForNewGameで再計算
 const deflectDamageMultiplier = 2; // パリィした弾は通常の2倍のダメージになる
-// パリィによる直接攻撃：パリィの効果範囲に敵本体の判定範囲が重なっている場合、直接ダメージを与える
+// パリィによる直接攻撃：パリィの効果範囲に敵本体の判定範囲が重なっている場合、直接ダメージを与える。
+// ライトセーバー習得中は、この直接攻撃のダメージが通常の3倍になる
 const parryDirectDamage = 2;
+const lightsaberParryDirectDamageMultiplier = 3;
 function damageEnemyDirectByParry(en) {
   updateSkillEffects();
   const damageBonus = 1 + skillLevel * 0.08;
-  const actualDmg = Math.max(1, Math.round(parryDirectDamage * damageBonus));
+  const lightsaberBonus = specialSkillEffects.deflectRangeMultiplier > 1 ? lightsaberParryDirectDamageMultiplier : 1;
+  const actualDmg = Math.max(1, Math.round(parryDirectDamage * damageBonus * lightsaberBonus));
   en.hp = (en.hp || 1) - actualDmg;
   spawnHitSpark(en.x, en.y, en.hp <= 0);
   if (en.hp > 0) return;
@@ -6890,12 +6900,12 @@ function attemptDeflectPartnerBullet() {
     const isBouncedOwnBullet = b.owner === 'player' && b.bouncesUsed >= 1;
     if (b.owner !== 'partner' && b.owner !== 'boss' && b.owner !== 'midBoss' &&
         b.owner !== 'fixedEnemy' && b.owner !== 'fixedEnemyDisguise' && b.owner !== 'support' && !isBouncedOwnBullet) return false;
-    const d = Math.hypot(b.x - player.x, b.y - player.y);
+    const d = Math.hypot(b.x - player.x, b.y - getParryOriginY());
     return d <= getDeflectRange() + b.radius;
   });
   // パリィの効果範囲に本体が重なっている敵は、弾の有無に関わらず直接攻撃の対象にする。
   // 同僚（partner）はenemies配列に含まれないため、直接攻撃の対象には含まれない（同僚弾のはじき返しのみ引き続き有効）
-  const meleeTargets = enemies.filter(en => en !== partner && Math.hypot(en.x - player.x, en.y - player.y) <= getDeflectRange() + en.radius);
+  const meleeTargets = enemies.filter(en => en !== partner && Math.hypot(en.x - player.x, en.y - getParryOriginY()) <= getDeflectRange() + en.radius);
   if (targets.length === 0 && meleeTargets.length === 0) return;
 
   // パリィ（弾のはじき返し、または直接攻撃）に成功した時だけ、脳疲労が1蓄積する
@@ -6923,7 +6933,7 @@ function updateFullAutoSupportBulletParry() {
     return;
   }
   if (fullAutoSupportBulletParryAttempted || stunned || fatigue > fullAutoParryFatigueThreshold) return;
-  const d = Math.hypot(supportBullet.x - player.x, supportBullet.y - player.y);
+  const d = Math.hypot(supportBullet.x - player.x, supportBullet.y - getParryOriginY());
   if (d <= getDeflectRange() + supportBullet.radius) {
     fullAutoSupportBulletParryAttempted = true;
     attemptDeflectPartnerBullet();
@@ -6939,13 +6949,14 @@ function updateFullAutoThreatParry(dt) {
   fullAutoThreatParryTimerMs -= dt * 1000;
   if (fullAutoThreatParryTimerMs > 0) return;
   const range = getDeflectRange();
+  const originY = getParryOriginY();
   const threatBulletInRange = bullets.some(b => {
     if (b.owner !== 'partner' && b.owner !== 'boss' && b.owner !== 'midBoss' &&
         b.owner !== 'fixedEnemy' && b.owner !== 'fixedEnemyDisguise') return false;
-    return Math.hypot(b.x - player.x, b.y - player.y) <= range + b.radius;
+    return Math.hypot(b.x - player.x, b.y - originY) <= range + b.radius;
   });
   const threatEnemyInRange = !threatBulletInRange && enemies.some(en =>
-    en !== partner && Math.hypot(en.x - player.x, en.y - player.y) <= range + en.radius);
+    en !== partner && Math.hypot(en.x - player.x, en.y - originY) <= range + en.radius);
   if (threatBulletInRange || threatEnemyInRange) {
     attemptDeflectPartnerBullet();
     fullAutoThreatParryTimerMs = fullAutoThreatParryIntervalMs;
@@ -8201,7 +8212,7 @@ function update() {
     // 特殊スキル「オートパリィ」：ネットワークスペシャリストで画面端から反射した自弾も、
     // 近くまで来たら自動でパリィを試みる（1発につき1回だけ判定する）
     if (b.owner === 'player' && (b.bouncesUsed || 0) >= 1 && !b.autoParryChecked &&
-        Math.hypot(b.x - player.x, b.y - player.y) <= getDeflectRange() + b.radius) {
+        Math.hypot(b.x - player.x, b.y - getParryOriginY()) <= getDeflectRange() + b.radius) {
       b.autoParryChecked = true;
       if (Math.random() < specialSkillEffects.autoParryChance) {
         performBulletParry(b, player.x, player.y, player.angle, true);
@@ -11349,57 +11360,44 @@ function draw() {
   // 「ファイヤーウォール」の効果が残っている間、自機の周りにバリアを表示する
   drawBarrierShield(player.x, player.y, player.radius, playerBarrierCharges);
 
-  // 特殊スキル「ライトセーバー」：パリィした瞬間、自機を一端とする光る棒が自機の向きを中心に270度ワイプし、
-  // 通った範囲を半透明のライトセーバー色で満たす。その後、満たした範囲はワイプを始めた側（起点）から
-  // 順に消えていき、ワイプが最後に到達した側が最後まで残る。自機アイコンより先に描き、裏を通るように見せる
+  // 特殊スキル「ライトセーバー」：パリィした瞬間、自機を一端とする光る棒が、自機の向きを中心に
+  // 270度ワイプするエフェクトを描く（斬撃ワイプエフェクトと同じ配色。棒の長さ＝パリィの効果範囲）。
+  // 自機アイコンより先に描くことで、自機の裏を通るように見せる。少し前の角度もうっすら重ねて残像を表現する
   if (lightsaberEffect) {
     const progress = 1 - lightsaberEffect.timer / lightsaberEffectDurationMs;
     const startAngle = lightsaberEffect.angle - slashEffectRangeRad / 2;
-    const endAngle = startAngle + slashEffectRangeRad;
-    const sweepPhaseRatio = 0.35; // 最初の35%の時間で270度振り切る
-    let litStartAngle, litEndAngle, edgeAngle;
-    if (progress < sweepPhaseRatio) {
-      // ワイプ中：起点から現在の刃先まで満ちていく
-      const sweepT = progress / sweepPhaseRatio;
-      litStartAngle = startAngle;
-      litEndAngle = startAngle + slashEffectRangeRad * sweepT;
-      edgeAngle = litEndAngle;
-    } else {
-      // ワイプ後：起点側から順に消えていき、最後に到達した側が最後まで残る
-      const fadeT = Math.min(1, (progress - sweepPhaseRatio) / (1 - sweepPhaseRatio));
-      litStartAngle = startAngle + slashEffectRangeRad * fadeT;
-      litEndAngle = endAngle;
-      edgeAngle = litStartAngle;
-    }
-    if (litEndAngle > litStartAngle) {
-      const tipX = lightsaberEffect.x + Math.cos(edgeAngle) * lightsaberEffect.length;
-      const tipY = lightsaberEffect.y + Math.sin(edgeAngle) * lightsaberEffect.length;
-      ctx.save();
-      // 満たされた範囲（扇形）を半透明のライトセーバー色で塗る
-      ctx.fillStyle = 'rgba(224, 247, 250, 0.35)';
-      ctx.shadowColor = '#80deea';
-      ctx.shadowBlur = 20;
-      ctx.beginPath();
-      ctx.moveTo(lightsaberEffect.x, lightsaberEffect.y);
-      ctx.arc(lightsaberEffect.x, lightsaberEffect.y, lightsaberEffect.length, litStartAngle, litEndAngle);
-      ctx.closePath();
-      ctx.fill();
-      // 今まさに動いている境界線（ワイプ中は刃先、ワイプ後は消えていく先端）を、光る棒として重ねて描く
-      ctx.lineCap = 'round';
+    const fadeAlpha = progress < 0.6 ? 1 : Math.max(0, 1 - (progress - 0.6) / 0.4); // 60%を過ぎたらフェードアウト
+    const trailCount = 5;
+    const trailStepProgress = 0.05; // 残像1本ごとに遡る、スイング進行度（0〜1）の量
+    ctx.save();
+    ctx.lineCap = 'round';
+    for (let i = trailCount; i >= 0; i--) {
+      const trailProgress = progress - i * trailStepProgress;
+      if (trailProgress <= 0) continue;
+      const sweepProgress = Math.min(1, trailProgress / 0.6); // 最初の60%で振り切る
+      const currentAngle = startAngle + slashEffectRangeRad * sweepProgress;
+      const tipX = lightsaberEffect.x + Math.cos(currentAngle) * lightsaberEffect.length;
+      const tipY = lightsaberEffect.y + Math.sin(currentAngle) * lightsaberEffect.length;
+      // 一番新しい（i=0）ものだけくっきり、古い残像ほど薄くする
+      const trailAlpha = fadeAlpha * (i === 0 ? 1 : (1 - i / (trailCount + 1)) * 0.55);
+      ctx.globalAlpha = trailAlpha;
       ctx.strokeStyle = '#e0f7fa';
       ctx.lineWidth = 7;
+      ctx.shadowColor = '#80deea';
+      ctx.shadowBlur = 16;
       ctx.beginPath();
       ctx.moveTo(lightsaberEffect.x, lightsaberEffect.y);
       ctx.lineTo(tipX, tipY);
       ctx.stroke();
+      // 内側にもう1本重ねて、斬撃ワイプエフェクトと同じ太さの変化を出す
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.moveTo(lightsaberEffect.x, lightsaberEffect.y);
       ctx.lineTo(tipX, tipY);
       ctx.stroke();
-      ctx.restore();
     }
+    ctx.restore();
   }
 
   // 自分のアイコン（性別選択で選んだimages/self内の画像を使用）。
