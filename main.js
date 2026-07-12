@@ -2554,7 +2554,7 @@ function startWithLastRunSettings() {
   // 前回ノーマルエンドを迎えていた場合は、自機の挨拶をいつもの特別なセリフにする（selectGenderと同じ条件）
   const isRepeatingAfterNormalEnd = !!(typeof lastRun.endingType === 'string' && lastRun.endingType.startsWith('normal'));
   const playerLine = isRepeatingAfterNormalEnd
-    ? '…繰り返し、同じ夢を、見ている…？'
+    ? '…同じ夢を、見ている…？'
     : playerIconGreetingLines[Math.floor(Math.random() * playerIconGreetingLines.length)];
   startIconGreeting(lastRun.playerGender, playerLine, () => {
     const partnerGreetingLines = partnerGenderById[lastRun.partnerIcon] === 'female'
