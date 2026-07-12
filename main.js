@@ -1149,6 +1149,41 @@ function consumeHeartWall() {
   heartWallSpawnTimerMs = getRandomHeartWallSpawnDelay();
 }
 
+// ===== 超レアアイテム（残機+1） =====
+// 取得すると、取得した側（自機／同僚）の残機がそのまま1増える
+const extraLifeItemLifetimeMs = 12000; // 出現してから消えるまでの時間（12秒。他のレアアイテムより少し長め）
+const extraLifeItemBlinkMs = 3000; // 消える3秒前から点滅する
+const extraLifeItemRadius = 22;
+let extraLifeItem = null;
+let extraLifeItemSpawnTimerMs = getRandomExtraLifeItemSpawnDelay();
+
+// チョコレート・栄養ドリンクの約4%の頻度でしか出現しない、かなり稀な超レアアイテム
+function getRandomExtraLifeItemSpawnDelay() {
+  return (8000 + Math.random() * 7000) / 0.04;
+}
+
+// マップ上部から落ちてきて、窓の範囲を避けた床の上に着地する
+function spawnExtraLifeItem() {
+  const target = getNonOverlappingEventPosition(extraLifeItemRadius);
+  extraLifeItem = {
+    x: target.x,
+    y: -extraLifeItemRadius - 20,
+    targetY: target.y,
+    radius: extraLifeItemRadius,
+    fallSpeed: 0,
+    landed: false,
+    remainingMs: extraLifeItemLifetimeMs
+  };
+}
+
+// クリック／タップ、接触、または完全オートモードで自機が取得した時に呼ばれる
+function consumeExtraLifeItem() {
+  playerLivesRemaining++;
+  showMessage(`「残機+1」を手に入れた！ 残機が1増えた（残機 ×${playerLivesRemaining}）`, 2600, '#ffd54f', '22px sans-serif');
+  extraLifeItem = null;
+  extraLifeItemSpawnTimerMs = getRandomExtraLifeItemSpawnDelay();
+}
+
 // ===== ゲーム内の時刻・一日進行システム =====
 const hourMs = 5000; // 現実の5秒をゲーム内の1時間として扱う
 const dayStartHour = 8; // 8時始業（以前の9時から1時間繰り上げ、その分だけ稼働時間が延びる）
@@ -1233,7 +1268,7 @@ function getRandomEventPosition(radius = 24) {
   return position;
 }
 
-// 既に置かれている他のアイテム（チョコレート・栄養ドリンク・コーヒー・ファイヤーウォール）と
+// 既に置かれている他のアイテム（チョコレート・栄養ドリンク・コーヒー・ファイヤーウォール・残機+1）と
 // 重ならない出現位置を探す。20回試しても見つからなければ最後の候補をそのまま使う
 function getNonOverlappingEventPosition(radius, minGap = 70) {
   let position;
@@ -1241,7 +1276,7 @@ function getNonOverlappingEventPosition(radius, minGap = 70) {
   do {
     position = getRandomEventPosition(radius);
     attempts++;
-  } while (attempts < 20 && [chocolate, energyDrink, coffee, heartWall].some(item =>
+  } while (attempts < 20 && [chocolate, energyDrink, coffee, heartWall, extraLifeItem].some(item =>
     item && Math.hypot(item.x - position.x, (item.targetY ?? item.y) - position.y) < minGap
   ));
   return position;
@@ -3120,20 +3155,24 @@ function updatePartner(dt) {
   const partnerRecoveryTarget = landedEnergyDrink || landedChocolate;
   const partnerWantsRecoveryItem = !!partnerRecoveryTarget &&
     partner.fatigue >= maxFatigue * partnerChocolateSeekFatigueRatio;
+  // 「残機+1」はかなり稀な超レアアイテムなので、脳疲労の状態に関わらず常に最優先で積極的に取りに行く
+  const landedExtraLifeItem = (extraLifeItem && extraLifeItem.landed) ? extraLifeItem : null;
   const followTarget = nearestFixedEnemyForPartner
     ? { x: nearestFixedEnemyForPartner.x, y: nearestFixedEnemyForPartner.y }
-    : partnerWantsRecoveryItem
-      ? { x: partnerRecoveryTarget.x, y: partnerRecoveryTarget.y }
-      : partner.wandering
-        ? partner.wanderTarget
-        : { x: player.x + partnerFollowOffsetX, y: player.y + partnerFollowOffsetY };
+    : landedExtraLifeItem
+      ? { x: landedExtraLifeItem.x, y: landedExtraLifeItem.y }
+      : partnerWantsRecoveryItem
+        ? { x: partnerRecoveryTarget.x, y: partnerRecoveryTarget.y }
+        : partner.wandering
+          ? partner.wanderTarget
+          : { x: player.x + partnerFollowOffsetX, y: player.y + partnerFollowOffsetY };
   // 目標地点へ向かう「望ましい速度」を求め、実際の速度はそこへ少しずつ近づけることで
   // 急な方向転換・停止でも滑るような慣性のある動きになる
   const fdx = followTarget.x - partner.x;
   const fdy = followTarget.y - partner.y;
   const fdist = Math.hypot(fdx, fdy);
   const movementSpeed = partnerMoveSpeed * getPartnerRankMoveSpeedMultiplier(rank) *
-    (nearestFixedEnemyForPartner || partnerWantsRecoveryItem || partner.wandering ? 1 : partnerFollowSpeedMultiplier);
+    (nearestFixedEnemyForPartner || landedExtraLifeItem || partnerWantsRecoveryItem || partner.wandering ? 1 : partnerFollowSpeedMultiplier);
   let desiredVx = 0;
   let desiredVy = 0;
   if (fdist > 2) {
@@ -3151,6 +3190,16 @@ function updatePartner(dt) {
   clampToPlayableFloor(partner);
   pushEntityOutsideScheduledReport(partner);
   pushEntityOutsideFixedEnemy(partner);
+
+  // 「残機+1」を取りに行っていた場合、たどり着いたら同僚の残機を1増やす
+  if (landedExtraLifeItem &&
+      Math.hypot(partner.x - landedExtraLifeItem.x, partner.y - landedExtraLifeItem.y) <=
+        partner.radius + landedExtraLifeItem.radius) {
+    partnerLivesRemaining++;
+    showMessage(`同僚が「残機+1」を手に入れた！ 同僚の残機が1増えた（残機 ×${partnerLivesRemaining}）`, 2600, '#ffd54f', '22px sans-serif');
+    extraLifeItem = null;
+    extraLifeItemSpawnTimerMs = getRandomExtraLifeItemSpawnDelay();
+  }
 
   // 回復アイテムを取りに行っていた場合、たどり着いたら摂取して疲労・SAN・寿命に反映する
   if (partnerWantsRecoveryItem && partnerRecoveryTarget &&
@@ -4151,6 +4200,7 @@ function clearRemainingItemsAndBulletsForNewDay() {
   energyDrink = null;
   coffee = null;
   heartWall = null;
+  extraLifeItem = null;
 }
 
 // ラスボス・中ボス・負けイベント戦闘などに突入する直前に呼び、画面上の弾・アイテム・
@@ -7330,11 +7380,12 @@ function computeFullAutoMoveVector(dt) {
   return { x: 0, y: 0 };
 }
 
-// 完全オートモードが自発的に取りに行く対象（昼食・チョコレート・ファイヤーウォール）のうち、最も近いものを返す
+// 完全オートモードが自発的に取りに行く対象（昼食・チョコレート・ファイヤーウォール・残機+1）のうち、最も近いものを返す
 function findFullAutoSeekableItemTarget() {
   const candidates = [];
   if (chocolate && chocolate.landed) candidates.push(chocolate);
   if (heartWall && heartWall.landed) candidates.push(heartWall);
+  if (extraLifeItem && extraLifeItem.landed) candidates.push(extraLifeItem);
   if (lunchState) lunchState.items.forEach(item => candidates.push(item));
   if (candidates.length === 0) return null;
   let nearest = null, nearestD = Infinity;
@@ -7402,6 +7453,11 @@ function tryCollectItemAtPoint(p) {
     consumeHeartWall();
     return true;
   }
+  if (extraLifeItem && extraLifeItem.landed &&
+      Math.hypot(p.x - extraLifeItem.x, p.y - extraLifeItem.y) <= extraLifeItem.radius + itemClickHitTolerance) {
+    consumeExtraLifeItem();
+    return true;
+  }
   if (lunchState) {
     for (let i = lunchState.items.length - 1; i >= 0; i--) {
       const item = lunchState.items[i];
@@ -7431,6 +7487,10 @@ function checkPlayerItemTouchPickup() {
   if (heartWall && heartWall.landed &&
       Math.hypot(player.x - heartWall.x, player.y - heartWall.y) <= player.radius + heartWall.radius) {
     consumeHeartWall();
+  }
+  if (extraLifeItem && extraLifeItem.landed &&
+      Math.hypot(player.x - extraLifeItem.x, player.y - extraLifeItem.y) <= player.radius + extraLifeItem.radius) {
+    consumeExtraLifeItem();
   }
   if (lunchState) {
     for (let i = lunchState.items.length - 1; i >= 0; i--) {
@@ -8112,6 +8172,29 @@ function update() {
     heartWallSpawnTimerMs -= dt * 1000;
     if (heartWallSpawnTimerMs <= 0) {
       spawnHeartWall();
+    }
+  }
+
+  // 「残機+1」の出現待ち、取得判定、時間切れを処理する
+  if (extraLifeItem && !extraLifeItem.landed) {
+    // 画面上部から落下してくる演出。着地するまでは取得判定を行わない
+    extraLifeItem.fallSpeed += chocolateFallGravityPerSec2 * dt;
+    extraLifeItem.y += extraLifeItem.fallSpeed * dt;
+    if (extraLifeItem.y >= extraLifeItem.targetY) {
+      extraLifeItem.y = extraLifeItem.targetY;
+      extraLifeItem.landed = true;
+    }
+  } else if (extraLifeItem) {
+    extraLifeItem.remainingMs -= dt * 1000;
+    // 完全オートモード中も、自機がその場まで移動したわけではないので自動取得はしない
+    if (extraLifeItem.remainingMs <= 0) {
+      extraLifeItem = null;
+      extraLifeItemSpawnTimerMs = getRandomExtraLifeItemSpawnDelay();
+    }
+  } else {
+    extraLifeItemSpawnTimerMs -= dt * 1000;
+    if (extraLifeItemSpawnTimerMs <= 0) {
+      spawnExtraLifeItem();
     }
   }
 
@@ -12138,6 +12221,56 @@ function draw() {
           `${Math.max(0, heartWall.remainingMs / 1000).toFixed(1)}秒`,
           heartWall.x,
           heartWall.y + heartWall.radius + 12
+        );
+      }
+      ctx.restore();
+    }
+  }
+
+  // 「残機+1」を描く。かなり稀な超レアアイテムなので、常に輝くグロー＋パルスを重ねて目立たせる。
+  // 消滅直前は一定間隔で表示を切り替えて点滅させる
+  if (extraLifeItem) {
+    const shouldShowExtraLifeItem = extraLifeItem.remainingMs > extraLifeItemBlinkMs ||
+      Math.floor(extraLifeItem.remainingMs / 200) % 2 === 0;
+
+    if (shouldShowExtraLifeItem) {
+      ctx.save();
+      const extraLifePulse = 0.5 + 0.5 * Math.sin(gameClockMs / 120);
+      const extraLifeGlowRadius = extraLifeItem.radius * 2 + extraLifePulse * 6;
+      // 外側の淡いグロー（パルスで大きさ・濃さが揺れる）
+      const extraLifeGlowGradient = ctx.createRadialGradient(
+        extraLifeItem.x, extraLifeItem.y, extraLifeItem.radius * 0.3,
+        extraLifeItem.x, extraLifeItem.y, extraLifeGlowRadius
+      );
+      extraLifeGlowGradient.addColorStop(0, `rgba(255, 213, 79, ${0.55 + extraLifePulse * 0.25})`);
+      extraLifeGlowGradient.addColorStop(1, 'rgba(255, 213, 79, 0)');
+      ctx.beginPath();
+      ctx.arc(extraLifeItem.x, extraLifeItem.y, extraLifeGlowRadius, 0, Math.PI * 2);
+      ctx.fillStyle = extraLifeGlowGradient;
+      ctx.fill();
+      // 本体。縁自体にも発光（shadowBlur）をかけて、輝くアイテムだと分かるようにする
+      ctx.shadowColor = '#ffd54f';
+      ctx.shadowBlur = 12 + extraLifePulse * 8;
+      ctx.beginPath();
+      ctx.arc(extraLifeItem.x, extraLifeItem.y, extraLifeItem.radius, 0, Math.PI * 2);
+      ctx.fillStyle = '#3e2f00';
+      ctx.fill();
+      ctx.strokeStyle = `rgba(255, 213, 79, ${0.8 + extraLifePulse * 0.2})`;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.font = 'bold 16px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#ffd54f';
+      ctx.fillText('+1', extraLifeItem.x, extraLifeItem.y);
+      if (extraLifeItem.landed) {
+        ctx.font = '12px sans-serif';
+        ctx.fillStyle = '#ffd54f';
+        ctx.fillText(
+          `${Math.max(0, extraLifeItem.remainingMs / 1000).toFixed(1)}秒`,
+          extraLifeItem.x,
+          extraLifeItem.y + extraLifeItem.radius + 12
         );
       }
       ctx.restore();
