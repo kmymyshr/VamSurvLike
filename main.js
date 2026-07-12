@@ -4869,6 +4869,11 @@ document.addEventListener("keydown", (event) => {
       }
       return;
     }
+    // 選択肢が1つ（継続専用）しかない場合は、選択メニューを出さずどのキーでも次へ進める
+    if (node.choices.length === 1) {
+      chooseAdventureOption(0);
+      return;
+    }
     if (isAdventureChoiceLocked()) return; // 表示直後の誤入力防止
     const idx = Number(event.key) - 1;
     if (idx >= 0 && idx < node.choices.length) chooseAdventureOption(idx);
@@ -7569,6 +7574,11 @@ canvas.addEventListener('click', (event) => {
         adventureState.lineFadePhase = 'out';
         adventureState.lineFadeTimerMs = 0;
       }
+      return;
+    }
+    // 選択肢が1つ（継続専用）しかない場合は、選択メニューを出さずそのままクリックで次へ進める
+    if (node.choices.length === 1) {
+      chooseAdventureOption(0);
       return;
     }
   }
@@ -12920,8 +12930,11 @@ function draw() {
     });
     ctx.restore();
 
-    if (!isLastBlock) {
-      // まだ続きがある間は、選択肢の代わりにクリックを促す表示だけを出す
+    // 選択肢が1つ（「……（続ける）」のような、実質的な分岐のない継続専用の選択肢）しかない場合は、
+    // それ以前の文章と同様にクリックを促す表示だけにし、選択メニューは出さない
+    const isChoicePoint = isLastBlock && node.choices.length >= 2;
+    if (!isChoicePoint) {
+      // まだ続きがある間、または継続専用の選択肢しかない間は、選択肢の代わりにクリックを促す表示だけを出す
       ctx.fillStyle = '#cfd8dc';
       ctx.font = `14px ${adventureMinchoFont}`;
       ctx.textAlign = 'center';
