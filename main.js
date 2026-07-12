@@ -3588,13 +3588,15 @@ const specialSkills = [
   },
   {
     id: 'lightsaber', name: 'ライトセーバー', rarity: 'SR',
-    description: '自機のパリィの効果範囲が1.2倍になる。パリィの直接攻撃ダメージが3倍になる。「闇を切り裂く剣」とは同時に習得できない',
+    description: '自機のパリィの効果範囲が1.2倍になる。パリィの直接攻撃ダメージが3倍になる。' +
+      'パリィの直接攻撃（ワイプ範囲）は、通常の敵だけでなく中ボス・ラスボスの発射口にも届き、直接ダメージを与えられる。「闇を切り裂く剣」とは同時に習得できない',
     maxLevel: 1
   },
   {
     id: 'dark-cleaving-sword', name: '闇を切り裂く剣', rarity: 'UR',
     description: 'ライトセーバーの上位互換。自機のパリィの効果範囲が3倍になる。パリィの直接攻撃ダメージが10倍になる（ライトセーバーは3倍）。専用の明るい黄色の刃で演出される。' +
-      '例外として、ノーマルルート終了時の負けイベント戦闘でも、本来決して破壊できない発射口を、パリィで打ち返した弾を3回当てるか、パリィの直接攻撃（ワイプ範囲）を3回当てることで破壊でき、撃破すれば目覚めエンドに至れる。「ライトセーバー」とは同時に習得できない',
+      'パリィの直接攻撃（ワイプ範囲）は、通常の敵だけでなく中ボス・ラスボスの発射口にも届き、直接ダメージを与えられる。' +
+      '例外として、ノーマルルート終了時の負けイベント戦闘でも、本来決して破壊できない発射口を、パリィで打ち返した弾を3回当てるか、パリィの直接攻撃を3回当てることで破壊でき、撃破すれば目覚めエンドに至れる。「ライトセーバー」とは同時に習得できない',
     maxLevel: 1
   },
   {
@@ -4384,6 +4386,24 @@ function startPartnerAdventure(onComplete) {
   };
 }
 
+// アドベンチャーパートの選択肢：表示直後の誤タップ／誤クリックを防ぐため、2択以上ある場合は
+// 表示されてから1秒間は選べないようにする（draw()側から毎フレーム呼び、表示が切り替わった瞬間だけ判定し直す）
+const adventureChoiceLockDurationMs = 1000;
+let adventureChoiceUnlockAt = 0;
+let adventureChoiceLockKey = null;
+function updateAdventureChoiceLockState(node) {
+  const key = `${adventureState.nodeId}:${adventureState.lineIndex || 0}`;
+  if (adventureChoiceLockKey !== key) {
+    adventureChoiceLockKey = key;
+    adventureChoiceUnlockAt = (node.choices && node.choices.length >= 2)
+      ? Date.now() + adventureChoiceLockDurationMs
+      : 0;
+  }
+}
+function isAdventureChoiceLocked() {
+  return Date.now() < adventureChoiceUnlockAt;
+}
+
 // choice.next を実際の遷移先 { scene, nodeId } に解決する。
 // next は 文字列（同じシーン内のノードid）／関数（動的に上記のいずれかを返す）／{ scene, node } のいずれかを取り得る
 function resolveAdventureNextTarget(nextValue) {
@@ -4785,6 +4805,7 @@ document.addEventListener("keydown", (event) => {
       }
       return;
     }
+    if (isAdventureChoiceLocked()) return; // 表示直後の誤入力防止
     const idx = Number(event.key) - 1;
     if (idx >= 0 && idx < node.choices.length) chooseAdventureOption(idx);
     return;
@@ -7070,15 +7091,26 @@ function attemptDeflectPartnerBullet() {
   // パリィの効果範囲に本体が重なっている敵は、弾の有無に関わらず直接攻撃の対象にする。
   // 同僚（partner）はenemies配列に含まれないため、直接攻撃の対象には含まれない（同僚弾のはじき返しのみ引き続き有効）
   const meleeTargets = enemies.filter(en => en !== partner && Math.hypot(en.x - player.x, en.y - getParryOriginY()) <= getDeflectRange() + en.radius);
-  // 闇を切り裂く剣：ノーマルルート終了時の負けイベント戦闘中は、パリィの直接攻撃（ワイプ範囲）が
-  // 本来破壊できない発射口にも届き、反射弾と同様に規定回数当てれば破壊できる
-  const meleeHoleTargets = (bossEvent && specialSkillEffects.darkSwordBreaksIndestructibleHoles)
+  // ライトセーバー／闇を切り裂く剣：パリィの直接攻撃（ワイプ範囲）が、ラスボス・中ボスの発射口にも届くようにする。
+  // ノーマルルート終了時の負けイベント戦闘の「本来破壊できない発射口」は、闇を切り裂く剣習得中のみ
+  // registerBossHoleHit内の例外処理で、これまで通りパリィ（反射弾・直接攻撃どちらも）3回で破壊できる
+  const hasParryBladeSkill = specialSkillEffects.deflectRangeMultiplier > 1;
+  const meleeBossHoleTargets = (hasParryBladeSkill && bossEvent && bossEvent.phase === 'active')
     ? bossEvent.holes
-        .filter(hole => !hole.destroyed && hole.indestructible)
+        .filter(hole => !hole.destroyed &&
+          // 第7段階「就職活動」：中ボスと同じく、①→⑤の順番でしか破壊できない
+          (bossEvent.stage !== 7 || hole === bossEvent.holes.find(h => !h.destroyed)))
         .map(hole => ({ hole, pos: getBossHoleAbsolutePosition(hole) }))
         .filter(({ pos }) => Math.hypot(pos.x - player.x, pos.y - getParryOriginY()) <= getDeflectRange() + bossHoleRadius)
     : [];
-  if (targets.length === 0 && meleeTargets.length === 0 && meleeHoleTargets.length === 0) return;
+  const meleeMidBossHoleTargets = (hasParryBladeSkill && midBossEvent && midBossEvent.phase === 'active')
+    ? [midBossEvent.holes[midBossEvent.currentPhaseIndex]]
+        .filter(hole => hole && !hole.destroyed)
+        .map(hole => ({ hole, pos: getMidBossHoleAbsolutePosition(hole) }))
+        .filter(({ pos }) => Math.hypot(pos.x - player.x, pos.y - getParryOriginY()) <= getDeflectRange() + midBossHoleRadius)
+    : [];
+  if (targets.length === 0 && meleeTargets.length === 0 &&
+      meleeBossHoleTargets.length === 0 && meleeMidBossHoleTargets.length === 0) return;
 
   // パリィ（弾のはじき返し、または直接攻撃）に成功した時だけ、脳疲労が1蓄積する
   applyFatigueGain(fatigueParryGain);
@@ -7086,12 +7118,20 @@ function attemptDeflectPartnerBullet() {
     performBulletParry(target, player.x, player.y, player.angle);
   }
   meleeTargets.forEach(en => damageEnemyDirectByParry(en));
-  meleeHoleTargets.forEach(({ hole, pos }) => registerDarkSwordHitOnIndestructibleHole(hole, pos.x, pos.y));
+  if (meleeBossHoleTargets.length > 0 || meleeMidBossHoleTargets.length > 0) {
+    // 発射口への直接攻撃も、弾を発射したのと同様に「攻撃した」扱いにする
+    lastFire = gameClockMs;
+  }
+  meleeBossHoleTargets.forEach(({ hole, pos }) => registerBossHoleHit(hole, pos.x, pos.y, true));
+  meleeMidBossHoleTargets.forEach(({ hole, pos }) => registerMidBossHoleHit(hole, pos.x, pos.y));
+  const meleeHoleTargetCount = meleeBossHoleTargets.length + meleeMidBossHoleTargets.length;
   const messageParts = [];
   if (targets.length > 0) messageParts.push(targets.length > 1 ? `弾${targets.length}発` : '弾');
   if (meleeTargets.length > 0) messageParts.push(meleeTargets.length > 1 ? `敵${meleeTargets.length}体` : '敵');
-  if (meleeHoleTargets.length > 0) messageParts.push(meleeHoleTargets.length > 1 ? `発射口${meleeHoleTargets.length}箇所` : '発射口');
-  showMessage(`パリィ成功！（${messageParts.join('・')}）`, 1400, '#fff176');
+  if (meleeHoleTargetCount > 0) messageParts.push(meleeHoleTargetCount > 1 ? `発射口${meleeHoleTargetCount}箇所` : '発射口');
+  // 敵への直接攻撃が当たった場合は「パリィ成功！」ではなく「Hit!」と表示する
+  const messageHeader = meleeTargets.length > 0 ? 'Hit!' : 'パリィ成功！';
+  showMessage(`${messageHeader}（${messageParts.join('・')}）`, 1400, '#fff176');
 }
 
 // 完全オートモード中の自動パリィが有効になる、脳疲労の上限（これを超えると自動では発動しなくなる。
@@ -11408,8 +11448,8 @@ function draw() {
     ctx.fillStyle = useMinchoTitle ? '#9aa39f' : '#cfd8dc';
     ctx.font = `16px ${uiFontFamily}`;
     ctx.textAlign = 'center';
-    ctx.fillText('P = 一時停止 / 再開　F = 自動攻撃切替　Space = パリィ（はじきかえす）', canvas.width / 2, helpTextY);
-    ctx.fillText('WASD・十字ボタン = 移動　マウスポインタ = 向き　左クリック = アイテム取得・自動攻撃ON/OFF', canvas.width / 2, helpTextY + 26);
+    ctx.fillText('Space / 右クリック = パリィ（はじきかえす）', canvas.width / 2, helpTextY);
+    ctx.fillText('WASD・十字ボタン = 移動（マウスドラッグでも移動可能）　マウスポインタ = 向き　左クリック = アイテム取得・自動攻撃ON/OFF', canvas.width / 2, helpTextY + 26);
     ctx.textAlign = 'left';
 
     // リセット確認ダイアログ：「やり直しますか？」→はい/いいえ
@@ -12309,7 +12349,8 @@ function draw() {
   ctx.shadowOffsetY = 0;
 
   // 左上に自分と同僚のプロフィールを同じ高さで並べる（アイコンは同僚と同じサイズで表示）。
-  drawHudProfilePanel(12, 12, 145, 225, '自分', selectedPlayerIcon, '#4dd0e1', [
+  // 区画の幅は元の145pxの約90%（130px）に縮小し、同僚側もその分だけ左に詰めて配置する
+  drawHudProfilePanel(12, 12, 130, 225, '自分', selectedPlayerIcon, '#4dd0e1', [
     { text: `SAN: ${Math.floor(san)} / ${maxSan}` },
     { text: `寿命: ${Math.ceil(lifespan)} / ${maxLifespan}` },
     { text: `脳疲労: ${Math.floor(fatigue)} / ${maxFatigue}` },
@@ -12355,7 +12396,7 @@ function draw() {
   const partnerTitle = selectedPartnerIcon === null
     ? '同僚なし'
     : (partner.active ? '同僚' : '同僚離脱');
-  drawHudProfilePanel(164, 12, 145, 218, partnerTitle,
+  drawHudProfilePanel(149, 12, 130, 218, partnerTitle,
     selectedPartnerIcon, '#80cbc4', partner.active ? [
       { text: `SAN: ${Math.floor(partner.san)} / ${maxSan}` },
       { text: `寿命: ${Math.ceil(partner.lifespan)} / ${maxLifespan}` },
@@ -12393,9 +12434,8 @@ function draw() {
   // クイズや固定敵の説明パネル（窓付近・画面上部）とは被らない位置。
   // 一度もノーマルエンドを経ていない場合（チュートリアル的な特別なプレイ）は、これらのボタン自体を表示しない
   if (hasEverReachedNormalEnd()) {
-    // 完全オートモード・3倍加速は少し小さめに表示する
+    // 完全オートモード・3倍加速・自動照準はすべて同じ小さめのサイズで揃える
     const smallToggleBtnW = 140, smallToggleBtnH = 22, toggleBtnGap = 6;
-    const toggleBtnW = 170, toggleBtnH = 26;
     const toggleBtnX = 12, toggleBtnStartY = 278;
     drawUiButton(toggleBtnX, toggleBtnStartY, smallToggleBtnW, smallToggleBtnH,
       `完全オートモード: ${fullAutoModeEnabled ? 'ON' : 'OFF'}`,
@@ -12409,12 +12449,12 @@ function draw() {
       gameTimeScale === 3
         ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 11px sans-serif' }
         : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 11px sans-serif' });
-    drawUiButton(toggleBtnX, toggleBtnStartY + (smallToggleBtnH + toggleBtnGap) * 2, toggleBtnW, toggleBtnH,
+    drawUiButton(toggleBtnX, toggleBtnStartY + (smallToggleBtnH + toggleBtnGap) * 2, smallToggleBtnW, smallToggleBtnH,
       `自動照準 ${mobileAutoAimEnabled ? 'ON' : 'OFF'}`,
       () => setMobileAutoAimEnabled(!mobileAutoAimEnabled),
       mobileAutoAimEnabled
-        ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 12px sans-serif' }
-        : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 12px sans-serif' });
+        ? { fillStyle: 'rgba(56, 142, 60, 0.6)', strokeStyle: '#a5d6a7', font: 'bold 11px sans-serif' }
+        : { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#90a4ae', font: 'bold 11px sans-serif' });
   } else {
     // 一度もノーマルエンドを経ていない場合でも、スマホ用自動照準だけは小型ボタンとして表示する
     const smallAutoAimBtnW = 96, smallAutoAimBtnH = 22;
@@ -12427,9 +12467,9 @@ function draw() {
   }
 
   // 「自己犠牲」「献身」：習得済みかつ同僚が健在で、まだこの周回で使っていない時だけ、
-  // 同僚のプロフィール区画（x:164, y:12, w:145, h:204）内の、ステータス文字の下・区画下端より上の
+  // 同僚のプロフィール区画（x:149, y:12, w:130, h:204）内の、ステータス文字の下・区画下端より上の
   // 余白部分に、十字型の小さなボタンを右寄せで縦に並べて表示する（1周回につき1回のみ発動可能）
-  const partnerPanelX = 164, partnerPanelW = 145, partnerPanelBottom = 12 + 204;
+  const partnerPanelX = 149, partnerPanelW = 130, partnerPanelBottom = 12 + 204;
   const oneTimeSkillBtnSize = 24, oneTimeSkillBtnGap = 6, oneTimeSkillBtnRightMargin = 10;
   const oneTimeSkillBtnX = partnerPanelX + partnerPanelW - oneTimeSkillBtnSize - oneTimeSkillBtnRightMargin;
   let oneTimeSkillBtnY = partnerPanelBottom - oneTimeSkillBtnSize - 8;
@@ -12759,13 +12799,19 @@ function draw() {
       ctx.fillText('▼ クリック / タップで続ける', canvas.width / 2, 240 + textLines.length * 30 + 36);
       ctx.textAlign = 'left';
     } else {
+      // 2択以上ある場合、表示直後1秒間は誤タップ／誤クリックを防ぐため選べないようにする
+      updateAdventureChoiceLockState(node);
+      const choicesLocked = isAdventureChoiceLocked();
       const btnW2 = 600, btnH2 = 52;
       const btnX2 = canvas.width / 2 - btnW2 / 2;
       const choicesStartY = 240 + textLines.length * 30 + 36;
       node.choices.forEach((choice, i) => {
         const choiceLabel = resolveGenderedAdventureText(choice.label, selectedGender);
         drawUiButton(btnX2, choicesStartY + i * 62, btnW2, btnH2, `${i + 1}. ${choiceLabel}`,
-          () => chooseAdventureOption(i), { font: `bold 19px ${adventureMinchoFont}` });
+          choicesLocked ? () => {} : () => chooseAdventureOption(i),
+          choicesLocked
+            ? { font: `bold 19px ${adventureMinchoFont}`, fillStyle: 'rgba(60, 60, 60, 0.5)', strokeStyle: '#616161', textColor: '#9e9e9e' }
+            : { font: `bold 19px ${adventureMinchoFont}` });
       });
 
       ctx.fillStyle = '#cfd8dc';
