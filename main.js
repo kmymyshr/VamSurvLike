@@ -864,6 +864,16 @@ function toggleAutoFireEnabled() {
 autoFireButtonEl.addEventListener('click', toggleAutoFireEnabled);
 updateAutoFireButtonUI();
 
+// ===== 操作パネル（ジョイスティック・ポーズ／パリィ／連射／自動連射ボタン）の表示切り替え =====
+// タイトル・エンディング・アドベンチャー等、戦闘画面以外では内部状態は残したまま見た目だけ隠す
+const leftControlPanelEl = document.getElementById('leftControlPanel');
+const rightControlPanelEl = document.getElementById('rightControlPanel');
+function updateControlPanelsVisibility() {
+  const hidden = !isBattleScreenActive();
+  leftControlPanelEl.classList.toggle('controlsHidden', hidden);
+  rightControlPanelEl.classList.toggle('controlsHidden', hidden);
+}
+
 // ===== 完全オートモード（移動・照準・攻撃をすべて自動化する） =====
 let fullAutoModeEnabled = false;
 let fullAutoQuizChoiceIndex = null; // クイズの選択肢をランダムに1つ選び、同じ問題の間は選び直さない
@@ -7337,6 +7347,16 @@ function isInCoreGameplayForClickActions() {
     !gameOver && !gameClear && dayTransitionPhase === null;
 }
 
+// タイトル・エンディング・アドベンチャー（挨拶等の会話シーン）・各種選択画面ではない、
+// 「戦闘画面」として操作パネル（ジョイスティック・ポーズ／パリィ／連射／自動連射ボタン）を表示すべきかどうか。
+// ポーズ中・イベント戦（normalEndSequence）・ラスボス撃破後演出（bossFinalSequence）・確認ダイアログ表示中は
+// いずれも戦闘画面の上に乗る状態なので、引き続き操作パネルを表示する
+function isBattleScreenActive() {
+  return !startScreen && setupStep === null && !dreamMemoryShopActive &&
+    !endingListActive && !memoryStatusActive && !specialSkillSelectionActive && !adventureState && !reunionSceneActive &&
+    !gameOver && !gameClear && dayTransitionPhase === null;
+}
+
 // イベント戦（ノーマルルート負けイベント戦闘）のうち、実際にプレイヤーが動いて戦う演出中かどうか
 // （freeze/shake/partnerVanish/fadeOut/endScreen中は演出専用でプレイヤー操作が反映されないため対象外）
 function isInNormalEndBattlePlay() {
@@ -13050,6 +13070,7 @@ function draw() {
 function gameLoop() {
   update();
   draw();
+  updateControlPanelsVisibility();
   requestAnimationFrame(gameLoop);
 }
 gameLoop();

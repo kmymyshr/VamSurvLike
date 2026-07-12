@@ -45,6 +45,13 @@ canvas {
   touch-action: none;
 }
 
+/* タイトル・エンディング・アドベンチャー等、戦闘画面以外ではこのクラスを付けて操作パネルを非表示にする。
+   要素・状態は内部的に残したまま見た目だけ消す（display:noneではなくvisibilityを使い、幅は保って左右のズレを防ぐ） */
+#leftControlPanel.controlsHidden,
+#rightControlPanel.controlsHidden {
+  visibility: hidden;
+}
+
 /* 戦闘画面の左に広げた帯。移動用ジョイスティックを配置する */
 #leftControlPanel {
   position: relative;
