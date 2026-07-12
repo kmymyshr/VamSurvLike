@@ -711,6 +711,10 @@ function startSetupFadeOut(onComplete) {
 // 'normal1' | 'normal2' | 'normal3' | 'true1' | 'true2' | 'bad-san' | 'bad-lifespan' | 'bad-partner-shot' のいずれか。
 // gameOver / gameClear になる瞬間に確定する（true1＝夢ルートでラスボスを撃破し同僚が生存、が事実上のTRUE END）
 let endingType = null;
+// 寿命0・SAN0・孤独の各BADENDは、画面が急に切り替わらないよう、エンド画面自体を黒からフェードインさせる
+const endingFadeInDurationMs = 900;
+let endingFadeInRemainingMs = 0;
+const endingFadeInTypes = new Set(['bad-san', 'bad-lifespan', 'bad-lonely']);
 
 // ===== 納期切れの爆発エフェクト =====
 const explosionEffectDuration = 500; // フラッシュと揺れの継続時間（ミリ秒）
@@ -2113,9 +2117,12 @@ function endWorkday() {
         startPreFirstNormalEndFadeOut();
         return;
       }
-      gameOver = true;
-      endingType = 'bad-lonely';
-      sendScore(score);
+      startSetupFadeOut(() => {
+        gameOver = true;
+        endingType = 'bad-lonely';
+        endingFadeInRemainingMs = endingFadeInDurationMs;
+        sendScore(score);
+      });
       return;
     }
     // まだ5日に達していなければ、そのまま翌日へ進む（下の週次ノルマ判定へ続く）
@@ -3577,6 +3584,8 @@ const specialSkills = [
   },
   {
     id: 'dark-cleaving-sword', name: '闇を切り裂く剣', rarity: 'UR',
+    // 選択画面ではあえて詳細を明かさず、雰囲気だけ伝える簡潔な説明にする（choiceDescription参照）
+    choiceDescription: '闇を切り裂けるかもしれない。',
     description: 'ライトセーバーの上位互換。自機のパリィの効果範囲が3倍になる。パリィの直接攻撃ダメージが10倍になる（ライトセーバーは3倍）。専用の明るい黄色の刃で演出される。' +
       'パリィの直接攻撃（ワイプ範囲）は、通常の敵だけでなく中ボス・ラスボスの発射口にも届き、直接ダメージを与えられる。' +
       '例外として、ノーマルルート終了時の負けイベント戦闘でも、本来決して破壊できない発射口を、パリィで打ち返した弾を3回当てるか、パリィの直接攻撃を3回当てることで破壊でき、撃破すれば目覚めエンドに至れる。「ライトセーバー」とは同時に習得できない',
@@ -3854,6 +3863,32 @@ function skipSpecialSkillSelection() {
     `スキルを取らない代わりに、SAN・寿命がそれぞれ${specialSkillSkipRecoveryAmount}回復した`,
     2500,
     '#80cbc4',
+    '22px sans-serif'
+  );
+  specialSkillSelectionActive = false;
+  lastUpdate = Date.now();
+
+  if (pendingSpecialSkillSelections > 0) {
+    pendingSpecialSkillSelections--;
+    openSpecialSkillSelection('レベルアップ：特殊スキルを選択');
+    return;
+  }
+}
+
+// 特殊スキル選択画面で「同僚に差し入れ」を選んだ場合の回復量
+const specialSkillGiftPartnerRecoveryAmount = 10;
+// スキルを取らない代わりに、その回のスキル選択権を1回失い、同僚のSAN・寿命をそれぞれ回復する
+function giftPartnerInsteadOfSpecialSkillSelection() {
+  // 表示直後の連打・連続タップによる誤操作を防ぐため、猶予時間内の選択は無視する
+  if (Date.now() < specialSkillSelectionUnlockAt) return;
+  if (!partner.active) return;
+
+  partner.san = Math.min(maxSan, partner.san + specialSkillGiftPartnerRecoveryAmount);
+  partner.lifespan = Math.min(maxLifespan, partner.lifespan + specialSkillGiftPartnerRecoveryAmount);
+  showMessage(
+    `同僚に差し入れをした。同僚のSAN・寿命がそれぞれ${specialSkillGiftPartnerRecoveryAmount}回復した`,
+    2500,
+    '#ffcc80',
     '22px sans-serif'
   );
   specialSkillSelectionActive = false;
@@ -4409,7 +4444,7 @@ function applyRestActivity() {
     san = Math.max(0, Math.floor(san * partnerLossGriefSanRatio));
     checkVitalsGameOver();
     showAcknowledgementNotice(
-      '同僚に会いに行った。……しかし、もうそこに同僚はいない。静かな部屋を前に、言葉を失う。 SANが半分になった',
+      '同僚に会いに行った。……しかし、もうそこに同僚はいなかった。静かな部屋を前に、言葉を失う。 SANが半分になった',
       '#78909c', '',
       () => { if (!gameOver && !deathSequence) finishRestDayAndAdvanceToMonday(); }
     );
@@ -7462,6 +7497,8 @@ function update() {
   const rawDt = (nowReal - lastUpdate) / 1000;
   // 「寝る」演出を経て再読み込みされた直後だけ、タイトル画面のフェードインを進める
   if (titleFadeInRemainingMs > 0) titleFadeInRemainingMs = Math.max(0, titleFadeInRemainingMs - rawDt * 1000);
+  // 寿命0・SAN0・孤独の各BADEND：エンド画面が急に出ないよう、黒からのフェードインを進める
+  if (endingFadeInRemainingMs > 0) endingFadeInRemainingMs = Math.max(0, endingFadeInRemainingMs - rawDt * 1000);
   // ノーマルルート終了時の負けイベント戦闘：同僚が消える直前のスローモーション演出中は、
   // 全体の進行速度（dt）を10%に落とす（3倍加速モード中でもさらにその10%になる）
   const effectiveTimeScale = (normalEndSequence && normalEndSequence.phase === 'partnerLossSlowmo')
@@ -7546,6 +7583,7 @@ function update() {
     } else if (deathSequence.phase === 'fadeOut' && deathSequence.phaseTimerMs >= deathSequenceFadeOutDurationMs) {
       gameOver = true;
       endingType = deathSequence.deathEndingType;
+      endingFadeInRemainingMs = endingFadeInDurationMs;
       sendScore(score);
       deathSequence = null;
     }
@@ -10478,7 +10516,7 @@ function getAcquiredSpecialSkillsList() {
 }
 
 function getAcquiredRankSkillsList() {
-  return rankSkillDefs.filter(s => rankSkillLevels.has(s.id)).map(s => s.name);
+  return rankSkillDefs.filter(s => rankSkillLevels.has(s.id)).map(s => `${s.name}（${s.description}）`);
 }
 
 // 行数が多くなっても縦にあふれないよう、指定した高さで折り返して次の列へ流し込む
@@ -12523,8 +12561,10 @@ function draw() {
 
     ctx.fillStyle = '#ffe0b2';
     const rankList = getAcquiredRankSkillsList();
-    drawFlowList(colRightX, skillSectionY + 17, 190, skillSectionMaxHeight,
-      rankList.length > 0 ? rankList : ['（なし）']);
+    let rankListY = skillSectionY + 17;
+    (rankList.length > 0 ? rankList : ['（なし）']).forEach(line => {
+      wrapTextToWidth(line, colWidth + 40).forEach(w => { ctx.fillText(w, colRightX, rankListY); rankListY += 14; });
+    });
 
     ctx.textAlign = 'left';
 
@@ -12563,6 +12603,13 @@ function draw() {
 
   if (gameClear || gameOver) {
     drawEndingScreen();
+    // 寿命0・SAN0・孤独の各BADENDは、表示直後に画面が黒から浮かび上がるようにする
+    if (endingFadeInRemainingMs > 0 && endingFadeInTypes.has(endingType)) {
+      const fadeAlpha = endingFadeInRemainingMs / endingFadeInDurationMs;
+      ctx.fillStyle = `rgba(0, 0, 0, ${fadeAlpha})`;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      uiButtons.length = 0;
+    }
   }
   // 18時に固定敵（脅威）が残っている：残業するかどうかの選択画面
   if (fixedEnemyOvertimeChoiceActive && !gameOver && !gameClear) {
@@ -12807,11 +12854,12 @@ function draw() {
     ctx.textAlign = 'left';
 
     // 表示された3択が気に入らない場合、残り回数の範囲でリロール（選び直し）できる。
-    // また、今回は取らない代わりにSAN・寿命を回復するボタンも並べて置く
+    // また、今回は取らない代わりにSAN・寿命（自分・同僚どちらか）を回復するボタンも並べて置く
     const rerollBtnW = 190, rerollBtnH = 34;
-    const skipBtnW = 260, skipBtnH = 34;
+    const skipBtnW = 240, skipBtnH = 34;
+    const giftBtnW = 240, giftBtnH = 34;
     const topRowGap = 12;
-    const topRowTotalW = rerollBtnW + skipBtnW + topRowGap;
+    const topRowTotalW = rerollBtnW + skipBtnW + giftBtnW + topRowGap * 2;
     const topRowStartX = canvas.width / 2 - topRowTotalW / 2;
     const rerollAvailable = !selectionLocked && specialSkillRerollsRemaining > 0;
     drawUiButton(topRowStartX, 82, rerollBtnW, rerollBtnH,
@@ -12826,6 +12874,13 @@ function draw() {
       skipAvailable ? skipSpecialSkillSelection : () => {},
       skipAvailable
         ? { fillStyle: 'rgba(20, 90, 60, 0.6)', strokeStyle: '#80cbc4', font: 'bold 13px sans-serif' }
+        : { fillStyle: 'rgba(60, 60, 60, 0.5)', strokeStyle: '#616161', textColor: '#9e9e9e', font: 'bold 13px sans-serif' });
+    const giftAvailable = !selectionLocked && partner.active;
+    drawUiButton(topRowStartX + rerollBtnW + topRowGap + skipBtnW + topRowGap, 82, giftBtnW, giftBtnH,
+      `同僚に差し入れ（同僚SAN・寿命+${specialSkillGiftPartnerRecoveryAmount}）`,
+      giftAvailable ? giftPartnerInsteadOfSpecialSkillSelection : () => {},
+      giftAvailable
+        ? { fillStyle: 'rgba(140, 90, 20, 0.6)', strokeStyle: '#ffcc80', font: 'bold 13px sans-serif' }
         : { fillStyle: 'rgba(60, 60, 60, 0.5)', strokeStyle: '#616161', textColor: '#9e9e9e', font: 'bold 13px sans-serif' });
 
     ctx.save();
@@ -12847,7 +12902,7 @@ function draw() {
       UR: { fill: 'rgba(233, 30, 99, 0.30)', stroke: '#ff4081', badge: '#ff80ab', glow: 20 }
     };
     specialSkillChoices.forEach((skill, index) => {
-      const descLines = wrapTextToWidth(skill.description, cardWidth - 44);
+      const descLines = wrapTextToWidth(skill.choiceDescription || skill.description, cardWidth - 44);
       const cardHeight = Math.max(95, cardTextTop + descLines.length * descLineHeight + cardPaddingBottom);
       const currentSkillLevel = specialSkillLevels.get(skill.id) || 0;
       const style = rarityCardStyle[skill.rarity] || rarityCardStyle.C;
