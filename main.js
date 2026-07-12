@@ -546,8 +546,10 @@ function spawnSlashEffect(x, y, angle, entityRadius) {
 // （中心よりやや下寄り）にする
 let lightsaberEffect = null; // { x, y, angle, length, timer, totalDurationMs, isDarkBlade }
 const lightsaberEffectDurationMs = 320; // ワイプ（刃の振り）にかける時間
-// 「闇を切り裂く剣」限定：ワイプが振り切った直後、範囲全体が発光し、そこから500msでフェードアウトする
-const darkSwordPostSwipeGlowDurationMs = 500;
+// 「闇を切り裂く剣」限定：ワイプが振り切った直後、範囲全体が発光し、そこからフェードアウトする
+const darkSwordPostSwipeGlowDurationMs = 350;
+// 「闇を切り裂く剣」限定：スワイプ開始時点から、エフェクト終了時点にかけて最大この倍率まで拡大していく
+const darkSwordMaxExpandRatio = 0.2;
 function spawnLightsaberBladeEffectIfActive() {
   if (specialSkillEffects.deflectRangeMultiplier <= 1) return;
   const selfImgSize = player.radius * 4.8;
@@ -11544,7 +11546,8 @@ function draw() {
   // 特殊スキル「ライトセーバー」「闇を切り裂く剣」：パリィした瞬間、自機を一端とする光る棒が、
   // 自機の向きを中心に270度ワイプするエフェクトを描く（棒の長さ＝パリィの効果範囲）。
   // 自機アイコンより先に描くことで、自機の裏を通るように見せる。少し前の角度もうっすら重ねて残像を表現する。
-  // 「闇を切り裂く剣」限定：ワイプが振り切った直後、範囲全体（270度の扇形）を発光させ、そこから500msでフェードアウトする
+  // 「闇を切り裂く剣」限定：スワイプ開始時点からエフェクト終了まで、最大20%まで徐々に拡大していく。
+  // また、ワイプが振り切った直後は範囲全体（270度の扇形）を発光させ、そこからフェードアウトする
   if (lightsaberEffect) {
     const elapsedMs = lightsaberEffect.totalDurationMs - lightsaberEffect.timer;
     const startAngle = lightsaberEffect.angle - slashEffectRangeRad / 2;
@@ -11552,6 +11555,11 @@ function draw() {
     // 「闇を切り裂く剣」は明るい黄色寄り、通常の「ライトセーバー」は水色の刃にする
     const outerColor = lightsaberEffect.isDarkBlade ? '#fff176' : '#e0f7fa';
     const glowColor = lightsaberEffect.isDarkBlade ? '#fbc02d' : '#80deea';
+    // 「闇を切り裂く剣」限定：スワイプ開始からエフェクト終了にかけて、最大darkSwordMaxExpandRatioまで拡大する
+    const expandScale = lightsaberEffect.isDarkBlade
+      ? 1 + darkSwordMaxExpandRatio * Math.min(1, elapsedMs / lightsaberEffect.totalDurationMs)
+      : 1;
+    const currentLength = lightsaberEffect.length * expandScale;
 
     if (elapsedMs <= lightsaberEffectDurationMs) {
       // ワイプ中：刃の振りを、少し前の角度もうっすら重ねた残像として描く
@@ -11566,8 +11574,8 @@ function draw() {
         if (trailProgress <= 0) continue;
         const sweepProgress = Math.min(1, trailProgress / 0.6); // 最初の60%で振り切る
         const currentAngle = startAngle + slashEffectRangeRad * sweepProgress;
-        const tipX = lightsaberEffect.x + Math.cos(currentAngle) * lightsaberEffect.length;
-        const tipY = lightsaberEffect.y + Math.sin(currentAngle) * lightsaberEffect.length;
+        const tipX = lightsaberEffect.x + Math.cos(currentAngle) * currentLength;
+        const tipY = lightsaberEffect.y + Math.sin(currentAngle) * currentLength;
         // 一番新しい（i=0）ものだけくっきり、古い残像ほど薄くする
         const trailAlpha = fadeAlpha * (i === 0 ? 1 : (1 - i / (trailCount + 1)) * 0.55);
         ctx.globalAlpha = trailAlpha;
@@ -11589,23 +11597,19 @@ function draw() {
       }
       ctx.restore();
     } else {
-      // ワイプ後（闇を切り裂く剣のみ到達）：振り切った範囲全体を発光させ、500msでフェードアウトする。
-      // 全体の不透明度を下げるフェード・自機中心から外側へ向かって発光そのものが消えていく
-      // （＝内側から順に描画範囲を削っていく）ワイプに加えて、全体がじわっと拡大していく効果も同じ500msで重ねる
+      // ワイプ後（闇を切り裂く剣のみ到達）：振り切った範囲全体を発光させ、フェードアウトする
+      // （拡大は上のexpandScaleで引き続き進行する）
       const glowProgress = Math.min(1, (elapsedMs - lightsaberEffectDurationMs) / darkSwordPostSwipeGlowDurationMs);
       const glowAlpha = Math.max(0, 1 - glowProgress) * 0.5; // 塗りつぶしではなく淡い発光に見えるよう控えめにする
-      const expandScale = 1 + glowProgress * 0.4; // フェードアウトにかけて、最大40%まで広がっていく
-      const outerRadius = lightsaberEffect.length * expandScale;
-      const clearRadius = outerRadius * glowProgress; // ここより内側は描画しない（中心から消えていく）
-      if (glowAlpha > 0 && clearRadius < outerRadius) {
+      if (glowAlpha > 0) {
         ctx.save();
         ctx.globalAlpha = glowAlpha;
         ctx.fillStyle = outerColor;
         ctx.shadowColor = glowColor;
         ctx.shadowBlur = 24;
         ctx.beginPath();
-        ctx.arc(lightsaberEffect.x, lightsaberEffect.y, clearRadius, startAngle, endAngle);
-        ctx.arc(lightsaberEffect.x, lightsaberEffect.y, outerRadius, endAngle, startAngle, true);
+        ctx.moveTo(lightsaberEffect.x, lightsaberEffect.y);
+        ctx.arc(lightsaberEffect.x, lightsaberEffect.y, currentLength, startAngle, endAngle);
         ctx.closePath();
         ctx.fill();
         ctx.restore();
