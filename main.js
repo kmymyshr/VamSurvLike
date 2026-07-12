@@ -532,15 +532,18 @@ function spawnSlashEffect(x, y, angle, entityRadius) {
 // 棒の長さ＝パリィの効果範囲（getDeflectRange()。ライトセーバーは1.2倍、闇を切り裂く剣は2倍）。
 // 回転の中心は自機の中心ではなく、自機アイコンの高さ（player.radius * 4.8）の下から40%の位置
 // （中心よりやや下寄り）にする
-let lightsaberEffect = null; // { x, y, angle, length, timer, isDarkBlade }
-const lightsaberEffectDurationMs = 320;
+let lightsaberEffect = null; // { x, y, angle, length, timer, totalDurationMs, isDarkBlade }
+const lightsaberEffectDurationMs = 320; // ワイプ（刃の振り）にかける時間
+// 「闇を切り裂く剣」限定：ワイプが振り切った直後、範囲全体が発光し、そこから500msでフェードアウトする
+const darkSwordPostSwipeGlowDurationMs = 500;
 function spawnLightsaberBladeEffectIfActive() {
   if (specialSkillEffects.deflectRangeMultiplier <= 1) return;
   const selfImgSize = player.radius * 4.8;
   const pivotY = player.y + selfImgSize * (0.5 - 0.4);
   // 「闇を切り裂く剣」習得中は、刃の色を紫系に変えて演出を差別化する
   const isDarkBlade = (specialSkillLevels.get('dark-cleaving-sword') || 0) > 0;
-  lightsaberEffect = { x: player.x, y: pivotY, angle: player.angle, length: getDeflectRange(), timer: lightsaberEffectDurationMs, isDarkBlade };
+  const totalDurationMs = lightsaberEffectDurationMs + (isDarkBlade ? darkSwordPostSwipeGlowDurationMs : 0);
+  lightsaberEffect = { x: player.x, y: pivotY, angle: player.angle, length: getDeflectRange(), timer: totalDurationMs, totalDurationMs, isDarkBlade };
 }
 const baseFireRate = 175; // 基本の発射間隔（ミリ秒。以前の設定からさらに半分に短縮）
 let lastFire = 0;
@@ -11521,45 +11524,67 @@ function draw() {
 
   // 特殊スキル「ライトセーバー」「闇を切り裂く剣」：パリィした瞬間、自機を一端とする光る棒が、
   // 自機の向きを中心に270度ワイプするエフェクトを描く（棒の長さ＝パリィの効果範囲）。
-  // 自機アイコンより先に描くことで、自機の裏を通るように見せる。少し前の角度もうっすら重ねて残像を表現する
+  // 自機アイコンより先に描くことで、自機の裏を通るように見せる。少し前の角度もうっすら重ねて残像を表現する。
+  // 「闇を切り裂く剣」限定：ワイプが振り切った直後、範囲全体（270度の扇形）を発光させ、そこから500msでフェードアウトする
   if (lightsaberEffect) {
-    const progress = 1 - lightsaberEffect.timer / lightsaberEffectDurationMs;
+    const elapsedMs = lightsaberEffect.totalDurationMs - lightsaberEffect.timer;
     const startAngle = lightsaberEffect.angle - slashEffectRangeRad / 2;
-    const fadeAlpha = progress < 0.6 ? 1 : Math.max(0, 1 - (progress - 0.6) / 0.4); // 60%を過ぎたらフェードアウト
-    const trailCount = 5;
-    const trailStepProgress = 0.05; // 残像1本ごとに遡る、スイング進行度（0〜1）の量
+    const endAngle = startAngle + slashEffectRangeRad;
     // 「闇を切り裂く剣」は禍々しい紫、通常の「ライトセーバー」は水色の刃にする
     const outerColor = lightsaberEffect.isDarkBlade ? '#b388ff' : '#e0f7fa';
     const glowColor = lightsaberEffect.isDarkBlade ? '#4a148c' : '#80deea';
-    ctx.save();
-    ctx.lineCap = 'round';
-    for (let i = trailCount; i >= 0; i--) {
-      const trailProgress = progress - i * trailStepProgress;
-      if (trailProgress <= 0) continue;
-      const sweepProgress = Math.min(1, trailProgress / 0.6); // 最初の60%で振り切る
-      const currentAngle = startAngle + slashEffectRangeRad * sweepProgress;
-      const tipX = lightsaberEffect.x + Math.cos(currentAngle) * lightsaberEffect.length;
-      const tipY = lightsaberEffect.y + Math.sin(currentAngle) * lightsaberEffect.length;
-      // 一番新しい（i=0）ものだけくっきり、古い残像ほど薄くする
-      const trailAlpha = fadeAlpha * (i === 0 ? 1 : (1 - i / (trailCount + 1)) * 0.55);
-      ctx.globalAlpha = trailAlpha;
-      ctx.strokeStyle = outerColor;
-      ctx.lineWidth = 7;
+
+    if (elapsedMs <= lightsaberEffectDurationMs) {
+      // ワイプ中：刃の振りを、少し前の角度もうっすら重ねた残像として描く
+      const progress = elapsedMs / lightsaberEffectDurationMs;
+      const fadeAlpha = progress < 0.6 ? 1 : Math.max(0, 1 - (progress - 0.6) / 0.4); // 60%を過ぎたらフェードアウト
+      const trailCount = 5;
+      const trailStepProgress = 0.05; // 残像1本ごとに遡る、スイング進行度（0〜1）の量
+      ctx.save();
+      ctx.lineCap = 'round';
+      for (let i = trailCount; i >= 0; i--) {
+        const trailProgress = progress - i * trailStepProgress;
+        if (trailProgress <= 0) continue;
+        const sweepProgress = Math.min(1, trailProgress / 0.6); // 最初の60%で振り切る
+        const currentAngle = startAngle + slashEffectRangeRad * sweepProgress;
+        const tipX = lightsaberEffect.x + Math.cos(currentAngle) * lightsaberEffect.length;
+        const tipY = lightsaberEffect.y + Math.sin(currentAngle) * lightsaberEffect.length;
+        // 一番新しい（i=0）ものだけくっきり、古い残像ほど薄くする
+        const trailAlpha = fadeAlpha * (i === 0 ? 1 : (1 - i / (trailCount + 1)) * 0.55);
+        ctx.globalAlpha = trailAlpha;
+        ctx.strokeStyle = outerColor;
+        ctx.lineWidth = 7;
+        ctx.shadowColor = glowColor;
+        ctx.shadowBlur = 16;
+        ctx.beginPath();
+        ctx.moveTo(lightsaberEffect.x, lightsaberEffect.y);
+        ctx.lineTo(tipX, tipY);
+        ctx.stroke();
+        // 内側にもう1本重ねて、斬撃ワイプエフェクトと同じ太さの変化を出す
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(lightsaberEffect.x, lightsaberEffect.y);
+        ctx.lineTo(tipX, tipY);
+        ctx.stroke();
+      }
+      ctx.restore();
+    } else {
+      // ワイプ後（闇を切り裂く剣のみ到達）：振り切った範囲全体を発光させ、500msでフェードアウトする
+      const glowProgress = (elapsedMs - lightsaberEffectDurationMs) / darkSwordPostSwipeGlowDurationMs;
+      const glowAlpha = Math.max(0, 1 - glowProgress) * 0.5; // 塗りつぶしではなく淡い発光に見えるよう控えめにする
+      ctx.save();
+      ctx.globalAlpha = glowAlpha;
+      ctx.fillStyle = outerColor;
       ctx.shadowColor = glowColor;
-      ctx.shadowBlur = 16;
+      ctx.shadowBlur = 24;
       ctx.beginPath();
       ctx.moveTo(lightsaberEffect.x, lightsaberEffect.y);
-      ctx.lineTo(tipX, tipY);
-      ctx.stroke();
-      // 内側にもう1本重ねて、斬撃ワイプエフェクトと同じ太さの変化を出す
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(lightsaberEffect.x, lightsaberEffect.y);
-      ctx.lineTo(tipX, tipY);
-      ctx.stroke();
+      ctx.arc(lightsaberEffect.x, lightsaberEffect.y, lightsaberEffect.length, startAngle, endAngle);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
     }
-    ctx.restore();
   }
 
   // 自分のアイコン（性別選択で選んだimages/self内の画像を使用）。
