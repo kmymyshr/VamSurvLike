@@ -3502,11 +3502,23 @@ function isDailyQuotaMet() {
 }
 
 // 日の途中でノルマを達成したかどうかをキル時にチェックする。
-// 達成した日の残りは、易しい仕事のみになる（getAllowedMaxTypeIndexByRank参照）
+// 一度もノーマルエンドを経ていない（チュートリアル期間の）場合は、達成した日の残りが易しい仕事のみになるだけ。
+// 一度でもノーマルエンドを経た後は、ノルマ達成と同時にその日を18時（終業時刻）扱いにして即座に終業する
+// （早くノルマを達成するほど、早く一日が終わるようにするための仕組み）
 function checkEarlyDailyQuotaAchievement() {
   if (dailyQuotaAchievedEarly) return;
   if (isDailyQuotaMet()) {
     dailyQuotaAchievedEarly = true;
+    // 定時報告・「大規模プロジェクト」が残っている間は、18時到達時の既存の残業判定と同様、
+    // それらを片付けるまでは終業できない（片付けた側の呼び出し元が、その時点で改めてこの関数を呼び直す）
+    if (hasEverReachedNormalEnd() && currentHour < dayEndHour && dayTransitionPhase === null &&
+        !scheduledReport && !midBossEvent) {
+      currentHour = dayEndHour;
+      lastHourTime = gameClockMs;
+      showMessage('本日のノルマ達成！ 早めに切り上げて退勤します', 3500, '#69f0ae', '22px sans-serif');
+      endWorkday();
+      return;
+    }
     showMessage('本日のノルマ達成！', 3500, '#69f0ae', '22px sans-serif');
     // ノルマ未達成が理由で残業していた場合、他に残業理由がなければ、待たずにその場で退勤する
     if (currentHour >= dayEndHour && dayTransitionPhase === null &&
@@ -5708,10 +5720,14 @@ function drawDreamBossIntroSequence() {
   ctx.fillStyle = 'black';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // 赤字への変化・爪痕/取り消し線の出現度合い（0〜1）。クリック前は0のまま
+  // 赤字への変化・爪痕/取り消し線の出現度合い（0〜1）。クリック前は0のまま。
+  // fadeOutフェーズはphaseTimerMsが0からやり直しになるため、ここで単純に同じ式を使うと赤→白に戻ってしまう。
+  // fadeOut中は変化しきった状態（1）で固定し、赤いまま最後までフェードアウトさせる
   const transformP = dreamBossIntroSequence.phase === 'clock'
     ? 0
-    : Math.min(1, dreamBossIntroSequence.phaseTimerMs / dreamBossIntroTransformDurationMs);
+    : dreamBossIntroSequence.phase === 'fadeOut'
+      ? 1
+      : Math.min(1, dreamBossIntroSequence.phaseTimerMs / dreamBossIntroTransformDurationMs);
   const alpha = dreamBossIntroSequence.phase === 'fadeOut'
     ? Math.max(0, 1 - dreamBossIntroSequence.phaseTimerMs / dreamBossIntroFadeOutDurationMs)
     : 1;
