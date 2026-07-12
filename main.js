@@ -548,6 +548,8 @@ let lightsaberEffect = null; // { x, y, angle, length, timer, totalDurationMs, i
 const lightsaberEffectDurationMs = 320; // ワイプ（刃の振り）にかける時間
 // 「闇を切り裂く剣」限定：ワイプが振り切った直後、範囲全体が発光し、そこからフェードアウトする
 const darkSwordPostSwipeGlowDurationMs = 350;
+// 「闇を切り裂く剣」限定：ワイプ完了のこのぶん前から、発光がフェードインし始める（ワイプ完了時にちょうど満点になる）
+const darkSwordGlowFadeInLeadMs = 200;
 // 「闇を切り裂く剣」限定：スワイプ開始時点から、エフェクト終了時点にかけて最大この倍率まで拡大していく
 const darkSwordMaxExpandRatio = 0.2;
 function spawnLightsaberBladeEffectIfActive() {
@@ -11547,7 +11549,8 @@ function draw() {
   // 自機の向きを中心に270度ワイプするエフェクトを描く（棒の長さ＝パリィの効果範囲）。
   // 自機アイコンより先に描くことで、自機の裏を通るように見せる。少し前の角度もうっすら重ねて残像を表現する。
   // 「闇を切り裂く剣」限定：スワイプ開始時点からエフェクト終了まで、最大20%まで徐々に拡大していく。
-  // また、ワイプが振り切った直後は範囲全体（270度の扇形）を発光させ、そこからフェードアウトする
+  // また、ワイプ完了の200ms前から範囲全体（270度の扇形）の発光がフェードインし始め、
+  // ワイプ完了時に満点になり、そこからフェードアウトする（フェードイン中もワイプ自体は続いている）
   if (lightsaberEffect) {
     const elapsedMs = lightsaberEffect.totalDurationMs - lightsaberEffect.timer;
     const startAngle = lightsaberEffect.angle - slashEffectRangeRad / 2;
@@ -11596,11 +11599,20 @@ function draw() {
         ctx.stroke();
       }
       ctx.restore();
-    } else {
-      // ワイプ後（闇を切り裂く剣のみ到達）：振り切った範囲全体を発光させ、フェードアウトする
-      // （拡大は上のexpandScaleで引き続き進行する）
-      const glowProgress = Math.min(1, (elapsedMs - lightsaberEffectDurationMs) / darkSwordPostSwipeGlowDurationMs);
-      const glowAlpha = Math.max(0, 1 - glowProgress) * 0.5; // 塗りつぶしではなく淡い発光に見えるよう控えめにする
+    }
+
+    // 発光（闇を切り裂く剣のみ）：ワイプ完了の200ms前からフェードイン→ワイプ完了時に満点→フェードアウト。
+    // ワイプ中の描画（上のブロック）とは独立しているため、フェードイン中は両方が重なって見える
+    if (lightsaberEffect.isDarkBlade) {
+      const glowFadeInStartMs = lightsaberEffectDurationMs - darkSwordGlowFadeInLeadMs;
+      let glowAlpha = 0;
+      if (elapsedMs >= glowFadeInStartMs && elapsedMs <= lightsaberEffectDurationMs) {
+        const fadeInProgress = (elapsedMs - glowFadeInStartMs) / darkSwordGlowFadeInLeadMs;
+        glowAlpha = fadeInProgress * 0.5;
+      } else if (elapsedMs > lightsaberEffectDurationMs) {
+        const glowProgress = Math.min(1, (elapsedMs - lightsaberEffectDurationMs) / darkSwordPostSwipeGlowDurationMs);
+        glowAlpha = Math.max(0, 1 - glowProgress) * 0.5; // 塗りつぶしではなく淡い発光に見えるよう控えめにする
+      }
       if (glowAlpha > 0) {
         ctx.save();
         ctx.globalAlpha = glowAlpha;
