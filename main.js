@@ -11589,20 +11589,25 @@ function draw() {
       }
       ctx.restore();
     } else {
-      // ワイプ後（闇を切り裂く剣のみ到達）：振り切った範囲全体を発光させ、500msでフェードアウトする
-      const glowProgress = (elapsedMs - lightsaberEffectDurationMs) / darkSwordPostSwipeGlowDurationMs;
+      // ワイプ後（闇を切り裂く剣のみ到達）：振り切った範囲全体を発光させ、500msでフェードアウトする。
+      // 全体の不透明度を下げるフェードに加えて、自機中心から外側へ向かって発光そのものが
+      // 消えていく（＝内側から順に描画範囲を削っていく）ワイプも同じ500msで重ねる
+      const glowProgress = Math.min(1, (elapsedMs - lightsaberEffectDurationMs) / darkSwordPostSwipeGlowDurationMs);
       const glowAlpha = Math.max(0, 1 - glowProgress) * 0.5; // 塗りつぶしではなく淡い発光に見えるよう控えめにする
-      ctx.save();
-      ctx.globalAlpha = glowAlpha;
-      ctx.fillStyle = outerColor;
-      ctx.shadowColor = glowColor;
-      ctx.shadowBlur = 24;
-      ctx.beginPath();
-      ctx.moveTo(lightsaberEffect.x, lightsaberEffect.y);
-      ctx.arc(lightsaberEffect.x, lightsaberEffect.y, lightsaberEffect.length, startAngle, endAngle);
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
+      const clearRadius = lightsaberEffect.length * glowProgress; // ここより内側は描画しない（中心から消えていく）
+      if (glowAlpha > 0 && clearRadius < lightsaberEffect.length) {
+        ctx.save();
+        ctx.globalAlpha = glowAlpha;
+        ctx.fillStyle = outerColor;
+        ctx.shadowColor = glowColor;
+        ctx.shadowBlur = 24;
+        ctx.beginPath();
+        ctx.arc(lightsaberEffect.x, lightsaberEffect.y, clearRadius, startAngle, endAngle);
+        ctx.arc(lightsaberEffect.x, lightsaberEffect.y, lightsaberEffect.length, endAngle, startAngle, true);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
     }
   }
 
