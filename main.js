@@ -340,7 +340,7 @@ function getEnemyTypeEffectiveRatio() {
 // 敵の初期生成より前に参照できるよう、ランクをここで宣言する
 let rank = 1;
 // getAllowedMaxTypeIndexByRankがゲーム開始前のウェーブ生成時にも参照するため、ここで宣言する
-let weeklyQuotaAchievedEarly = false; // 週の途中でノルマを達成済みか
+let dailyQuotaAchievedEarly = false; // その日のうちにノルマを達成済みか
 // setEnemyStatsが敵の強さを日数に応じて調整する際に参照するため、ここで宣言する
 let dayNumber = 1; // 実際に稼働した日数（1始まり）
 
@@ -1151,22 +1151,14 @@ let dayTransitionAdvanceFn = null; // 画面が暗転しきった瞬間に実行
 let dayTransitionWaitingTimerMs = 0;
 const dayTransitionAutoAdvanceMs = 3000;
 
-// ===== DAYカウンターと週次ノルマシステム =====
+// ===== DAYカウンターと日次ノルマシステム =====
 // dayNumber変数は、敵の強さ調整に使うためファイル前半で宣言済み
-let weeklyKillQuota = 0; // 今週の撃破ノルマ
-let weeklyScoreQuota = 0; // 今週のスコア獲得ノルマ
-let weeklyKills = 0; // 今週の撃破数
-let weeklyScoreGained = 0; // 今週のスコア獲得量（減点は含まない）
-let weekendWorkChoice = false; // 「休日出勤しますか」の選択待ち
-let weekendWorkQuotaChoice = false; // 休日出勤中にノルマ達成し、「家に帰りますか」の選択待ち
+let dailyKillQuota = 0; // 本日の撃破ノルマ
+let dailyScoreQuota = 0; // 本日のスコア獲得ノルマ
+let dailyKills = 0; // 本日の撃破数
+let dailyScoreGained = 0; // 本日のスコア獲得量（減点は含まない）
 let fixedEnemyOvertimeChoiceActive = false; // 18時に固定敵が残っている時の「残業しますか？」の選択待ち
 let fixedEnemyOvertimeConfirmed = false; // その日、「残業する」を選んだ後は、以降の時報で再度尋ねない
-const weekendWorkSanDrainPerSec = 0.5; // 休日出勤中、1秒あたり緩やかに減少するSAN
-const weekendWorkLifespanDrainPerSec = 0.15; // 休日出勤中、1秒あたり緩やかに減少する寿命
-// ノルマ未達成時のペナルティ・達成時のボーナスの割合
-const weeklyFailScorePenaltyRatio = 0.25; // Scoreの25%を失う
-const weeklyFailSanPenaltyRatio = 0.35; // maxSanの35%ぶんSANを失う
-const restEvaluationPenaltyRatio = 0.10; // 休日出勤を断った場合、さらにScoreの10%を失う
 
 // 背景画像の窓（オフィスの窓ガラス部分）の下端のY座標。
 // 自機・同僚はこの窓の範囲には入れず、アイテムやクイズの選択肢もここより上には出現させない。
@@ -1250,9 +1242,9 @@ function defeatScheduledReport() {
   if (!scheduledReport) return;
   const reward = Math.ceil(35 * specialSkillEffects.scoreGainMultiplier);
   score += reward;
-  weeklyScoreGained += reward;
+  dailyScoreGained += reward;
   scheduledReport = null;
-  checkEarlyQuotaAchievement();
+  checkEarlyDailyQuotaAchievement();
   showMessage(`定時報告を完了！ Score +${reward}`, 2500, '#69f0ae', '24px sans-serif');
   // 残業中に片付けた場合は、待たずにその場で退勤する
   if (currentHour >= dayEndHour && dayTransitionPhase === null) {
@@ -1674,8 +1666,8 @@ function defeatFixedEnemy(fx) {
   const def = fx.def;
   const reward = Math.ceil(28 * specialSkillEffects.scoreGainMultiplier * getEnemyDifficultyMultiplier());
   score += reward;
-  weeklyScoreGained += reward;
-  checkEarlyQuotaAchievement();
+  dailyScoreGained += reward;
+  checkEarlyDailyQuotaAchievement();
   showMessage(`${def.name} を撃退！ Score +${reward}`, 2500, '#69f0ae', '23px sans-serif');
   fixedEnemyDefeatInfoDisplay = { name: def.name, info: def.info, elapsedMs: 0 };
   recordFixedEnemyDefeatForStats(def.name);
@@ -1944,13 +1936,13 @@ function finishLunchAtDayEnd() {
   lunchState = null;
 }
 
-// --- クイズ：平日の10時・15時に抽選し、週2回まで発生 ---
+// --- クイズ：平日の10時・15時に抽選し、1日1回まで発生 ---
 const quizHours = [10, 15];
 const quizChancePerOpportunity = 0.3; // 従来比150%
-const maxWeeklyQuizCount = 2;
+const maxDailyQuizCount = 1;
 const quizAnswerLockDurationMs = 1500; // 出現直後に誤って踏んで回答してしまわないための猶予時間
 const quizTimeLimitMs = 20000; // 出現から回答しないまま消えるまでの実時間（3倍加速の影響を受けない。従来の倍にしてある）
-let weeklyQuizCount = 0;
+let dailyQuizCount = 0;
 let quizState = null;
 let quizAnswerUnlockAt = 0; // この時刻（Date.now()基準）を過ぎるまで選択肢に触れても回答にならない
 let quizExpireAt = 0; // この時刻（Date.now()基準）を過ぎたら、未回答のままクイズを消す
@@ -2018,7 +2010,7 @@ const quizQuestions = [
 ];
 
 function startQuizEvent() {
-  if (quizState || weeklyQuizCount >= maxWeeklyQuizCount) return;
+  if (quizState || dailyQuizCount >= maxDailyQuizCount) return;
   const source = quizQuestions[Math.floor(Math.random() * quizQuestions.length)];
   // 正解位置が固定化しないよう選択肢を並べ替える
   // （sort(() => Math.random() - 0.5)は要素数が少ないと偏りが出やすいため、Fisher-YatesのshuffleArrayを使う）
@@ -2031,7 +2023,7 @@ function startQuizEvent() {
     choices: shuffled.map(choice => choice.text),
     correctIndex: shuffled.findIndex(choice => choice.correct)
   };
-  weeklyQuizCount++;
+  dailyQuizCount++;
   quizAnswerUnlockAt = Date.now() + quizAnswerLockDurationMs;
   quizExpireAt = Date.now() + quizTimeLimitMs;
   showMessage('突発クイズ！ ①②③のボタンをタップして回答', 2800, '#90caf9', '22px sans-serif');
@@ -2071,7 +2063,7 @@ function processTimedHourEvents(previousHour, newHour) {
     const weekday = currentDate.getDay();
     const isWeekday = weekday >= 1 && weekday <= 5 && !isHoliday(currentDate);
     // ボス系の敵（ラスボス・「大規模プロジェクト」）との戦闘中はクイズを出さない
-    if (isWeekday && quizHours.includes(hour) && weeklyQuizCount < maxWeeklyQuizCount && !quizState &&
+    if (isWeekday && quizHours.includes(hour) && dailyQuizCount < maxDailyQuizCount && !quizState &&
         !bossEvent && !midBossEvent && Math.random() < quizChancePerOpportunity) {
       startQuizEvent();
     }
@@ -3401,45 +3393,36 @@ function nextMonday(date) {
   return d;
 }
 
-let weeklyQuotaEaseMultiplier = 1;
+let dailyQuotaEaseMultiplier = 1;
 
-// ランクに応じて今週のノルマを再設定する
+// ランクに応じて本日のノルマを再設定する（週次ノルマの基準値を5日ぶんで割った水準）。
 // 集中して手を止めずにプレイしてようやく届く程度の、ぎりぎり達成できる水準にしてある
-function resetWeeklyQuotaForNewWeek() {
-  weeklyKillQuota = Math.round((20 + (rank - 1) * 7) * weeklyQuotaEaseMultiplier);
-  weeklyScoreQuota = Math.round((80 + (rank - 1) * 30) * weeklyQuotaEaseMultiplier);
-  weeklyKills = 0;
-  weeklyScoreGained = 0;
-  weeklyQuotaAchievedEarly = false;
-  weeklyQuizCount = 0;
+function resetDailyQuotaForNewDay() {
+  dailyKillQuota = Math.round((4 + (rank - 1) * 1) * dailyQuotaEaseMultiplier);
+  dailyScoreQuota = Math.round((16 + (rank - 1) * 6) * dailyQuotaEaseMultiplier);
+  dailyKills = 0;
+  dailyScoreGained = 0;
+  dailyQuotaAchievedEarly = false;
+  dailyQuizCount = 0;
 }
 
-// 週の途中でノルマを達成したかどうかをキル時にチェックする
-function checkEarlyQuotaAchievement() {
-  if (weeklyQuotaAchievedEarly) return;
-  if (isWeekEndDay(currentDate)) return; // 最終日はresolveWeekEndで判定するため、ここでは扱わない
-  if (weeklyKills >= weeklyKillQuota || weeklyScoreGained >= weeklyScoreQuota) {
-    weeklyQuotaAchievedEarly = true;
-    showMessage('今週のノルマ達成！', 3500, '#69f0ae', '22px sans-serif');
-    // 休日出勤中にノルマを達成したら、そのまま帰るかどうかを選ばせる
-    const isWeekendWorkDay = currentDate.getDay() === 0 || currentDate.getDay() === 6;
-    if (isWeekendWorkDay) {
-      weekendWorkQuotaChoice = true;
+// 現在のノルマを達成しているかどうかを返す（達成済みフラグ・撃破数・スコアいずれかの条件で判定）
+function isDailyQuotaMet() {
+  return dailyQuotaAchievedEarly || dailyKills >= dailyKillQuota || dailyScoreGained >= dailyScoreQuota;
+}
+
+// 日の途中でノルマを達成したかどうかをキル時にチェックする。
+// 達成した日の残りは、易しい仕事のみになる（getAllowedMaxTypeIndexByRank参照）
+function checkEarlyDailyQuotaAchievement() {
+  if (dailyQuotaAchievedEarly) return;
+  if (isDailyQuotaMet()) {
+    dailyQuotaAchievedEarly = true;
+    showMessage('本日のノルマ達成！', 3500, '#69f0ae', '22px sans-serif');
+    // ノルマ未達成が理由で残業していた場合、他に残業理由がなければ、待たずにその場で退勤する
+    if (currentHour >= dayEndHour && dayTransitionPhase === null &&
+        !scheduledReport && !midBossEvent && !(fixedEnemies.length > 0 && fixedEnemyOvertimeConfirmed)) {
+      endWorkday();
     }
-  }
-}
-
-// 休日出勤を切り上げて、翌週の平日の流れへ戻る
-function goHomeFromWeekendWork() {
-  showMessage('今日はここまで。切り上げて帰宅した。', 2500, '#90caf9', '22px sans-serif');
-  startDayTransition(jumpToNextMondayAndResetWeek);
-}
-
-// 休日出勤中にノルマを達成した際の「家に帰りますか」選択を処理する
-function handleWeekendWorkQuotaChoice(goHome) {
-  weekendWorkQuotaChoice = false;
-  if (goHome) {
-    goHomeFromWeekendWork();
   }
 }
 
@@ -4040,12 +4023,7 @@ function checkAndApplyRankUp() {
   }
 }
 
-// 翌週の開始時（月曜日を迎えた瞬間）に、週次ノルマをリセットする
-function startNewWeek() {
-  resetWeeklyQuotaForNewWeek();
-}
-
-// ===== 日次進行・週次ノルマ判定・休日フロー =====
+// ===== 日次進行・日次ノルマ判定・休日フロー =====
 
 // 画面フェードアウト→残っている仕事（敵）の再配置→フェードインの演出を開始する。
 // advanceFnは画面が暗転しきった瞬間に呼ばれ、実際の日付・カウンターの更新を行う
@@ -4133,14 +4111,12 @@ function autoAdvanceDay() {
   coffeeDailyCount = 0;
   chocolateDailyCount = 0;
   if (partner.active) partner.chocolateDailyCount = 0;
-  if (currentDate.getDay() === 1) {
-    startNewWeek();
-  }
+  resetDailyQuotaForNewDay();
   lastUpdate = Date.now();
 }
 
-// 週末（土日祝日）を飛ばして次の月曜から新しい週を始める
-function jumpToNextMondayAndResetWeek() {
+// 週末（土日祝日）を飛ばして次の月曜へ進む（週末は必ず休日にする）
+function jumpToNextMonday() {
   clearRemainingItemsAndBulletsForNewDay();
   currentDate = nextMonday(currentDate);
   eveningDrinkRecoveryPenalty = false; // 休日を挟むため、このペナルティは持ち越さない
@@ -4155,36 +4131,13 @@ function jumpToNextMondayAndResetWeek() {
   coffeeDailyCount = 0;
   chocolateDailyCount = 0;
   if (partner.active) partner.chocolateDailyCount = 0;
-  startNewWeek();
+  resetDailyQuotaForNewDay();
   lastUpdate = Date.now();
 }
 
-// 週の終わりを迎えたときに表示する、ノルマ達成時のフレーバーテキスト
-const weekCompleteFlavorTexts = [
-  '一週間が終わった！ようやく休日…',
-  '長い一週間だった…やっと休日だ。',
-  '今週も乗り切った！'
-];
-
-// 週の最終稼働日（金曜相当）の終業処理。ノルマ達成の可否で分岐する
+// 週の最終稼働日（金曜相当）の終業処理：日ノルマの達成可否に関わらず、必ず休日を挟む
 function resolveWeekEnd() {
-  const achieved = weeklyKills >= weeklyKillQuota || weeklyScoreGained >= weeklyScoreQuota;
-  if (achieved) {
-    const bonus = 10 + rank * 3;
-    score += bonus;
-    showMessage(`週間ノルマ達成！ Score +${bonus}`, 4000, '#69f0ae', '28px sans-serif');
-    const flavor = weekCompleteFlavorTexts[Math.floor(Math.random() * weekCompleteFlavorTexts.length)];
-    showMessage(flavor, 3000, '#ffe0b2', '22px sans-serif');
-    applyRestActivity();
-  } else {
-    const scorePenalty = Math.ceil(score * weeklyFailScorePenaltyRatio);
-    const sanPenalty = Math.ceil(maxSan * weeklyFailSanPenaltyRatio);
-    score = Math.max(0, score - scorePenalty);
-    damageSan(sanPenalty);
-    showMessage(`週間ノルマ未達成… Score -${scorePenalty} / SAN -${sanPenalty}`, 4000, '#ff5252', '26px sans-serif');
-    if (gameOver || deathSequence) return;
-    weekendWorkChoice = true;
-  }
+  applyRestActivity();
 }
 
 // ===== 「同僚と遊ぶ」を選んだ時のアドベンチャーパート（簡易サウンドノベル） =====
@@ -4540,7 +4493,7 @@ function forgetRandomSkill() {
 function finishRestDayAndAdvanceToMonday() {
   triggerRandomRestEvent();
   if (gameOver || deathSequence) return;
-  startDayTransition(jumpToNextMondayAndResetWeek);
+  startDayTransition(jumpToNextMonday);
 }
 
 // ===== 画面上に表示する一時メッセージ =====
@@ -4571,8 +4524,8 @@ function getAllowedMaxTypeIndexByRank() {
   // ※ rankNames はこの関数より後で定義されるが、ゲーム開始時の最初のスポーンでも呼ばれるため定数7を直接使う
   const maxIdx = Math.floor((rank / 7) * (enemyTypeNames.length - 1));
   let capped = Math.max(0, Math.min(enemyTypeNames.length - 1, maxIdx));
-  // 週のノルマを早期達成した週は、残りの期間は易しい仕事のみにする
-  if (weeklyQuotaAchievedEarly) capped = Math.min(capped, 1);
+  // 本日のノルマを早期達成した日は、残りの時間は易しい仕事のみにする
+  if (dailyQuotaAchievedEarly) capped = Math.min(capped, 1);
   // 一度もノーマルエンドを経ていない場合（チュートリアル的な特別な5日間のプレイ）：
   // 実際のランクによらず、4日目から高ランクの敵、5日目には最高ランクの敵も出るようにする
   if (!hasEverReachedNormalEnd()) {
@@ -4620,9 +4573,9 @@ function defeatEnemyInstantly(enemyIndex) {
   }
   recordJobDefeatForStats(en.text);
   enemies.splice(enemyIndex, 1);
-  weeklyKills++;
-  weeklyScoreGained += pts;
-  checkEarlyQuotaAchievement();
+  dailyKills++;
+  dailyScoreGained += pts;
+  checkEarlyDailyQuotaAchievement();
   if (countActiveWorkEnemies() === 0) waveCooldownMs = waveCooldownDelayMs;
 }
 
@@ -4702,7 +4655,7 @@ function applyDreamMemoryUpgradesForNewGame() {
   lifespan = maxLifespan;
   skillLevel = 0;
   partnerRelationshipInitial = 50;
-  weeklyQuotaEaseMultiplier = 1;
+  dailyQuotaEaseMultiplier = 1;
   partnerParryChance = Math.min(1, 0.3 + dreamMemorySave.upgrades.partnerAutoParry * 0.14);
   player.speed = 6; // 初期速度（以前の設定の150%）
   // 夢の記憶ポイントで事前に強化した特殊スキルを、DAY1から習得済みの状態で始める
@@ -4725,7 +4678,7 @@ function beginGameplay() {
   lastHourTime = 0;
   dayStartTime = 0;
   dayNumber = 1;
-  resetWeeklyQuotaForNewWeek();
+  resetDailyQuotaForNewDay();
   initPartner();
   // 「自己犠牲」「献身」は1周回につき1回だけ発動できる特殊行動なので、新しい周回の開始時にリセットする
   selfSacrificeUsedThisRun = false;
@@ -4754,22 +4707,6 @@ function beginGameplay() {
     fullAutoModeEnabled = false;
     gameTimeScale = 1;
     threeXModeEnabled = false;
-  }
-}
-
-// 週間ノルマ未達成時：休日出勤するか休むかを処理する
-function handleWeekendWorkChoice(choice) {
-  if (choice === 'work') {
-    // 出勤：土日をまとめて通常の稼働日として続ける
-    weekendWorkChoice = false;
-    startDayTransition(autoAdvanceDay);
-  } else if (choice === 'rest') {
-    // 休む：評価がさらに下がり、休日の過ごし方を選ぶ
-    weekendWorkChoice = false;
-    const extraPenalty = Math.ceil(score * restEvaluationPenaltyRatio);
-    score = Math.max(0, score - extraPenalty);
-    showMessage(`評価ダウン… Score -${extraPenalty}`, 3000, '#ff8a65', '22px sans-serif');
-    applyRestActivity();
   }
 }
 
@@ -4829,24 +4766,6 @@ document.addEventListener("keydown", (event) => {
   if (gameOver || gameClear) {
     return;
   }
-  // 週間ノルマ未達成時：休日出勤するかどうかの選択
-  if (weekendWorkChoice) {
-    if (event.key === 'y') {
-      handleWeekendWorkChoice('work');
-    } else if (event.key === 'n') {
-      handleWeekendWorkChoice('rest');
-    }
-    return;
-  }
-  // 休日出勤中にノルマを達成：家に帰るかどうかの選択
-  if (weekendWorkQuotaChoice) {
-    if (event.key === 'y') {
-      handleWeekendWorkQuotaChoice(true);
-    } else if (event.key === 'n') {
-      handleWeekendWorkQuotaChoice(false);
-    }
-    return;
-  }
   // 18時に固定敵（脅威）が残っている：残業するかどうかの選択
   if (fixedEnemyOvertimeChoiceActive) {
     if (event.key === 'y') {
@@ -4854,12 +4773,6 @@ document.addEventListener("keydown", (event) => {
     } else if (event.key === 'n') {
       handleFixedEnemyOvertimeChoice(false);
     }
-    return;
-  }
-  // 休日出勤中（土日）は、Hキーでいつでも切り上げて帰宅できる
-  if ((currentDate.getDay() === 0 || currentDate.getDay() === 6) &&
-      dayTransitionPhase === null && event.key.toLowerCase() === 'h') {
-    goHomeFromWeekendWork();
     return;
   }
   // スタート画面では、1 / Enterキーで開始する（夢の記憶ポイントの強化画面・リセット確認中は無効）
@@ -7066,9 +6979,9 @@ function damageEnemyDirectByParry(en) {
   recordJobDefeatForStats(en.text);
   const idx = enemies.indexOf(en);
   if (idx >= 0) enemies.splice(idx, 1);
-  weeklyKills++;
-  weeklyScoreGained += pts;
-  checkEarlyQuotaAchievement();
+  dailyKills++;
+  dailyScoreGained += pts;
+  checkEarlyDailyQuotaAchievement();
   if (countActiveWorkEnemies() === 0) waveCooldownMs = waveCooldownDelayMs;
 }
 function attemptDeflectPartnerBullet() {
@@ -7818,18 +7731,10 @@ function update() {
     return;
   }
 
-  // 週末の休日出勤選択・休日出勤中の帰宅確認中・固定敵の残業確認中は、ゲームの進行を止める
-  if (weekendWorkChoice || weekendWorkQuotaChoice || fixedEnemyOvertimeChoiceActive) return;
+  // 固定敵の残業確認中は、ゲームの進行を止める
+  if (fixedEnemyOvertimeChoiceActive) return;
   // 「名状しがたきものの気配」の選択肢・再確認の表示中は、ゲームの進行を止める
   if (bossEncounterChoiceActive || bossEncounterConfirmActive) return;
-
-  // 休日出勤中（土曜・日曜に働いている間）は、SAN・寿命が緩やかに削れていく
-  if (currentDate.getDay() === 0 || currentDate.getDay() === 6) {
-    san = Math.max(0, san - weekendWorkSanDrainPerSec * dt);
-    lifespan = Math.max(0, lifespan - weekendWorkLifespanDrainPerSec * dt);
-    checkVitalsGameOver();
-    if (gameOver || deathSequence) return;
-  }
 
   // 固定敵（IT用語モチーフ）の進行を処理する。ラスボス・中ボスの有無や、ゲーム内時間の進行状況に関わらず並行して進む。
   // ただし「目覚め」経由の特別なラスボス戦では、固定敵は一切出現させない
@@ -7902,20 +7807,23 @@ function update() {
       lastHourTime = gameClockMs;
       return;
     }
-    // 定時報告・「大規模プロジェクト」はないが、固定敵（脅威）が残っている場合は、残業するかどうかを一度だけ尋ねる
-    if (currentHour >= dayEndHour && !scheduledReport && !midBossEvent &&
+    // 定時報告・「大規模プロジェクト」・日ノルマ未達はないが、固定敵（脅威）が残っている場合は、残業するかどうかを一度だけ尋ねる
+    if (currentHour >= dayEndHour && !scheduledReport && !midBossEvent && isDailyQuotaMet() &&
         fixedEnemies.length > 0 && !fixedEnemyOvertimeConfirmed && currentHour < maxOvertimeHour) {
       currentHour = dayEndHour;
       lastHourTime = gameClockMs;
       fixedEnemyOvertimeChoiceActive = true;
       return;
     }
-    // 終業時刻になっても定時報告・「大規模プロジェクト」、または残業を承諾した固定敵が残っていれば、24時まで残業として居残る
+    // 終業時刻になっても定時報告・「大規模プロジェクト」・日ノルマ未達、または残業を承諾した固定敵が残っていれば、24時まで残業として居残る
     if (currentHour >= dayEndHour &&
-        (scheduledReport || midBossEvent || (fixedEnemies.length > 0 && fixedEnemyOvertimeConfirmed)) &&
+        (scheduledReport || midBossEvent || !isDailyQuotaMet() || (fixedEnemies.length > 0 && fixedEnemyOvertimeConfirmed)) &&
         currentHour < maxOvertimeHour) {
       if (previousHour < dayEndHour) {
-        showMessage(`${dayEndHour}時：定時報告が終わらず残業に…（${maxOvertimeHour}時まで）`,
+        const overtimeReason = (scheduledReport || midBossEvent || (fixedEnemies.length > 0 && fixedEnemyOvertimeConfirmed))
+          ? '定時報告が終わらず残業に…'
+          : '本日のノルマが未達成のため残業に…';
+        showMessage(`${dayEndHour}時：${overtimeReason}（${maxOvertimeHour}時まで）`,
           3800, '#ff8a65', '22px sans-serif');
       }
       return;
@@ -7927,9 +7835,9 @@ function update() {
     }
   }
 
-  // 残業中（定時報告や「大規模プロジェクト」、または残業を承諾した固定敵が残ったまま終業時刻を過ぎている間）は、SANが段階的に削れていく。
+  // 残業中（定時報告や「大規模プロジェクト」、日ノルマ未達、または残業を承諾した固定敵が残ったまま終業時刻を過ぎている間）は、SANが段階的に削れていく。
   // 24時になっても「大規模プロジェクト」などの戦闘が続いていれば、同じペースでそのまま減り続ける
-  if ((scheduledReport || midBossEvent || (fixedEnemies.length > 0 && fixedEnemyOvertimeConfirmed)) && currentHour >= dayEndHour) {
+  if ((scheduledReport || midBossEvent || !isDailyQuotaMet() || (fixedEnemies.length > 0 && fixedEnemyOvertimeConfirmed)) && currentHour >= dayEndHour) {
     const sanStepMs = (3600 / overtimeSanDrainPerHour) * 1000; // ゲーム内10分ごとに1減少
     overtimeSanDrainAccumMs += dt * 1000;
     while (overtimeSanDrainAccumMs >= sanStepMs) {
@@ -8707,9 +8615,9 @@ function update() {
           }
           recordJobDefeatForStats(en.text);
           enemies.splice(j, 1);
-          weeklyKills++;
-          weeklyScoreGained += pts;
-          checkEarlyQuotaAchievement();
+          dailyKills++;
+          dailyScoreGained += pts;
+          checkEarlyDailyQuotaAchievement();
           if (countActiveWorkEnemies() === 0) waveCooldownMs = waveCooldownDelayMs;
         }
         break;
@@ -8805,9 +8713,9 @@ function update() {
       updateSkillEffects();
       recordJobDefeatForStats(en.text);
       enemies.splice(j, 1);
-      weeklyKills++;
-      weeklyScoreGained += pts;
-      checkEarlyQuotaAchievement();
+      dailyKills++;
+      dailyScoreGained += pts;
+      checkEarlyDailyQuotaAchievement();
       if (countActiveWorkEnemies() === 0) waveCooldownMs = waveCooldownDelayMs;
     }
     if (gameOver) break;
@@ -12418,10 +12326,10 @@ function draw() {
 
   // 共通の進行情報は、2つのプロフィール区画の下へまとめる（自分・同僚とも円形アイコン拡大に合わせて位置を下げる）。
   ctx.font = '13px sans-serif';
-  ctx.fillStyle = weeklyQuotaAchievedEarly ? '#69f0ae' : '#b0bec5';
+  ctx.fillStyle = dailyQuotaAchievedEarly ? '#69f0ae' : '#b0bec5';
   ctx.fillText(
-    `週ノルマ: 撃破 ${weeklyKills}/${weeklyKillQuota}  Score ${weeklyScoreGained}/${weeklyScoreQuota}` +
-    (weeklyQuotaAchievedEarly ? '（達成！）' : ''),
+    `本日のノルマ: 撃破 ${dailyKills}/${dailyKillQuota}  Score ${dailyScoreGained}/${dailyScoreQuota}` +
+    (dailyQuotaAchievedEarly ? '（達成！）' : ''),
     12, 250
   );
   ctx.fillStyle = 'white';
@@ -12522,14 +12430,6 @@ function draw() {
       ctx.stroke();
     }
     ctx.restore();
-  }
-
-  // 休日出勤中（土日）のみ表示する、切り上げて帰宅するためのボタン
-  if ((currentDate.getDay() === 0 || currentDate.getDay() === 6) &&
-      !gameOver && !gameClear && !dayTransitionPhase && !weekendWorkChoice &&
-      !weekendWorkQuotaChoice && !fixedEnemyOvertimeChoiceActive && !acknowledgementNotice) {
-    drawUiButton(canvas.width - 160, 100, 148, 40, '帰宅する (H)', goHomeFromWeekendWork,
-      { fillStyle: 'rgba(84, 60, 30, 0.65)', strokeStyle: '#ffb74d', font: 'bold 15px sans-serif' });
   }
 
   if (isPaused && !gameOver && !gameClear) {
@@ -12663,42 +12563,6 @@ function draw() {
 
   if (gameClear || gameOver) {
     drawEndingScreen();
-  }
-  // 週間ノルマ未達成：休日出勤するかどうかの選択画面
-  if (weekendWorkChoice && !gameOver && !gameClear) {
-    ctx.fillStyle = 'rgba(0,0,0,0.7)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#ff8a65';
-    ctx.font = '28px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('今週のノルマを達成できませんでした…', canvas.width / 2, canvas.height / 2 - 80);
-    ctx.fillText('土日祝日も働きますか？', canvas.width / 2, canvas.height / 2 - 44);
-    ctx.textAlign = 'left';
-
-    const btnW = 340, btnH = 50;
-    const btnX = canvas.width / 2 - btnW / 2;
-    drawUiButton(btnX, canvas.height / 2 - 4, btnW, btnH, '出勤する (Y)',
-      () => handleWeekendWorkChoice('work'));
-    drawUiButton(btnX, canvas.height / 2 + 54, btnW, btnH, '休む (N)',
-      () => handleWeekendWorkChoice('rest'), { fillStyle: 'rgba(84, 60, 30, 0.6)', strokeStyle: '#ffb74d' });
-  }
-  // 休日出勤中にノルマ達成：家に帰るかどうかの選択画面
-  if (weekendWorkQuotaChoice && !gameOver && !gameClear) {
-    ctx.fillStyle = 'rgba(0,0,0,0.7)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#69f0ae';
-    ctx.font = '28px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('今週のノルマを達成しました！', canvas.width / 2, canvas.height / 2 - 80);
-    ctx.fillText('今日はもう家に帰りますか？', canvas.width / 2, canvas.height / 2 - 44);
-    ctx.textAlign = 'left';
-
-    const quotaBtnW = 340, quotaBtnH = 50;
-    const quotaBtnX = canvas.width / 2 - quotaBtnW / 2;
-    drawUiButton(quotaBtnX, canvas.height / 2 - 4, quotaBtnW, quotaBtnH, 'はい・帰宅する (Y)',
-      () => handleWeekendWorkQuotaChoice(true));
-    drawUiButton(quotaBtnX, canvas.height / 2 + 54, quotaBtnW, quotaBtnH, 'いいえ・続ける (N)',
-      () => handleWeekendWorkQuotaChoice(false), { fillStyle: 'rgba(60, 60, 60, 0.6)', strokeStyle: '#90a4ae' });
   }
   // 18時に固定敵（脅威）が残っている：残業するかどうかの選択画面
   if (fixedEnemyOvertimeChoiceActive && !gameOver && !gameClear) {
