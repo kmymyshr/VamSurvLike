@@ -78,15 +78,15 @@ const dreamMemoryUpgradeDefs = [
   },
   {
     id: 'eternalLifePlayer', label: 'UnDead（自分）',
-    describeLevel: () => '自分の寿命が0にならなくなる',
-    preview: '自分の寿命が0にならなくなる',
+    describeLevel: () => '残機が0（残機×0）の状態では、自分の寿命が0にならなくなる',
+    preview: '残機×0の状態では自分の寿命が0にならない',
     maxLevel: 1,
     costOverride: 0
   },
   {
     id: 'eternalLifePartner', label: 'UnDead（同僚）',
-    describeLevel: () => '同僚の寿命が0にならなくなる',
-    preview: '同僚の寿命が0にならなくなる',
+    describeLevel: () => '残機が0（残機×0）の状態では、同僚の寿命が0にならなくなる',
+    preview: '残機×0の状態では同僚の寿命が0にならない',
     maxLevel: 1,
     costOverride: 0
   },
@@ -2288,15 +2288,15 @@ function checkVitalsGameOver(deathEndingType = null) {
     }
     startDeathSequence('san', deathEndingType || 'bad-san');
   } else if (lifespan <= 0) {
-    // 「永遠の命（自分）」：寿命が0にならなくなる
-    if (dreamMemorySave.upgrades.eternalLifePlayer >= 1) {
-      lifespan = 1;
-      return;
-    }
     // 残機システム：残機がある間は、力尽きる代わりに気絶して復活を待つ
     if (playerLivesRemaining > 0) {
       playerLivesRemaining--;
       startPlayerRevival();
+      return;
+    }
+    // 「UnDead（自分）」：残機が0（残機×0）の状態でだけ、寿命が0にならなくなる
+    if (dreamMemorySave.upgrades.eternalLifePlayer >= 1) {
+      lifespan = 1;
       return;
     }
     startDeathSequence('lifespan', deathEndingType || 'bad-lifespan');
@@ -3341,10 +3341,9 @@ function updatePartner(dt) {
     partner.fatigue = 0;
     return;
   }
-  // 「永遠の命（同僚）」「希望（同僚）」：同僚のSAN・寿命がそれぞれ0にならないようにする
-  // （ノーマルルート終了時の負けイベント戦闘中は、これらの効果も無効化する）
+  // 「希望（同僚）」：同僚のSANが0にならないようにする
+  // （ノーマルルート終了時の負けイベント戦闘中は、この効果も無効化する）
   if (!normalEndBattleActive) {
-    if (dreamMemorySave.upgrades.eternalLifePartner >= 1) partner.lifespan = Math.max(partner.lifespan, 1);
     if (dreamMemorySave.upgrades.hopePartner >= 1) partner.san = Math.max(partner.san, 1);
   }
 
@@ -3354,6 +3353,12 @@ function updatePartner(dt) {
     if (!normalEndBattleActive && partnerLivesRemaining > 0) {
       partnerLivesRemaining--;
       partner.reviveTimerMs = reviveStunDurationMs;
+      return;
+    }
+    // 「UnDead（同僚）」：残機が0（残機×0）の状態で、かつ寿命だけが尽きた場合に限り、寿命が0にならなくなる
+    if (!normalEndBattleActive && partner.san > 0 && partner.lifespan <= 0 &&
+        dreamMemorySave.upgrades.eternalLifePartner >= 1) {
+      partner.lifespan = 1;
       return;
     }
     partner.active = false;
@@ -3425,10 +3430,14 @@ function nextMonday(date) {
 
 let dailyQuotaEaseMultiplier = 1;
 
+// ランクが上がるごとの段階的な増加に加えて、同じランク内でも稼働日数を重ねるごとに
+// 少しずつノルマが増えていくようにする（敵の強さがdayNumberに応じて滑らかに上がっていくのと同じ考え方）
+const dailyQuotaGrowthPerDay = 0.25;
+
 // ランクに応じて本日のノルマを再設定する（週次ノルマの基準値を5日ぶんで割った水準）。
 // 集中して手を止めずにプレイしてようやく届く程度の、ぎりぎり達成できる水準にしてある
 function resetDailyQuotaForNewDay() {
-  dailyKillQuota = Math.round((4 + (rank - 1) * 1) * 2 * dailyQuotaEaseMultiplier);
+  dailyKillQuota = Math.round((4 + (rank - 1) * 1 + (dayNumber - 1) * dailyQuotaGrowthPerDay) * 2 * dailyQuotaEaseMultiplier);
   dailyKills = 0;
   dailyScoreGained = 0;
   dailyQuotaAchievedEarly = false;
