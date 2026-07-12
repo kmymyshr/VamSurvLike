@@ -1,6 +1,17 @@
 // ===== ゲーム画面（Canvas）の準備 =====
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
+
+// タイトルへ戻る際などのlocation.reload()は即座には反映されず、実際にページが破棄されるまでの間、
+// メインループ（update・draw）は動き続けてしまう。エンディング演出のような重い描画（グラデーション・
+// 複数枚の画像合成など）を、ブラウザが裏でページの破棄・再読み込み処理を行っているのと同時に
+// 毎フレーム続けると、非力な端末（タブレット・ノートPC）ではその競合で数秒間操作不能になる（フリーズして見える）。
+// location.reload()の直前に必ずこれを呼び、以降のメインループを即座に止めて負荷を発生させないようにする
+let pageReloading = false;
+function reloadPage() {
+  pageReloading = true;
+  location.reload();
+}
 // SAN低下時の画面歪みエフェクト用に、完成した1フレームを一時的に複製しておくためのオフスクリーンCanvas
 const distortionCanvas = document.createElement('canvas');
 distortionCanvas.width = canvas.width;
@@ -623,7 +634,7 @@ function resetAllProgressAndReload() {
   } catch (e) {
     // localStorageが使えない環境では、消去できなくても致命的ではないため無視する
   }
-  location.reload();
+  reloadPage();
 }
 
 // デバッグ用「Waking Nightmare」ボタン：ランダムな自機・同僚が関係性100の状態で
@@ -644,7 +655,7 @@ function triggerWakingNightmareDebug() {
   dreamMemorySave.endingsCleared.normal1 = true;
   saveDreamMemorySave();
   // 即座に切り替えず、タイトル画面を暗転（フェードアウト）させてから画面遷移する
-  startSetupFadeOut(() => location.reload());
+  startSetupFadeOut(() => reloadPage());
 }
 
 // ===== アイコン選択後のひとことメッセージ演出（表示→フェードアウトして次の画面へ） =====
@@ -6562,7 +6573,7 @@ function finishNormalEndSequence() {
   saveDreamMemorySave();
   // タイトル画面へ戻った直後だけ、黒からゆっくりフェードインさせる
   try { sessionStorage.setItem('vamSurvLike_titleFadeIn', '1'); } catch (e) {}
-  location.reload();
+  reloadPage();
 }
 
 // freeze（静止）・shake（振動・暗転）中の画面：オフィスの中央に自機・同僚が立ち尽くしている
@@ -6739,7 +6750,7 @@ function finishBossTrueEnd() {
   saveDreamMemorySave();
   // タイトル画面へ戻った直後だけ、黒からゆっくりフェードインさせる
   try { sessionStorage.setItem('vamSurvLike_titleFadeIn', '1'); } catch (e) {}
-  location.reload();
+  reloadPage();
 }
 
 // ===== 中ボス「大規模プロジェクト」（DAY7ごと・18時に出現する）=====
@@ -9076,7 +9087,7 @@ function drawEndScreenButtons(baseY) {
     // クリア・ゲームオーバーを問わず、役職（ランク）・役職スキル・Scoreは次周へそのまま引き継ぐ
     saveCarriedProgressionForNextRun();
     saveDreamMemorySave();
-    location.reload();
+    reloadPage();
   });
   drawUiButton(btnX, baseY + 60, btnW, btnH, '終了する', () => { window.close(); },
     { fillStyle: 'rgba(84, 30, 30, 0.6)', strokeStyle: '#ef9a9a' });
@@ -9415,7 +9426,7 @@ function updateNightmareAgainSequence(rawDt) {
     seq.phase = 'reloading';
     // 再読み込み後の最初のタイトル表示だけ、黒からフェードインさせる
     try { sessionStorage.setItem('vamSurvLike_titleFadeIn', '1'); } catch (e) {}
-    location.reload();
+    reloadPage();
   }
 }
 
@@ -12838,7 +12849,7 @@ function draw() {
 
     const confirmBtnW = 160, confirmBtnH = 44, confirmGap = 20;
     drawUiButton(canvas.width / 2 - confirmBtnW - confirmGap / 2, canvas.height / 2 + 10, confirmBtnW, confirmBtnH,
-      'はい', () => location.reload(),
+      'はい', () => reloadPage(),
       { fillStyle: 'rgba(84, 30, 30, 0.7)', strokeStyle: '#ef9a9a' });
     drawUiButton(canvas.width / 2 + confirmGap / 2, canvas.height / 2 + 10, confirmBtnW, confirmBtnH,
       'いいえ', () => { wakeUpConfirmActive = false; },
@@ -13252,6 +13263,9 @@ function draw() {
 // ===== メインループ =====
 // 状態更新と画面描画を、ブラウザの描画タイミングに合わせて繰り返す
 function gameLoop() {
+  // reloadPage()呼び出し後は、実際にページが破棄されるまでの間これ以上フレームを進めない
+  // （非力な端末でのフリーズを防ぐため。以降requestAnimationFrameも呼ばず、ループ自体をここで止める）
+  if (pageReloading) return;
   update();
   draw();
   updateControlPanelsVisibility();
