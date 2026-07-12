@@ -4655,16 +4655,22 @@ function showMessage(text, ttl = 2000, color = 'white', font = '20px sans-serif'
 // 昇進や知識獲得など、確認するまでゲームを止める重要通知
 let acknowledgementNotice = null;
 const acknowledgementQueue = [];
+// 完全オートモード中、この通知（週末の休日イベント結果など）が出てから経過した時間
+// （この時間が経つと自動でクリックした扱いにする）
+let acknowledgementNoticeWaitingTimerMs = 0;
+const acknowledgementNoticeAutoAdvanceMs = 3000;
 function showAcknowledgementNotice(text, color = '#fff59d', detail = '', onAcknowledge = null) {
   const notice = { text, color, detail, onAcknowledge };
   if (acknowledgementNotice) acknowledgementQueue.push(notice);
   else acknowledgementNotice = notice;
+  acknowledgementNoticeWaitingTimerMs = 0;
   mouseFireHeld = false;
 }
 
 function resumeFromAcknowledgement() {
   const finished = acknowledgementNotice;
   acknowledgementNotice = acknowledgementQueue.shift() || null;
+  acknowledgementNoticeWaitingTimerMs = 0;
   lastUpdate = Date.now();
   if (finished && finished.onAcknowledge) finished.onAcknowledge();
 }
@@ -7668,7 +7674,18 @@ fitCanvasToViewport();
 function update() {
   pollGamepadInput();
   if (acknowledgementNotice) {
-    lastUpdate = Date.now();
+    const nowRealForAck = Date.now();
+    // 完全オートモード中は、週末休日の結果などの重要通知も3秒経過したら自動でクリックした扱いにして次へ進める
+    // （アドベンチャーパートはこの通知経由では出ないため、ここは常にオート対象でよい）
+    if (fullAutoModeEnabled) {
+      acknowledgementNoticeWaitingTimerMs += nowRealForAck - lastUpdate;
+      if (acknowledgementNoticeWaitingTimerMs >= acknowledgementNoticeAutoAdvanceMs) {
+        lastUpdate = nowRealForAck;
+        resumeFromAcknowledgement();
+        return;
+      }
+    }
+    lastUpdate = nowRealForAck;
     return;
   }
   // 目覚めエンド専用タイトル画面（とそのエンディングリスト）は静的な画面なので、他の一切を止める
