@@ -47,6 +47,7 @@ canvas {
 
 /* 戦闘画面の左に広げた帯。移動用ジョイスティックを配置する */
 #leftControlPanel {
+  position: relative;
   flex: 0 0 130px;
   width: 130px;
   height: 600px;
@@ -55,6 +56,32 @@ canvas {
   justify-content: center;
   padding-bottom: 16px;
   box-sizing: border-box;
+}
+
+/* オート連射ON/OFF切り替えボタン。ON/OFFがひと目でわかるよう、状態に応じて色を大きく変える */
+#btnAutoFire {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 64px;
+  min-height: 44px;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: bold;
+  line-height: 1.3;
+  white-space: pre-line;
+  background: rgba(255, 255, 255, 0.15);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 8px;
+  touch-action: manipulation;
+}
+
+/* オート連射がONの間だけ、目立つ色に切り替えて状態がひと目でわかるようにする */
+#btnAutoFire.active {
+  background: rgba(255, 138, 101, 0.55);
+  border-color: rgba(255, 138, 101, 0.9);
 }
 
 /* 移動用ジョイスティック（土台） */

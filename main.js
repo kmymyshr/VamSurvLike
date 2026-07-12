@@ -850,6 +850,20 @@ let autoFireEnabled = false;
 let mouseFireHeld = false;
 const mousePosition = { x: player.x + 100, y: player.y };
 
+// ===== オート連射ON/OFFの明示ボタン（#btnAutoFire）。何もない部分のクリックと同じ切り替えを行う =====
+// ボタンのラベル・色を状態に合わせて更新し、画面上でON/OFFがひと目でわかるようにする
+const autoFireButtonEl = document.getElementById('btnAutoFire');
+function updateAutoFireButtonUI() {
+  autoFireButtonEl.textContent = autoFireEnabled ? '自動連射\nON' : '自動連射\nOFF';
+  autoFireButtonEl.classList.toggle('active', autoFireEnabled);
+}
+function toggleAutoFireEnabled() {
+  autoFireEnabled = !autoFireEnabled;
+  updateAutoFireButtonUI();
+}
+autoFireButtonEl.addEventListener('click', toggleAutoFireEnabled);
+updateAutoFireButtonUI();
+
 // ===== 完全オートモード（移動・照準・攻撃をすべて自動化する） =====
 let fullAutoModeEnabled = false;
 let fullAutoQuizChoiceIndex = null; // クイズの選択肢をランダムに1つ選び、同じ問題の間は選び直さない
@@ -4838,7 +4852,7 @@ document.addEventListener("keydown", (event) => {
   }
   // Fキーで自動攻撃のON/OFFを切り替える
   if (event.key === 'f') {
-    autoFireEnabled = !autoFireEnabled;
+    toggleAutoFireEnabled();
   }
   // スペースキーで、タイミングよく振るとパリィ（同僚弾のはじき返し）を試みる（キーリピートでの連発は防ぐ）
   if (event.key === ' ' && !event.repeat) {
@@ -7477,7 +7491,7 @@ canvas.addEventListener('click', (event) => {
   // アイテムに当たればそれを取得し、何もなければオート攻撃のON/OFFを切り替える
   if (isInCoreGameplayForClickActions()) {
     if (tryCollectItemAtPoint(p)) return;
-    autoFireEnabled = !autoFireEnabled;
+    toggleAutoFireEnabled();
   }
 });
 
