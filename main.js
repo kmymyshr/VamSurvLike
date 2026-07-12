@@ -6867,6 +6867,9 @@ function damageEnemyDirectByParry(en) {
   const damageBonus = 1 + skillLevel * 0.08;
   const lightsaberBonus = specialSkillEffects.deflectRangeMultiplier > 1 ? lightsaberParryDirectDamageMultiplier : 1;
   const actualDmg = Math.max(1, Math.round(parryDirectDamage * damageBonus * lightsaberBonus));
+  // パリィの直接攻撃で敵にダメージを与えた時も、弾を発射したのと同様に「攻撃した」扱いにする
+  // （サボり判定で同僚に「仕事してください」と言われないようにする）
+  lastFire = gameClockMs;
   en.hp = (en.hp || 1) - actualDmg;
   spawnHitSpark(en.x, en.y, en.hp <= 0);
   if (en.hp > 0) return;
@@ -8391,6 +8394,7 @@ function update() {
         const damageBonus = 1 + skillLevel * 0.08;
         const actualDmg = Math.max(1, Math.round((b.damage || 1) * damageBonus));
         hitFixedEnemy.hp -= actualDmg;
+        if (b.owner === 'deflected') lastFire = now;
         spawnHitSpark(b.x, b.y, hitFixedEnemy.hp <= 0);
         bullets.splice(i, 1);
         if (hitFixedEnemy.hp <= 0) defeatFixedEnemy(hitFixedEnemy);
@@ -8423,6 +8427,7 @@ function update() {
           bullets.splice(i, 1);
           continue;
         }
+        if (b.owner === 'deflected') lastFire = now;
         registerBossHoleHit(hitHole, b.x, b.y);
         bullets.splice(i, 1);
         continue;
@@ -8432,6 +8437,7 @@ function update() {
     if (midBossEvent && (b.owner === 'player' || b.owner === 'deflected' || b.owner === 'partner')) {
       const hitMidHole = findHitMidBossHole(b.x, b.y);
       if (hitMidHole) {
+        if (b.owner === 'deflected') lastFire = now;
         registerMidBossHoleHit(hitMidHole, b.x, b.y);
         bullets.splice(i, 1);
         continue;
@@ -8460,6 +8466,9 @@ function update() {
           const actualDmg = Math.max(1, Math.round(dmg * damageBonus));
           en.hp = (en.hp || 1) - actualDmg;
         if (b.owner === 'partner') en.hitByPartner = true;
+        // パリィで打ち返した弾が敵にダメージを与えた時も、弾を発射したのと同様に「攻撃した」扱いにする
+        // （サボり判定で同僚に「仕事してください」と言われないようにする）
+        if (b.owner === 'deflected') lastFire = now;
         spawnHitSpark(b.x, b.y, en.hp <= 0);
         bullets.splice(i, 1);
         if (en.hp <= 0) {
