@@ -4906,7 +4906,7 @@ canvas.addEventListener('pointerdown', (event) => {
     canvas.setPointerCapture(event.pointerId);
     return;
   }
-  if (isInCoreGameplayForClickActions() && !stunned &&
+  if (isPlayerDragStartAllowed() && !stunned &&
       Math.hypot(mousePosition.x - player.x, mousePosition.y - player.y) <= player.radius + playerDragHitTolerance) {
     playerDragActive = true;
     // ドラッグ終了時のclickイベントで、自動攻撃のON/OFF切り替えが誤って発生しないようにする
@@ -6340,11 +6340,26 @@ function startNormalEndBattleSequence() {
   scheduledReport = null;
   currentHour = maxOvertimeHour;
   lastHourTime = gameClockMs;
-  player.x = canvas.width / 2 - 24;
-  player.y = canvas.height / 2;
+  // 関係性が良好なら、突入直前の自機・同僚の相対距離をそのまま画面中央へ持ってくる。
+  // 普通・悪いの場合は、疎遠さを表すため画面中央から左右に少し離して配置し直す
+  if (partner.active && getRelationshipCategory(partner.relationship) === 'good') {
+    const dx = player.x - partner.x;
+    const dy = player.y - partner.y;
+    player.x = canvas.width / 2 + dx / 2;
+    player.y = canvas.height / 2 + dy / 2;
+    partner.x = canvas.width / 2 - dx / 2;
+    partner.y = canvas.height / 2 - dy / 2;
+  } else {
+    player.x = canvas.width / 2 - 24;
+    player.y = canvas.height / 2;
+    if (partner.active) {
+      partner.x = canvas.width / 2 + 24;
+      partner.y = canvas.height / 2;
+    }
+  }
+  clampToPlayableFloor(player);
   if (partner.active) {
-    partner.x = canvas.width / 2 + 24;
-    partner.y = canvas.height / 2;
+    clampToPlayableFloor(partner);
     partner.vx = 0;
     partner.vy = 0;
   }
@@ -7306,6 +7321,20 @@ function isInCoreGameplayForClickActions() {
     !endingListActive && !memoryStatusActive && !specialSkillSelectionActive && !adventureState && !reunionSceneActive &&
     !bossFinalSequence && !normalEndSequence && !isPaused && !wakeUpConfirmActive &&
     !gameOver && !gameClear && dayTransitionPhase === null;
+}
+
+// イベント戦（ノーマルルート負けイベント戦闘）のうち、実際にプレイヤーが動いて戦う演出中かどうか
+// （freeze/shake/partnerVanish/fadeOut/endScreen中は演出専用でプレイヤー操作が反映されないため対象外）
+function isInNormalEndBattlePlay() {
+  return !!normalEndSequence && (normalEndSequence.phase === 'descend' ||
+    normalEndSequence.phase === 'battle' || normalEndSequence.phase === 'partnerLossSlowmo');
+}
+
+// 自機ドラッグ移動を開始してよいかどうか。通常のコアゲームプレイに加え、
+// イベント戦の戦闘演出中（descend/battle/partnerLossSlowmo）も、ポーズ・演出中でなければ許可する
+function isPlayerDragStartAllowed() {
+  if (isInCoreGameplayForClickActions()) return true;
+  return isInNormalEndBattlePlay() && !isPaused && !wakeUpConfirmActive && !gameOver && !gameClear;
 }
 
 // クリック／タップした地点が、着地済みのアイテムの上であればそれを取得する（自機のみ。同僚は従来通り自動）
