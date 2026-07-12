@@ -3575,7 +3575,7 @@ const specialSkills = [
   },
   {
     id: 'dark-cleaving-sword', name: '闇を切り裂く剣', rarity: 'UR',
-    description: 'ライトセーバーの上位互換。自機のパリィの効果範囲が3倍になる。パリィの直接攻撃ダメージが10倍になる（ライトセーバーは3倍）。専用の禍々しい紫の刃で演出される。' +
+    description: 'ライトセーバーの上位互換。自機のパリィの効果範囲が3倍になる。パリィの直接攻撃ダメージが10倍になる（ライトセーバーは3倍）。専用の明るい黄色の刃で演出される。' +
       '例外として、ノーマルルート終了時の負けイベント戦闘でも、本来決して破壊できない発射口を、パリィで打ち返した弾を3回当てるか、パリィの直接攻撃（ワイプ範囲）を3回当てることで破壊でき、撃破すれば目覚めエンドに至れる。「ライトセーバー」とは同時に習得できない',
     maxLevel: 1
   },
@@ -5983,7 +5983,7 @@ function registerDarkSwordHitOnIndestructibleHole(hole, hitX, hitY) {
   const willBreak = hole.darkSwordParryHits >= darkCleavingSwordIndestructibleHoleParryHits;
   spawnHitSpark(hitX, hitY, willBreak);
   if (willBreak) {
-    showMessage('闇を切り裂く剣が、決して破れないはずの装甲を貫いた！', 2200, '#b388ff', '22px sans-serif');
+    showMessage('闇を切り裂く剣が、決して破れないはずの装甲を貫いた！', 2200, '#fff176', '22px sans-serif');
     finalizeBossHoleDestruction(hole);
   }
 }
@@ -11530,9 +11530,9 @@ function draw() {
     const elapsedMs = lightsaberEffect.totalDurationMs - lightsaberEffect.timer;
     const startAngle = lightsaberEffect.angle - slashEffectRangeRad / 2;
     const endAngle = startAngle + slashEffectRangeRad;
-    // 「闇を切り裂く剣」は禍々しい紫、通常の「ライトセーバー」は水色の刃にする
-    const outerColor = lightsaberEffect.isDarkBlade ? '#b388ff' : '#e0f7fa';
-    const glowColor = lightsaberEffect.isDarkBlade ? '#4a148c' : '#80deea';
+    // 「闇を切り裂く剣」は明るい黄色寄り、通常の「ライトセーバー」は水色の刃にする
+    const outerColor = lightsaberEffect.isDarkBlade ? '#fff176' : '#e0f7fa';
+    const glowColor = lightsaberEffect.isDarkBlade ? '#fbc02d' : '#80deea';
 
     if (elapsedMs <= lightsaberEffectDurationMs) {
       // ワイプ中：刃の振りを、少し前の角度もうっすら重ねた残像として描く
