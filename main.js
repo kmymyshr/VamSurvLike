@@ -7352,6 +7352,7 @@ function isInCoreGameplayForClickActions() {
 function isBattleScreenActive() {
   return !startScreen && setupStep === null && !dreamMemoryShopActive &&
     !endingListActive && !memoryStatusActive && !specialSkillSelectionActive && !adventureState && !reunionSceneActive &&
+    iconGreetingPhase === null &&
     !gameOver && !gameClear && dayTransitionPhase === null;
 }
 
