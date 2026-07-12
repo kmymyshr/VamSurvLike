@@ -529,12 +529,16 @@ function spawnSlashEffect(x, y, angle, entityRadius) {
 
 // ===== 特殊スキル「ライトセーバー」：自機がパリィした瞬間、光る棒（一端は自機）が
 // 自機の向きを中心に270度ワイプするエフェクト =====
-// 上のスラッシュエフェクトと同じ配色。棒の長さ＝パリィの効果範囲（getDeflectRange()。ライトセーバー習得中は1.2倍）
+// 棒の長さ＝パリィの効果範囲（getDeflectRange()。ライトセーバー習得中は1.2倍）。
+// 回転の中心は自機の中心ではなく、自機アイコンの高さ（player.radius * 4.8）の下から40%の位置
+// （中心よりやや下寄り）にする
 let lightsaberEffect = null; // { x, y, angle, length, timer }
-const lightsaberEffectDurationMs = 320;
-function spawnLightsaberBladeEffectIfActive(x, y, angle) {
+const lightsaberEffectDurationMs = 480;
+function spawnLightsaberBladeEffectIfActive() {
   if (specialSkillEffects.deflectRangeMultiplier <= 1) return;
-  lightsaberEffect = { x, y, angle, length: getDeflectRange(), timer: lightsaberEffectDurationMs };
+  const selfImgSize = player.radius * 4.8;
+  const pivotY = player.y + selfImgSize * (0.5 - 0.4);
+  lightsaberEffect = { x: player.x, y: pivotY, angle: player.angle, length: getDeflectRange(), timer: lightsaberEffectDurationMs };
 }
 const baseFireRate = 175; // 基本の発射間隔（ミリ秒。以前の設定からさらに半分に短縮）
 let lastFire = 0;
@@ -6874,8 +6878,12 @@ function damageEnemyDirectByParry(en) {
 }
 function attemptDeflectPartnerBullet() {
   if (stunned) return;
-  spawnSlashEffect(player.x, player.y, player.angle, player.radius); // 命中の有無に関わらず、振った動作自体を見せる
-  spawnLightsaberBladeEffectIfActive(player.x, player.y, player.angle);
+  // ライトセーバー習得中は専用エフェクトのみを表示し、通常の斬撃ワイプエフェクトは出さない
+  if (specialSkillEffects.deflectRangeMultiplier > 1) {
+    spawnLightsaberBladeEffectIfActive();
+  } else {
+    spawnSlashEffect(player.x, player.y, player.angle, player.radius); // 命中の有無に関わらず、振った動作自体を見せる
+  }
   // 範囲内の条件を満たす弾は、まとめて同時にパリィする（1発だけに限らない）
   const targets = bullets.filter(b => {
     // ネットワークスペシャリスト：画面端で反射した自弾（1回目以降すべて）も、パリィで狩り直せる
@@ -8197,8 +8205,11 @@ function update() {
       b.autoParryChecked = true;
       if (Math.random() < specialSkillEffects.autoParryChance) {
         performBulletParry(b, player.x, player.y, player.angle, true);
-        spawnSlashEffect(player.x, player.y, player.angle, player.radius);
-        spawnLightsaberBladeEffectIfActive(player.x, player.y, player.angle);
+        if (specialSkillEffects.deflectRangeMultiplier > 1) {
+          spawnLightsaberBladeEffectIfActive();
+        } else {
+          spawnSlashEffect(player.x, player.y, player.angle, player.radius);
+        }
         showMessage('オートパリィ発動！', 1400, '#fff176');
         continue;
       }
@@ -11338,44 +11349,57 @@ function draw() {
   // 「ファイヤーウォール」の効果が残っている間、自機の周りにバリアを表示する
   drawBarrierShield(player.x, player.y, player.radius, playerBarrierCharges);
 
-  // 特殊スキル「ライトセーバー」：パリィした瞬間、自機を一端とする光る棒が、自機の向きを中心に
-  // 270度ワイプするエフェクトを描く（斬撃ワイプエフェクトと同じ配色。棒の長さ＝パリィの効果範囲）。
-  // 自機アイコンより先に描くことで、自機の裏を通るように見せる。少し前の角度もうっすら重ねて残像を表現する
+  // 特殊スキル「ライトセーバー」：パリィした瞬間、自機を一端とする光る棒が自機の向きを中心に270度ワイプし、
+  // 通った範囲を半透明のライトセーバー色で満たす。その後、満たした範囲はワイプを始めた側（起点）から
+  // 順に消えていき、ワイプが最後に到達した側が最後まで残る。自機アイコンより先に描き、裏を通るように見せる
   if (lightsaberEffect) {
     const progress = 1 - lightsaberEffect.timer / lightsaberEffectDurationMs;
     const startAngle = lightsaberEffect.angle - slashEffectRangeRad / 2;
-    const fadeAlpha = progress < 0.6 ? 1 : Math.max(0, 1 - (progress - 0.6) / 0.4); // 60%を過ぎたらフェードアウト
-    const trailCount = 5;
-    const trailStepProgress = 0.05; // 残像1本ごとに遡る、スイング進行度（0〜1）の量
-    ctx.save();
-    ctx.lineCap = 'round';
-    for (let i = trailCount; i >= 0; i--) {
-      const trailProgress = progress - i * trailStepProgress;
-      if (trailProgress <= 0) continue;
-      const sweepProgress = Math.min(1, trailProgress / 0.6); // 最初の60%で振り切る
-      const currentAngle = startAngle + slashEffectRangeRad * sweepProgress;
-      const tipX = lightsaberEffect.x + Math.cos(currentAngle) * lightsaberEffect.length;
-      const tipY = lightsaberEffect.y + Math.sin(currentAngle) * lightsaberEffect.length;
-      // 一番新しい（i=0）ものだけくっきり、古い残像ほど薄くする
-      const trailAlpha = fadeAlpha * (i === 0 ? 1 : (1 - i / (trailCount + 1)) * 0.55);
-      ctx.globalAlpha = trailAlpha;
+    const endAngle = startAngle + slashEffectRangeRad;
+    const sweepPhaseRatio = 0.35; // 最初の35%の時間で270度振り切る
+    let litStartAngle, litEndAngle, edgeAngle;
+    if (progress < sweepPhaseRatio) {
+      // ワイプ中：起点から現在の刃先まで満ちていく
+      const sweepT = progress / sweepPhaseRatio;
+      litStartAngle = startAngle;
+      litEndAngle = startAngle + slashEffectRangeRad * sweepT;
+      edgeAngle = litEndAngle;
+    } else {
+      // ワイプ後：起点側から順に消えていき、最後に到達した側が最後まで残る
+      const fadeT = Math.min(1, (progress - sweepPhaseRatio) / (1 - sweepPhaseRatio));
+      litStartAngle = startAngle + slashEffectRangeRad * fadeT;
+      litEndAngle = endAngle;
+      edgeAngle = litStartAngle;
+    }
+    if (litEndAngle > litStartAngle) {
+      const tipX = lightsaberEffect.x + Math.cos(edgeAngle) * lightsaberEffect.length;
+      const tipY = lightsaberEffect.y + Math.sin(edgeAngle) * lightsaberEffect.length;
+      ctx.save();
+      // 満たされた範囲（扇形）を半透明のライトセーバー色で塗る
+      ctx.fillStyle = 'rgba(224, 247, 250, 0.35)';
+      ctx.shadowColor = '#80deea';
+      ctx.shadowBlur = 20;
+      ctx.beginPath();
+      ctx.moveTo(lightsaberEffect.x, lightsaberEffect.y);
+      ctx.arc(lightsaberEffect.x, lightsaberEffect.y, lightsaberEffect.length, litStartAngle, litEndAngle);
+      ctx.closePath();
+      ctx.fill();
+      // 今まさに動いている境界線（ワイプ中は刃先、ワイプ後は消えていく先端）を、光る棒として重ねて描く
+      ctx.lineCap = 'round';
       ctx.strokeStyle = '#e0f7fa';
       ctx.lineWidth = 7;
-      ctx.shadowColor = '#80deea';
-      ctx.shadowBlur = 16;
       ctx.beginPath();
       ctx.moveTo(lightsaberEffect.x, lightsaberEffect.y);
       ctx.lineTo(tipX, tipY);
       ctx.stroke();
-      // 内側にもう1本重ねて、斬撃ワイプエフェクトと同じ太さの変化を出す
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.moveTo(lightsaberEffect.x, lightsaberEffect.y);
       ctx.lineTo(tipX, tipY);
       ctx.stroke();
+      ctx.restore();
     }
-    ctx.restore();
   }
 
   // 自分のアイコン（性別選択で選んだimages/self内の画像を使用）。
