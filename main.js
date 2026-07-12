@@ -538,6 +538,8 @@ const slashEffectRangeRad = (270 * Math.PI) / 180;
 function spawnSlashEffect(x, y, angle, entityRadius) {
   slashEffect = { x, y, angle, radius: entityRadius, timer: slashEffectDurationMs };
 }
+// 「闇を切り裂く剣」限定：ワイプの範囲（ライトセーバー／通常のパリィは270度のまま）
+const darkCleavingSwordRangeRad = (330 * Math.PI) / 180;
 
 // ===== 特殊スキル「ライトセーバー」「闇を切り裂く剣」：自機がパリィした瞬間、光る棒（一端は自機）が
 // 自機の向きを中心に270度ワイプするエフェクト =====
@@ -11546,15 +11548,18 @@ function draw() {
   drawBarrierShield(player.x, player.y, player.radius, playerBarrierCharges);
 
   // 特殊スキル「ライトセーバー」「闇を切り裂く剣」：パリィした瞬間、自機を一端とする光る棒が、
-  // 自機の向きを中心に270度ワイプするエフェクトを描く（棒の長さ＝パリィの効果範囲）。
-  // 自機アイコンより先に描くことで、自機の裏を通るように見せる。少し前の角度もうっすら重ねて残像を表現する。
+  // 自機の向きを中心にワイプするエフェクトを描く（棒の長さ＝パリィの効果範囲。範囲はライトセーバーが270度、
+  // 闇を切り裂く剣は330度）。自機アイコンより先に描くことで、自機の裏を通るように見せる。
+  // 少し前の角度もうっすら重ねて残像を表現する。
   // 「闇を切り裂く剣」限定：スワイプ開始時点からエフェクト終了まで、最大20%まで徐々に拡大していく。
-  // また、ワイプ完了の200ms前から範囲全体（270度の扇形）の発光がフェードインし始め、
+  // また、ワイプ完了の200ms前から範囲全体（扇形）の発光がフェードインし始め、
   // ワイプ完了時に満点になり、そこからフェードアウトする（フェードイン中もワイプ自体は続いている）
   if (lightsaberEffect) {
     const elapsedMs = lightsaberEffect.totalDurationMs - lightsaberEffect.timer;
-    const startAngle = lightsaberEffect.angle - slashEffectRangeRad / 2;
-    const endAngle = startAngle + slashEffectRangeRad;
+    // 「闇を切り裂く剣」はワイプ範囲が330度に広がる（通常のライトセーバー／パリィは270度のまま）
+    const effectRangeRad = lightsaberEffect.isDarkBlade ? darkCleavingSwordRangeRad : slashEffectRangeRad;
+    const startAngle = lightsaberEffect.angle - effectRangeRad / 2;
+    const endAngle = startAngle + effectRangeRad;
     // 「闇を切り裂く剣」は明るい黄色寄り、通常の「ライトセーバー」は水色の刃にする
     const outerColor = lightsaberEffect.isDarkBlade ? '#fff176' : '#e0f7fa';
     const glowColor = lightsaberEffect.isDarkBlade ? '#fbc02d' : '#80deea';
@@ -11576,7 +11581,7 @@ function draw() {
         const trailProgress = progress - i * trailStepProgress;
         if (trailProgress <= 0) continue;
         const sweepProgress = Math.min(1, trailProgress / 0.6); // 最初の60%で振り切る
-        const currentAngle = startAngle + slashEffectRangeRad * sweepProgress;
+        const currentAngle = startAngle + effectRangeRad * sweepProgress;
         const tipX = lightsaberEffect.x + Math.cos(currentAngle) * currentLength;
         const tipY = lightsaberEffect.y + Math.sin(currentAngle) * currentLength;
         // 一番新しい（i=0）ものだけくっきり、古い残像ほど薄くする
