@@ -4990,6 +4990,14 @@ function updateTutorialProgress(dt) {
   } else if (tutorialStep === 'attack') {
     if (tutorialDummyRef && !enemies.includes(tutorialDummyRef)) enterTutorialParryStep();
   } else if (tutorialStep === 'parry') {
+    // パリィし損ねて画面の反対側まで通り過ぎた弾は、そのまま消す
+    // （通常時の援護弾はupdateSupportBulletSystemがこの判定を行うが、チュートリアル中は呼ばれないためここで行う）
+    const existing = bullets.find(b => b.owner === 'support');
+    if (existing && (existing.x < -supportBulletOffscreenMargin || existing.x > canvas.width + supportBulletOffscreenMargin ||
+        existing.y < -supportBulletOffscreenMargin || existing.y > canvas.height + supportBulletOffscreenMargin)) {
+      const idx = bullets.indexOf(existing);
+      if (idx >= 0) bullets.splice(idx, 1);
+    }
     if (!bullets.some(b => b.owner === 'support')) {
       tutorialParrySpawnCooldownMs -= dt * 1000;
       if (tutorialParrySpawnCooldownMs <= 0) {
