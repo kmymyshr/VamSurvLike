@@ -305,6 +305,9 @@ const tutorialMoveDistanceGoal = 400;
 let tutorialDummyRef = null;
 const tutorialParrySpawnIntervalMs = 2500;
 let tutorialParrySpawnCooldownMs = 0;
+// タイトル画面の「チュートリアル」ボタンから再度チュートリアルだけをやり直しているかどうか。
+// trueの間は、すでに tutorialCompleted 済みでも強制的にチュートリアルへ入り、終了後はDAY1へ進まずタイトルへ戻す
+let tutorialReplayMode = false;
 // 画面外のランダムな位置を決め、座標を { x, y } で返す
 function spawnEnemyOffscreen() {
   const margin = 80;
@@ -4872,12 +4875,20 @@ function beginGameplay() {
     threeXModeEnabled = false;
   }
 
-  // 初めてこの端末でプレイする場合は、DAY1を始める前に操作練習チュートリアルを挟む
-  if (!dreamMemorySave.tutorialCompleted) {
+  // 初めてこの端末でプレイする場合は、DAY1を始める前に操作練習チュートリアルを挟む。
+  // タイトル画面の「チュートリアル」ボタンから来た場合は、完了済みでも強制的にチュートリアルへ入る
+  if (!dreamMemorySave.tutorialCompleted || tutorialReplayMode) {
     startTutorial();
   } else {
     startFirstDayTransition();
   }
+}
+
+// タイトル画面の「チュートリアル」ボタン：性別・同僚選択を経て、チュートリアルだけをやり直す
+// （終了後はDAY1へは進まず、タイトル画面へ戻る）
+function startTutorialReplay() {
+  tutorialReplayMode = true;
+  selectMode();
 }
 
 // 同僚の挨拶が終わった直後（またはチュートリアル終了直後）：いきなり操作可能にせず、
@@ -4960,6 +4971,12 @@ function finishTutorial() {
   bullets.length = 0;
   player.x = 400;
   player.y = 300;
+  // タイトル画面の「チュートリアル」ボタンから来ていた場合は、DAY1へ進まずタイトルへ戻す
+  if (tutorialReplayMode) {
+    tutorialReplayMode = false;
+    startScreen = true;
+    return;
+  }
   startFirstDayTransition();
 }
 
@@ -11782,6 +11799,12 @@ function draw() {
           }
         },
         { fillStyle: 'rgba(60, 60, 60, 0.55)', strokeStyle: '#ffd54f', font: `bold 14px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' }, 303);
+    } else {
+      // 一度もノーマルエンドを経ていない場合：「強化」の代わりに、操作練習チュートリアルを
+      // 何度でもやり直せる「チュートリアル」ボタンを表示する（終了後はDAY1へ進まずタイトルへ戻る）
+      drawTitleGlitchButton(canvas.width - cornerBtnW - 20, bottomY, cornerBtnW, cornerBtnH,
+        'チュートリアル', startTutorialReplay,
+        { fillStyle: 'rgba(20, 90, 60, 0.55)', strokeStyle: '#80cbc4', font: `bold 18px ${uiFontFamily}`, textColor: useMinchoTitle ? '#ded8cd' : 'white' }, 202);
     }
 
     // 前回プレイした自機・同僚の組み合わせが記録されている時だけ、画面中央に選択を省略して進めるボタンを出す
