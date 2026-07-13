@@ -5362,8 +5362,8 @@ function performBulletParry(bullet, fromX, fromY, actorAngle, isAuto = false) {
       bullet.vx = Math.cos(actorAngle) * speed;
       bullet.vy = Math.sin(actorAngle) * speed;
       bullet.owner = 'deflected';
+      bullet.tutorialParried = true; // 画面外に消えたタイミングで説明へ進めるための目印
       spawnDeflectEffect(bullet.x, bullet.y, isAuto);
-      advanceTutorialStepAfterParry();
       return;
     }
     triggerSupportBulletRescue(bullet);
@@ -8744,7 +8744,11 @@ function update() {
         }
       }
     }
-    if (removed) continue;
+    if (removed) {
+      // チュートリアルでパリィした弾が画面外へ消えた瞬間に、次の説明（コーヒー等）へ進める
+      if (b.tutorialParried) advanceTutorialStepAfterParry();
+      continue;
+    }
     // 第6段階「内的葛藤」：自機アイコン同士が撃ち合う赤い球。命中したらそのアイコンにダメージを与えて消える
     if (b.owner === 'selfConflict') {
       if (checkInternalConflictBulletHit(b)) {
