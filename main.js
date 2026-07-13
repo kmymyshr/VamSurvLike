@@ -11684,19 +11684,21 @@ function draw() {
     // （ランダムな自機・同僚・関係性100・ノーマルエンド直後、という状態を疑似的に作るだけで、エンディング記録には残さない）
     drawUiButton(canvas.width - 10 - 130, 10, 130, 24, 'Waking Nightmare', triggerWakingNightmareDebug,
       { fillStyle: 'rgba(20, 20, 60, 0.55)', strokeStyle: '#9fa8da', font: 'bold 11px sans-serif' });
-    // 「Waking Nightmare」の下に、前回プレイの自機・同僚のアイコンを（記憶画面と同じ組み合わせで、枠なし・90%サイズで）表示する
+    // 「Waking Nightmare」の下に、前回プレイの自機・同僚のアイコンを（記憶画面と同じ組み合わせで、枠なし・81%サイズ・やや暗めで）表示する
     {
       const lastRun = dreamMemorySave.lastRun;
       if (lastRun && lastRun.playerGender && lastRun.partnerIcon) {
-        const iconSize = 77 * 0.9;
-        const iconImageOverflow = 16 * 0.9;
+        const iconSize = 77 * 0.9 * 0.9;
+        const iconImageOverflow = 16 * 0.9 * 0.9;
         const iconImageSize = iconSize + iconImageOverflow;
         const iconImageOffset = -iconImageOverflow / 2;
-        const iconGap = 10 * 0.9;
+        const iconGap = 10 * 0.9 * 0.9;
         const iconsRightMargin = 20;
         const iconsY = 10 + 24 + 8; // 「Waking Nightmare」ボタンのすぐ下
         const partnerIconX = canvas.width - iconsRightMargin - iconSize;
         const playerIconX = partnerIconX - iconGap - iconSize;
+        ctx.save();
+        ctx.filter = 'brightness(0.75)';
         const playerImg = genderImageElements[lastRun.playerGender];
         if (playerImg && playerImg.complete && playerImg.naturalWidth > 0) {
           ctx.drawImage(playerImg, playerIconX + iconImageOffset, iconsY + iconImageOffset, iconImageSize, iconImageSize);
@@ -11705,6 +11707,7 @@ function draw() {
         if (partnerImg && partnerImg.complete && partnerImg.naturalWidth > 0) {
           ctx.drawImage(partnerImg, partnerIconX + iconImageOffset, iconsY + iconImageOffset, iconImageSize, iconImageSize);
         }
+        ctx.restore();
       }
     }
     // after_normalEND使用時は、タイトル画面の文字をすべて明朝体系フォントにし、彩度・明度を少し落とした配色にする
