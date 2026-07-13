@@ -5353,10 +5353,20 @@ function findNearestEnemyToPlayer() {
 const playerBaseBulletSpeed = 6; // 自機の弾発射速度の基本値（処理速度Bの効果は別途bulletSpeedMultiplierで乗算する）
 const parryBulletSpeedMultiplier = 3; // パリィ（オートパリィ含む）した弾は、元の速度に関係なく自機の弾発射速度の300%に固定する
 function performBulletParry(bullet, fromX, fromY, actorAngle, isAuto = false) {
-  // 援護弾は、通常のパリィ（打ち返し）ではなく専用の救済処理へ振り分ける
+  // 援護弾は、通常のパリィ（打ち返し）ではなく専用の救済処理へ振り分ける。
+  // ただしチュートリアルのパリィ練習中は救済対象となる発射口が存在しないため、
+  // 通常のパリィと同じように弾かれて画面の外へ飛んでいく演出にする
   if (bullet.owner === 'support') {
+    if (tutorialActive && tutorialStep === 'parry') {
+      const speed = playerBaseBulletSpeed * specialSkillEffects.bulletSpeedMultiplier * parryBulletSpeedMultiplier;
+      bullet.vx = Math.cos(actorAngle) * speed;
+      bullet.vy = Math.sin(actorAngle) * speed;
+      bullet.owner = 'deflected';
+      spawnDeflectEffect(bullet.x, bullet.y, isAuto);
+      advanceTutorialStepAfterParry();
+      return;
+    }
     triggerSupportBulletRescue(bullet);
-    if (tutorialActive && tutorialStep === 'parry') advanceTutorialStepAfterParry();
     return;
   }
   // 自機の弾発射速度（処理速度Bの効果を含む）を基準に、パリィした弾の速度を固定する
