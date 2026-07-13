@@ -11616,8 +11616,8 @@ function draw() {
     ctx.fillStyle = useMinchoTitle ? '#9aa39f' : '#cfd8dc';
     ctx.font = `16px ${uiFontFamily}`;
     ctx.textAlign = 'center';
-    ctx.fillText('Space / 右クリック = パリィ（はじきかえす）', canvas.width / 2, helpTextY);
-    ctx.fillText('WASD／マウスで自機をドラッグ = 移動　マウスポインタ = 向き　左クリック = アイテム取得・自動攻撃ON/OFF', canvas.width / 2, helpTextY + 26);
+    ctx.fillText('WASD／マウスで自機をドラッグ = 移動　Space / 右クリック = パリィ（はじきかえす）', canvas.width / 2, helpTextY);
+    ctx.fillText('マウスポインタ = 向き　左クリック = アイテム取得・自動攻撃ON/OFF', canvas.width / 2, helpTextY + 26);
     ctx.textAlign = 'left';
 
     // リセット確認ダイアログ：「やり直しますか？」→はい/いいえ
