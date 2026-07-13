@@ -4924,7 +4924,7 @@ function enterTutorialParryStep() {
   tutorialDummyRef = null;
   spawnSupportBullet();
   tutorialParrySpawnCooldownMs = tutorialParrySpawnIntervalMs;
-  tutorialCaptionText = '飛んでくる弾を、Space または右クリックでタイミングよくパリィしてみましょう';
+  tutorialCaptionText = '飛んでくる弾を、Space または右クリックでタイミングよくパリィしてみましょう\n（このパリィ動作は、近くまで迫った仕事を直接攻撃することもできます）';
 }
 
 function advanceTutorialStepAfterParry() {
@@ -4983,16 +4983,20 @@ function updateTutorialProgress(dt) {
   }
 }
 
-// チュートリアル中の練習ステップ案内を、画面上部に帯状に表示する
+// チュートリアル中の練習ステップ案内を、画面上部に帯状に表示する（\nで2行以上にも対応）
 function drawTutorialCaption() {
   if (!tutorialCaptionText) return;
-  const bandH = 56;
+  const lines = tutorialCaptionText.split('\n');
+  const lineH = 26;
+  const bandH = 30 + lineH * lines.length;
   ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
   ctx.fillRect(0, 0, canvas.width, bandH);
   ctx.fillStyle = '#fff59d';
   ctx.font = 'bold 20px sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText(tutorialCaptionText, canvas.width / 2, bandH / 2 + 7);
+  lines.forEach((line, i) => {
+    ctx.fillText(line, canvas.width / 2, 27 + lineH * i);
+  });
   ctx.textAlign = 'left';
 }
 
