@@ -158,7 +158,7 @@ function loadDreamMemorySave() {
     points: 0, upgrades: fallbackUpgrades, lastRun: null,
     trueEndCleared: false, endingsCleared: fallbackEndingsCleared,
     carriedRank: 1, carriedRankSkillIds: [], carriedScore: 0,
-    specialSkillPreLevels: {}
+    specialSkillPreLevels: {}, tutorialCompleted: false
   };
   try {
     const raw = localStorage.getItem(dreamMemoryStorageKey);
@@ -199,7 +199,8 @@ function loadDreamMemorySave() {
       carriedRank: Math.max(1, Math.floor(parsed.carriedRank) || 1),
       carriedRankSkillIds: Array.isArray(parsed.carriedRankSkillIds) ? parsed.carriedRankSkillIds.filter(id => typeof id === 'string') : [],
       carriedScore: Math.max(0, Math.floor(parsed.carriedScore) || 0),
-      specialSkillPreLevels
+      specialSkillPreLevels,
+      tutorialCompleted: !!parsed.tutorialCompleted
     };
   } catch (e) {
     return fallback;
@@ -294,6 +295,16 @@ const player = {
   speed: 6, // 初期速度（以前の設定の150%）
   angle: 0 // 自分が向いている角度（ラジアン）
 };
+
+// ===== 初回プレイ限定：操作練習チュートリアル =====
+let tutorialActive = false;
+let tutorialStep = null; // null | 'move' | 'attack' | 'parry' | 'done'
+let tutorialCaptionText = '';
+let tutorialMoveLastX = 0, tutorialMoveLastY = 0, tutorialMoveDistance = 0;
+const tutorialMoveDistanceGoal = 400;
+let tutorialDummyRef = null;
+const tutorialParrySpawnIntervalMs = 2500;
+let tutorialParrySpawnCooldownMs = 0;
 // 画面外のランダムな位置を決め、座標を { x, y } で返す
 function spawnEnemyOffscreen() {
   const margin = 80;
@@ -2278,7 +2289,7 @@ let lowSanTimerMs = 0; // 低SAN状態が続いている時間
 
 // SANへダメージを与える共通処理。寿命への影響とゲームオーバー判定もまとめて行う
 function damageSan(amount) {
-  if (amount <= 0 || gameOver) return;
+  if (amount <= 0 || gameOver || tutorialActive) return;
   const actualAmount = amount * getLunchBuffDamageTakenMultiplier();
   san = Math.max(0, san - actualAmount);
   lifespan = Math.max(0, lifespan - actualAmount * sanDamageToLifespanRatio);
@@ -4851,10 +4862,6 @@ function beginGameplay() {
   if (shouldShowReunionScene()) {
     partner.relationship = Math.min(120, dreamMemorySave.lastRun.relationship + 20);
   }
-  // 同僚の挨拶が終わった直後は、いきなり操作可能にせず、他の日と同様にまず「DAY 1」の
-  // クリック待ち画面を表示してからゲームを始める（暗転からのフェードアウトは不要なので、直接waitingにする）
-  dayTransitionPhase = 'waiting';
-  dayTransitionWaitingTimerMs = 0;
 
   // 一度もノーマルエンドを経ていない場合（チュートリアル的な特別なプレイ）：
   // 完全オートモード・3倍加速はボタンごと非表示にするため、念のためここで強制的にOFFにしておく
@@ -4864,6 +4871,129 @@ function beginGameplay() {
     gameTimeScale = 1;
     threeXModeEnabled = false;
   }
+
+  // 初めてこの端末でプレイする場合は、DAY1を始める前に操作練習チュートリアルを挟む
+  if (!dreamMemorySave.tutorialCompleted) {
+    startTutorial();
+  } else {
+    startFirstDayTransition();
+  }
+}
+
+// 同僚の挨拶が終わった直後（またはチュートリアル終了直後）：いきなり操作可能にせず、
+// 他の日と同様にまず「DAY 1」のクリック待ち画面を表示してからゲームを始める
+// （暗転からのフェードアウトは不要なので、直接waitingにする）
+function startFirstDayTransition() {
+  dayTransitionPhase = 'waiting';
+  dayTransitionWaitingTimerMs = 0;
+}
+
+// ===== 操作練習チュートリアル =====
+function startTutorial() {
+  tutorialActive = true;
+  enemies.length = 0;
+  bullets.length = 0;
+  player.x = 400;
+  player.y = 300;
+  showAcknowledgementNotice(
+    'ようこそ。本編を始める前に、操作の練習をしましょう。',
+    '#fff59d',
+    'この間、SANや寿命が減ることはありません。',
+    () => enterTutorialMoveStep()
+  );
+}
+
+function enterTutorialMoveStep() {
+  tutorialStep = 'move';
+  tutorialMoveLastX = player.x;
+  tutorialMoveLastY = player.y;
+  tutorialMoveDistance = 0;
+  tutorialCaptionText = 'WASDキー（またはマウスでドラッグ）で自機を動かしてみましょう';
+}
+
+function enterTutorialAttackStep() {
+  tutorialStep = 'attack';
+  const dummy = spawnEnemy(0);
+  dummy.isTutorialDummy = true;
+  tutorialDummyRef = dummy;
+  tutorialCaptionText = '近づいてくる相手をマウスで狙い、クリック（または自動連射）で倒してみましょう';
+}
+
+function enterTutorialParryStep() {
+  tutorialStep = 'parry';
+  tutorialDummyRef = null;
+  spawnSupportBullet();
+  tutorialParrySpawnCooldownMs = tutorialParrySpawnIntervalMs;
+  tutorialCaptionText = '飛んでくる弾を、Space または右クリックでタイミングよくパリィしてみましょう';
+}
+
+function advanceTutorialStepAfterParry() {
+  if (!tutorialActive || tutorialStep !== 'parry') return;
+  tutorialStep = 'drinkInfo';
+  tutorialCaptionText = '';
+  showAcknowledgementNotice(
+    '画面左下のコーヒー、右下の栄養ドリンクは、何度でも飲むことができます。',
+    '#fff59d',
+    'ただし飲みすぎる（特に1日に2本目以降を飲む）と、そのぶん寿命が縮んでしまいます。SANの回復や脳疲労の軽減と引き換えに、使いどころを見極めましょう。',
+    () => finishTutorialWithFinalMessage()
+  );
+}
+
+function finishTutorialWithFinalMessage() {
+  tutorialStep = 'done';
+  showAcknowledgementNotice(
+    'お疲れさまでした。それでは本編を始めましょう。',
+    '#fff59d',
+    '',
+    () => finishTutorial()
+  );
+}
+
+function finishTutorial() {
+  tutorialActive = false;
+  tutorialStep = null;
+  tutorialCaptionText = '';
+  tutorialDummyRef = null;
+  dreamMemorySave.tutorialCompleted = true;
+  saveDreamMemorySave();
+  enemies.length = 0;
+  bullets.length = 0;
+  player.x = 400;
+  player.y = 300;
+  startFirstDayTransition();
+}
+
+// チュートリアル中の進行判定（毎フレーム、通常のゲーム進行より前に呼ぶ）
+function updateTutorialProgress(dt) {
+  if (tutorialStep === 'move') {
+    tutorialMoveDistance += Math.hypot(player.x - tutorialMoveLastX, player.y - tutorialMoveLastY);
+    tutorialMoveLastX = player.x;
+    tutorialMoveLastY = player.y;
+    if (tutorialMoveDistance >= tutorialMoveDistanceGoal) enterTutorialAttackStep();
+  } else if (tutorialStep === 'attack') {
+    if (tutorialDummyRef && !enemies.includes(tutorialDummyRef)) enterTutorialParryStep();
+  } else if (tutorialStep === 'parry') {
+    if (!bullets.some(b => b.owner === 'support')) {
+      tutorialParrySpawnCooldownMs -= dt * 1000;
+      if (tutorialParrySpawnCooldownMs <= 0) {
+        spawnSupportBullet();
+        tutorialParrySpawnCooldownMs = tutorialParrySpawnIntervalMs;
+      }
+    }
+  }
+}
+
+// チュートリアル中の練習ステップ案内を、画面上部に帯状に表示する
+function drawTutorialCaption() {
+  if (!tutorialCaptionText) return;
+  const bandH = 56;
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+  ctx.fillRect(0, 0, canvas.width, bandH);
+  ctx.fillStyle = '#fff59d';
+  ctx.font = 'bold 20px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(tutorialCaptionText, canvas.width / 2, bandH / 2 + 7);
+  ctx.textAlign = 'left';
 }
 
 // ===== キーボード入力 =====
@@ -5226,6 +5356,7 @@ function performBulletParry(bullet, fromX, fromY, actorAngle, isAuto = false) {
   // 援護弾は、通常のパリィ（打ち返し）ではなく専用の救済処理へ振り分ける
   if (bullet.owner === 'support') {
     triggerSupportBulletRescue(bullet);
+    if (tutorialActive && tutorialStep === 'parry') advanceTutorialStepAfterParry();
     return;
   }
   // 自機の弾発射速度（処理速度Bの効果を含む）を基準に、パリィした弾の速度を固定する
@@ -7098,6 +7229,7 @@ function triggerSupportBulletRescue(bullet) {
 }
 
 function damagePlayerByMidBossBullet() {
+  if (tutorialActive) return;
   if (friendlyFireInvincibleTimer > 0) return;
   if (playerBarrierCharges > 0) {
     playerBarrierCharges--;
@@ -7905,6 +8037,7 @@ function update() {
 
   // スタート前とゲーム終了後は、敵や納期の更新を止める
   if (gameOver || gameClear || setupStep || startScreen || specialSkillSelectionActive) return;
+  if (tutorialActive) updateTutorialProgress(dt);
   // 「同僚と遊ぶ」アドベンチャーパート中は、ゲームの進行を止める（文単位のフェードイン・アウトだけは進める）
   if (adventureState) {
     if (adventureState.lineFadePhase) {
@@ -8027,6 +8160,9 @@ function update() {
         normalEndSequence.phaseTimerMs = 0;
       }
     }
+  } else if (tutorialActive) {
+    // チュートリアル中は、日/時刻の進行・ノルマ判定・通常ウェーブやアイテムの出現をすべて止める
+    // （移動・弾・当たり判定・パリィなど、下にある物理処理はそのまま動く）
   } else {
   // 「大規模プロジェクト」（中ボス）の進行を処理する。通常の敵・時間経過は止めず並行して進む
   if (midBossEvent) {
@@ -8123,18 +8259,22 @@ function update() {
   }
 
   // 援護弾（ボスが倒せない時の救済措置）の発生判定・飛来を処理する
-  updateSupportBulletSystem(dt);
+  // （チュートリアル中は、練習用に手動で出した援護弾を消してしまわないよう対象外にする）
+  if (!tutorialActive) updateSupportBulletSystem(dt);
   // 完全オートモード中は、近くまで来た援護弾を可能ならパリィする
   if (fullAutoModeEnabled) updateFullAutoSupportBulletParry();
   // 完全オートモード中は、援護弾以外のパリィ可能な攻撃にも自動でパリィを発動する（脳疲労80以下の間だけ）
   if (fullAutoModeEnabled) updateFullAutoThreatParry(dt);
 
   // 各敵の納期をカウントダウンし、0になった敵を爆発させる
-  for (let i = enemies.length - 1; i >= 0; i--) {
-    enemies[i].deadlineMs -= dt * 1000;
-    if (enemies[i].deadlineMs <= 0) {
-      explodeEnemy(i);
-      if (gameOver || deathSequence) return;
+  // （チュートリアルの練習用ダミーは納期切れで消えないようにする）
+  if (!tutorialActive) {
+    for (let i = enemies.length - 1; i >= 0; i--) {
+      enemies[i].deadlineMs -= dt * 1000;
+      if (enemies[i].deadlineMs <= 0) {
+        explodeEnemy(i);
+        if (gameOver || deathSequence) return;
+      }
     }
   }
 
@@ -11544,6 +11684,29 @@ function draw() {
     // （ランダムな自機・同僚・関係性100・ノーマルエンド直後、という状態を疑似的に作るだけで、エンディング記録には残さない）
     drawUiButton(canvas.width - 10 - 130, 10, 130, 24, 'Waking Nightmare', triggerWakingNightmareDebug,
       { fillStyle: 'rgba(20, 20, 60, 0.55)', strokeStyle: '#9fa8da', font: 'bold 11px sans-serif' });
+    // 「Waking Nightmare」の下に、前回プレイの自機・同僚のアイコンを（記憶画面と同じ組み合わせで、枠なし・90%サイズで）表示する
+    {
+      const lastRun = dreamMemorySave.lastRun;
+      if (lastRun && lastRun.playerGender && lastRun.partnerIcon) {
+        const iconSize = 77 * 0.9;
+        const iconImageOverflow = 16 * 0.9;
+        const iconImageSize = iconSize + iconImageOverflow;
+        const iconImageOffset = -iconImageOverflow / 2;
+        const iconGap = 10 * 0.9;
+        const iconsRightMargin = 20;
+        const iconsY = 10 + 24 + 8; // 「Waking Nightmare」ボタンのすぐ下
+        const partnerIconX = canvas.width - iconsRightMargin - iconSize;
+        const playerIconX = partnerIconX - iconGap - iconSize;
+        const playerImg = genderImageElements[lastRun.playerGender];
+        if (playerImg && playerImg.complete && playerImg.naturalWidth > 0) {
+          ctx.drawImage(playerImg, playerIconX + iconImageOffset, iconsY + iconImageOffset, iconImageSize, iconImageSize);
+        }
+        const partnerImg = partnerIconImageElements[lastRun.partnerIcon];
+        if (partnerImg && partnerImg.complete && partnerImg.naturalWidth > 0) {
+          ctx.drawImage(partnerImg, partnerIconX + iconImageOffset, iconsY + iconImageOffset, iconImageSize, iconImageSize);
+        }
+      }
+    }
     // after_normalEND使用時は、タイトル画面の文字をすべて明朝体系フォントにし、彩度・明度を少し落とした配色にする
     const useMinchoTitle = shouldShowAfterNormalEndTitleBackground();
     const titleFontFamily = useMinchoTitle
@@ -13049,6 +13212,9 @@ function draw() {
       ctx.textAlign = 'left';
     }
   }
+
+  // チュートリアル中は、現在の練習ステップの案内を画面上部に表示する
+  if (tutorialActive) drawTutorialCaption();
 
   // 重要通知は最前面に表示し、クリック／タップされるまでゲームを停止する。
   // 本文・詳細文とも、枠からはみ出さないよう幅に応じて折り返し、必要な行数ぶん枠の高さを広げる
