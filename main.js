@@ -4354,8 +4354,6 @@ let prologueDaysFought = 0;
 let adventureRunCount = 0; // 「同僚と遊ぶ」を選んだ回数（ADV1・ADV2・ADV3・それ以降）
 let adv1Choice = null; // ADV1で選んだ方 'A' | 'B'
 let adv2Choice = null; // ADV2で選んだ方 'C' | 'D'（Aルート）または 'E' | 'F'（Bルート）
-let relCategoryAtAdv1 = null; // ADV1突入時点の関係性カテゴリ
-let relCategoryAtAdv2 = null; // ADV2突入時点の関係性カテゴリ
 let relCategoryAtAdv3 = null; // ADV3突入時点の関係性カテゴリ
 let dreamRouteCompleted = false; // ADV3で「夢の話をする」を選び、夢ルートを完走したか
 
@@ -4412,12 +4410,12 @@ function proceedFromAdventureStatsSummary() {
   if (onProceed) onProceed();
 }
 
-// 夢フラグ＝前世の関係性が良好・同じ組み合わせで2周目以降・ADV1〜3突入時すべて関係性良好、の全てを満たす場合のみ成立する
+// 夢フラグ＝前世の関係性が良好・同じ組み合わせで2周目以降・ADV3突入時点の関係性が良好、の全てを満たす場合のみ成立する
+// （ADV1・ADV2突入時点の関係性は良好・普通・悪いのいずれでもよい）
 function isDreamFlagEligible() {
   const lastRun = dreamMemorySave.lastRun;
   const prelifeGood = !!(lastRun && getRelationshipCategory(lastRun.relationship) === 'good');
-  return prelifeGood && shouldShowReunionScene() &&
-    relCategoryAtAdv1 === 'good' && relCategoryAtAdv2 === 'good' && relCategoryAtAdv3 === 'good';
+  return prelifeGood && shouldShowReunionScene() && relCategoryAtAdv3 === 'good';
 }
 
 // 「通常2択」を選んだ後（またはADV4以降、選択肢なしで直接）現在の関係性で好感度ルート（⑨⑩⑪）へ振り分ける
@@ -4467,10 +4465,8 @@ function startPartnerAdventure(onComplete) {
   const category = getRelationshipCategory(partner.relationship);
   let sceneKey, nodeId;
   if (adventureRunCount === 1) {
-    relCategoryAtAdv1 = category;
     sceneKey = 'adv1';
   } else if (adventureRunCount === 2) {
-    relCategoryAtAdv2 = category;
     sceneKey = adv1Choice === 'A' ? 'adv2A' : 'adv2B';
   } else if (adventureRunCount === 3) {
     relCategoryAtAdv3 = category;
@@ -9239,7 +9235,7 @@ function drawUiButton(x, y, w, h, label, action, options = {}) {
 // アドベンチャーパートに入る前の統計情報画面：見出し付きのリストを1つ描く共通処理。
 // 行数が多い場合は途中で「……ほかN件」と省略し、次のセクションを描き始めるY座標を返す
 const adventureStatsSectionMaxLines = 8;
-function drawAdventureStatsSection(x, y, title, lines, accentColor) {
+function drawAdventureStatsSection(x, y, title, lines, accentColor, maxLines = adventureStatsSectionMaxLines) {
   ctx.textAlign = 'left';
   ctx.fillStyle = accentColor;
   ctx.font = 'bold 16px sans-serif';
@@ -9252,14 +9248,14 @@ function drawAdventureStatsSection(x, y, title, lines, accentColor) {
     ctx.fillText('（なし）', x, ly);
     return ly + 26;
   }
-  const shown = lines.slice(0, adventureStatsSectionMaxLines);
+  const shown = lines.slice(0, maxLines);
   shown.forEach(line => {
     ctx.fillText(line, x, ly);
     ly += 18;
   });
-  if (lines.length > adventureStatsSectionMaxLines) {
+  if (lines.length > maxLines) {
     ctx.fillStyle = '#78909c';
-    ctx.fillText(`……ほか${lines.length - adventureStatsSectionMaxLines}件`, x, ly);
+    ctx.fillText(`……ほか${lines.length - maxLines}件`, x, ly);
     ly += 18;
   }
   return ly + 8;
@@ -11054,7 +11050,7 @@ function draw() {
     drawAdventureStatsSection(colLeftX, leftY, '■ 倒した脅威（固定敵）', fixedEnemyLines, '#ff8a65');
 
     rightY = drawAdventureStatsSection(colRightX, rightY, '■ 習得したスキル',
-      adventureStatsTracker.skillsAcquired, '#ce93d8') + 18;
+      adventureStatsTracker.skillsAcquired, '#ce93d8', Infinity) + 18;
     const jobEntries = Object.entries(adventureStatsTracker.jobsDefeated);
     const totalJobsDefeated = jobEntries.reduce((sum, [, count]) => sum + count, 0);
     const jobLines = jobEntries.map(([name, count]) => `${name} ×${count}`);
