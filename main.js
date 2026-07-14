@@ -3710,7 +3710,7 @@ const specialSkills = [
     choiceDescription: '闇を切り裂けるかもしれない。',
     description: 'ライトセーバーの上位互換。自機のパリィの効果範囲が3倍になる。パリィの直接攻撃ダメージが10倍になる（ライトセーバーは3倍）。専用の明るい黄色の刃で演出される。' +
       'パリィの直接攻撃（ワイプ範囲）は、通常の敵だけでなく中ボス・ラスボスの発射口にも届き、直接ダメージを与えられる。' +
-      '例外として、ノーマルルート終了時の負けイベント戦闘でも、本来決して破壊できない発射口を、パリィで打ち返した弾を3回当てるか、パリィの直接攻撃を3回当てることで破壊でき、撃破すれば目覚めエンドに至れる。「ライトセーバー」とは同時に習得できない',
+      '例外として、ノーマルルート終了時の負けイベント戦闘では、発射口の本来の耐久力によらず、パリィで打ち返した弾を3回当てるか、パリィの直接攻撃を3回当てることで即座に破壊でき、撃破すれば目覚めエンドに至れる。「ライトセーバー」とは同時に習得できない',
     maxLevel: 1
   },
   {
@@ -3955,7 +3955,6 @@ function chooseSpecialSkill(choiceIndex) {
   // 発想力：レベルが1つ上がるたびに、リロール可能回数がその場で+3される
   if (skill.id === 'idea-power') specialSkillRerollsRemaining += ideaPowerRerollBonusPerLevel;
   recomputeSpecialSkillEffects();
-  recordSpecialSkillAcquiredForStats(`${skill.name} Lv.${newSkillLevel}`);
   showMessage(
     `特殊スキル「${skill.name}」Lv.${newSkillLevel}！`,
     2500,
@@ -4159,7 +4158,6 @@ function grantRankSkillsForRank(newRank) {
   if (skillsForRank.length === 0) return;
   skillsForRank.forEach(skill => {
     rankSkillLevels.add(skill.id);
-    recordRankSkillAcquiredForStats(`${skill.name}（${skill.description}）`);
     if (skill.id === 'cloud') {
       // クラウド：器そのものが大きくなるイメージで、上限に直接+10する（一度だけ）
       maxSan += 10;
@@ -4371,8 +4369,6 @@ function createEmptyAdventureStatsTracker() {
   return {
     jobsDefeated: {}, // 撃破した「仕事」（通常の敵）の名前 → 件数
     fixedEnemiesDefeated: {}, // 撃退した固定敵（脅威）の名前 → 件数
-    specialSkillsAcquired: [], // 習得した特殊スキルの表示名（取得順）
-    rankSkillsAcquired: [], // 習得した役職スキルの表示名（取得順）
     promotions: [] // 昇進した役職名（昇進順）
   };
 }
@@ -4387,14 +4383,6 @@ function recordJobDefeatForStats(name) {
 function recordFixedEnemyDefeatForStats(name) {
   if (!name) return;
   adventureStatsTracker.fixedEnemiesDefeated[name] = (adventureStatsTracker.fixedEnemiesDefeated[name] || 0) + 1;
-}
-function recordSpecialSkillAcquiredForStats(label) {
-  if (!label) return;
-  adventureStatsTracker.specialSkillsAcquired.push(label);
-}
-function recordRankSkillAcquiredForStats(label) {
-  if (!label) return;
-  adventureStatsTracker.rankSkillsAcquired.push(label);
 }
 function recordPromotionForStats(rankName) {
   if (!rankName) return;
@@ -6282,13 +6270,15 @@ function registerDarkSwordHitOnIndestructibleHole(hole, hitX, hitY) {
 // 発射口に命中した弾を処理する。破壊しきい値に達したら穴を破壊する。
 // isParryHit：パリィで打ち返した弾（owner === 'deflected'）による命中かどうか
 function registerBossHoleHit(hole, hitX, hitY, isParryHit = false) {
-  // ノーマルルート終了時の負けイベント戦闘：発射口は本来決して破壊できない（当たった見た目だけ出す）が、
-  // 特殊スキル「闇を切り裂く剣」習得中は例外的に、パリィで打ち返した弾を規定回数当てると破壊できる
+  // ノーマルルート終了時の負けイベント戦闘：発射口は通常なら本来決して破壊できない（初回）か、
+  // 耐久力が非常に高い（2回目以降）かのいずれかだが、特殊スキル「闇を切り裂く剣」習得中は、
+  // どちらの場合であっても、パリィ（反射弾・直接攻撃どちらも）を規定回数当てれば即座に破壊できる
+  const inNormalEndBattle = !!(normalEndSequence && normalEndSequence.phase === 'battle');
+  if (inNormalEndBattle && isParryHit && specialSkillEffects.darkSwordBreaksIndestructibleHoles) {
+    registerDarkSwordHitOnIndestructibleHole(hole, hitX, hitY);
+    return;
+  }
   if (hole.indestructible) {
-    if (isParryHit && specialSkillEffects.darkSwordBreaksIndestructibleHoles) {
-      registerDarkSwordHitOnIndestructibleHole(hole, hitX, hitY);
-      return;
-    }
     hole.flashTimerMs = bossHoleFlashDurationMs;
     spawnHitSpark(hitX, hitY, false);
     return;
@@ -11074,11 +11064,11 @@ function draw() {
     const jobLines = jobEntries.map(([name, count]) => `${name} ×${count}`);
     drawAdventureStatsSection(colLeftX, leftY, `■ 倒した仕事（合計 ${totalJobsDefeated} 件）`, jobLines, '#69f0ae');
 
-    drawAdventureStatsSection(colMidX, midY, '■ 習得した特殊スキル',
-      adventureStatsTracker.specialSkillsAcquired, '#e1bee7', Infinity);
+    drawAdventureStatsSection(colMidX, midY, '■ 習得済の特殊スキル',
+      getAcquiredSpecialSkillsList(), '#e1bee7', Infinity);
 
-    drawAdventureStatsSection(colRightX, rightY, '■ 習得した役職スキル（開発手法）',
-      adventureStatsTracker.rankSkillsAcquired, '#ffe0b2', Infinity);
+    drawAdventureStatsSection(colRightX, rightY, '■ 習得済の役職スキル（開発手法）',
+      getAcquiredRankSkillsList(), '#ffe0b2', Infinity);
 
     const btnW = 240, btnH = 50;
     drawUiButton(canvas.width / 2 - btnW / 2, canvas.height - 80, btnW, btnH,
