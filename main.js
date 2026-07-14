@@ -176,7 +176,11 @@ function loadDreamMemorySave() {
       playerGender: rawLastRun.playerGender || null,
       partnerIcon: rawLastRun.partnerIcon || null,
       relationship: Math.max(0, Math.min(100, Math.floor(rawLastRun.relationship) || 0)),
-      endingType: rawLastRun.endingType || null
+      endingType: rawLastRun.endingType || null,
+      // 第3回アドベンチャーパートを経てノーマルエンドに至った場合だけ立つフラグ（再会シーン・夢ルートの条件に使う）
+      viaAdv3NormalEnd: !!rawLastRun.viaAdv3NormalEnd,
+      // 第3回アドベンチャーパートを経る前に、通常のラスボス遭遇イベントに負けた場合だけ立つフラグ（タイトル背景切り替えに使う）
+      lostToBossBeforeAdv3: !!rawLastRun.lostToBossBeforeAdv3
     } : null;
     const rawEndingsCleared = parsed.endingsCleared || {};
     const endingsCleared = {};
