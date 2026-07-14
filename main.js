@@ -4357,6 +4357,7 @@ let adventureRunCount = 0; // 「同僚と遊ぶ」を選んだ回数（ADV1・A
 let adv1Choice = null; // ADV1で選んだ方 'A' | 'B'
 let adv2Choice = null; // ADV2で選んだ方 'C' | 'D'（Aルート）または 'E' | 'F'（Bルート）
 let relCategoryAtAdv3 = null; // ADV3突入時点の関係性カテゴリ
+let relationshipAtAdv3Entry = null; // ADV3突入時点の関係性の値（第3回のイベント戦闘後も、これをそのまま記録に使う）
 let dreamRouteCompleted = false; // ADV3で「夢の話をする」を選び、夢ルートを完走したか
 
 function recordAdv1Choice(choice) { adv1Choice = choice; }
@@ -4472,6 +4473,7 @@ function startPartnerAdventure(onComplete) {
     sceneKey = adv1Choice === 'A' ? 'adv2A' : 'adv2B';
   } else if (adventureRunCount === 3) {
     relCategoryAtAdv3 = category;
+    relationshipAtAdv3Entry = partner.relationship;
     if (dreamMemorySave.upgrades.awakening >= 1) {
       // 「目覚め」：これまでの選択・関係性によらず、必ず夢ルートへ入る
       sceneKey = 'adv3Dream';
@@ -6735,14 +6737,18 @@ function fireIndestructibleBossBullet(hole) {
 
 // ノーマルルート共通のエンディング（黒背景に「{partner}を助けないと…」がフェードイン→フェードアウト→タイトルへ）
 function finishNormalEndSequence() {
-  const endingId = getNormalEndingByRelationship();
+  // ここでのエンディング種別・記録する関係性は、いずれもADV3突入時点の関係性で決める
+  // （突入後のイベント戦闘中の増減や同僚の離脱による上書きの影響を受けないようにするため）
+  const finalRelationship = relationshipAtAdv3Entry != null ? relationshipAtAdv3Entry : partner.relationship;
+  const finalCategory = getRelationshipCategory(finalRelationship);
+  const endingId = finalCategory === 'good' ? 'normal1' : finalCategory === 'normal' ? 'normal2' : 'normal3';
   // 第3回アドベンチャーパートを経てノーマルエンドに至った場合は、夢の記憶ポイントが5貯まる
   dreamMemorySave.points += dreamMemoryPointsForAdv3NormalEnd;
   dreamMemorySave.endingsCleared[endingId] = true;
   dreamMemorySave.lastRun = selectedPartnerIcon ? {
     playerGender: selectedGender,
     partnerIcon: selectedPartnerIcon,
-    relationship: partner.relationship,
+    relationship: finalRelationship,
     endingType: endingId,
     // 第3回アドベンチャーパートを経てノーマルエンドに至った場合だけ立てるフラグ（再会シーンの条件に使う）
     viaAdv3NormalEnd: true
