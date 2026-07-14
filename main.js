@@ -4159,7 +4159,7 @@ function grantRankSkillsForRank(newRank) {
   if (skillsForRank.length === 0) return;
   skillsForRank.forEach(skill => {
     rankSkillLevels.add(skill.id);
-    recordSkillAcquiredForStats(skill.name);
+    recordSkillAcquiredForStats(`${skill.name}（${skill.description}）`);
     if (skill.id === 'cloud') {
       // クラウド：器そのものが大きくなるイメージで、上限に直接+10する（一度だけ）
       maxSan += 10;
