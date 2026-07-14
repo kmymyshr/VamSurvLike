@@ -8188,8 +8188,10 @@ function update() {
     if (normalEndSequence && normalEndSequence.phase === 'descend' && bossEvent.phase === 'active') {
       normalEndSequence.phase = 'battle';
       normalEndSequence.battleTimerMs = 0;
-      normalEndSequence.partnerLoseAtMs = normalEndPartnerLoseDelayMinMs +
-        Math.random() * (normalEndPartnerLoseDelayMaxMs - normalEndPartnerLoseDelayMinMs);
+      // 2回目以降（一度でもノーマルエンドを経験済み）は、時間切れによる強制離脱は発生させない。
+      // 同僚が離脱するのは、この戦闘中に被弾してSAN・寿命が尽きた場合のみとする
+      normalEndSequence.partnerLoseAtMs = hasEverReachedNormalEnd() ? Infinity :
+        (normalEndPartnerLoseDelayMinMs + Math.random() * (normalEndPartnerLoseDelayMaxMs - normalEndPartnerLoseDelayMinMs));
       bossEvent.holes = generateIndestructibleBossHoles();
     }
     if (normalEndSequence && normalEndSequence.phase === 'battle') {
