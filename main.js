@@ -3444,6 +3444,8 @@ function updatePartner(dt) {
     if (normalEndBattleActive) {
       // ノーマルルート終了時の負けイベント戦闘：通常の離脱メッセージ・SANダメージの代わりに、
       // 全体が減速→静止→同僚が消える演出（partnerLossSlowmo）へ移行する
+      // 離脱による関係性の変動を打ち消し、戦闘突入前の関係性を維持する
+      partner.relationship = normalEndSequence.relationshipBeforeBattle;
       normalEndSequence.partnerLost = true;
       normalEndSequence.phase = 'partnerLossSlowmo';
       normalEndSequence.phaseTimerMs = 0;
@@ -6663,7 +6665,11 @@ function startNormalEndBattleSequence() {
     partner.vx = 0;
     partner.vy = 0;
   }
-  normalEndSequence = { phase: 'freeze', phaseTimerMs: 0, battleTimerMs: 0, partnerLoseAtMs: 0, partnerLost: false };
+  normalEndSequence = {
+    phase: 'freeze', phaseTimerMs: 0, battleTimerMs: 0, partnerLoseAtMs: 0, partnerLost: false,
+    // イベント戦闘中に同僚が離脱した場合、関係性を戦闘突入前の値に戻すために記録しておく
+    relationshipBeforeBattle: partner.relationship
+  };
 }
 
 // freeze（静止）→shake（振動・暗転）の間だけ進める。descendへ移ったらラスボス（通常）を出現させる
@@ -8182,6 +8188,8 @@ function update() {
         partner.active = false;
         partnerLossReason = 'san';
         // 通常の離脱メッセージの代わりに、全体が減速→静止→同僚が消える演出（partnerLossSlowmo）へ移行する
+        // 離脱による関係性の変動を打ち消し、戦闘突入前の関係性を維持する
+        partner.relationship = normalEndSequence.relationshipBeforeBattle;
         normalEndSequence.partnerLost = true;
         normalEndSequence.phase = 'partnerLossSlowmo';
         normalEndSequence.phaseTimerMs = 0;
