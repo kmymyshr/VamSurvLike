@@ -3955,7 +3955,7 @@ function chooseSpecialSkill(choiceIndex) {
   // 発想力：レベルが1つ上がるたびに、リロール可能回数がその場で+3される
   if (skill.id === 'idea-power') specialSkillRerollsRemaining += ideaPowerRerollBonusPerLevel;
   recomputeSpecialSkillEffects();
-  recordSkillAcquiredForStats(`${skill.name} Lv.${newSkillLevel}`);
+  recordSpecialSkillAcquiredForStats(`${skill.name} Lv.${newSkillLevel}`);
   showMessage(
     `特殊スキル「${skill.name}」Lv.${newSkillLevel}！`,
     2500,
@@ -4159,7 +4159,7 @@ function grantRankSkillsForRank(newRank) {
   if (skillsForRank.length === 0) return;
   skillsForRank.forEach(skill => {
     rankSkillLevels.add(skill.id);
-    recordSkillAcquiredForStats(`${skill.name}（${skill.description}）`);
+    recordRankSkillAcquiredForStats(`${skill.name}（${skill.description}）`);
     if (skill.id === 'cloud') {
       // クラウド：器そのものが大きくなるイメージで、上限に直接+10する（一度だけ）
       maxSan += 10;
@@ -4371,7 +4371,8 @@ function createEmptyAdventureStatsTracker() {
   return {
     jobsDefeated: {}, // 撃破した「仕事」（通常の敵）の名前 → 件数
     fixedEnemiesDefeated: {}, // 撃退した固定敵（脅威）の名前 → 件数
-    skillsAcquired: [], // 習得した特殊スキル・役職スキルの表示名（取得順）
+    specialSkillsAcquired: [], // 習得した特殊スキルの表示名（取得順）
+    rankSkillsAcquired: [], // 習得した役職スキルの表示名（取得順）
     promotions: [] // 昇進した役職名（昇進順）
   };
 }
@@ -4387,9 +4388,13 @@ function recordFixedEnemyDefeatForStats(name) {
   if (!name) return;
   adventureStatsTracker.fixedEnemiesDefeated[name] = (adventureStatsTracker.fixedEnemiesDefeated[name] || 0) + 1;
 }
-function recordSkillAcquiredForStats(label) {
+function recordSpecialSkillAcquiredForStats(label) {
   if (!label) return;
-  adventureStatsTracker.skillsAcquired.push(label);
+  adventureStatsTracker.specialSkillsAcquired.push(label);
+}
+function recordRankSkillAcquiredForStats(label) {
+  if (!label) return;
+  adventureStatsTracker.rankSkillsAcquired.push(label);
 }
 function recordPromotionForStats(rankName) {
   if (!rankName) return;
@@ -11054,21 +11059,24 @@ function draw() {
     ctx.fillText(periodLabel, canvas.width / 2, 66);
     ctx.textAlign = 'left';
 
-    const colLeftX = 50, colRightX = 420;
-    let leftY = 104, rightY = 104;
+    const colLeftX = 40, colMidX = 300, colRightX = 560;
+    let leftY = 104, midY = 104, rightY = 104;
 
     leftY = drawAdventureStatsSection(colLeftX, leftY, '■ 昇進の状況',
       adventureStatsTracker.promotions, '#ffd54f') + 18;
     const fixedEnemyLines = Object.entries(adventureStatsTracker.fixedEnemiesDefeated)
       .map(([name, count]) => `${name} ×${count}`);
-    drawAdventureStatsSection(colLeftX, leftY, '■ 倒した脅威（固定敵）', fixedEnemyLines, '#ff8a65');
-
-    rightY = drawAdventureStatsSection(colRightX, rightY, '■ 習得したスキル',
-      adventureStatsTracker.skillsAcquired, '#ce93d8', Infinity) + 18;
+    leftY = drawAdventureStatsSection(colLeftX, leftY, '■ 倒した脅威（固定敵）', fixedEnemyLines, '#ff8a65') + 18;
     const jobEntries = Object.entries(adventureStatsTracker.jobsDefeated);
     const totalJobsDefeated = jobEntries.reduce((sum, [, count]) => sum + count, 0);
     const jobLines = jobEntries.map(([name, count]) => `${name} ×${count}`);
-    drawAdventureStatsSection(colRightX, rightY, `■ 倒した仕事（合計 ${totalJobsDefeated} 件）`, jobLines, '#69f0ae');
+    drawAdventureStatsSection(colLeftX, leftY, `■ 倒した仕事（合計 ${totalJobsDefeated} 件）`, jobLines, '#69f0ae');
+
+    drawAdventureStatsSection(colMidX, midY, '■ 習得した特殊スキル',
+      adventureStatsTracker.specialSkillsAcquired, '#e1bee7', Infinity);
+
+    drawAdventureStatsSection(colRightX, rightY, '■ 習得した役職スキル（開発手法）',
+      adventureStatsTracker.rankSkillsAcquired, '#ffe0b2', Infinity);
 
     const btnW = 240, btnH = 50;
     drawUiButton(canvas.width / 2 - btnW / 2, canvas.height - 80, btnW, btnH,
