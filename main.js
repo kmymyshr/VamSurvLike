@@ -1226,6 +1226,9 @@ const overtimeFailureVitalRatio = 1 / 3; // 24時になっても片付けられ�
 let dayStartTime = Date.now();
 let lastHourTime = dayStartTime;
 let currentHour = dayStartHour;
+// ノルマ早期達成による早退時：内部的にはcurrentHourを終業時刻(dayEndHour)扱いにするが、
+// 画面の時刻表示だけは、退勤した実際の時刻をこちらに保持して使う
+let earlyLeaveDisplayHour = null;
 // 一日の終了時に「続ける」を選んだ場合の回復量
 const dayFatigueRecover = 30;
 const daySanRecover = 10;
@@ -3520,6 +3523,7 @@ function resetDailyQuotaForNewDay() {
   dailyKills = 0;
   dailyScoreGained = 0;
   dailyQuotaAchievedEarly = false;
+  earlyLeaveDisplayHour = null;
   dailyQuizCount = 0;
 }
 
@@ -3540,6 +3544,7 @@ function checkEarlyDailyQuotaAchievement() {
     // それらを片付けるまでは終業できない（片付けた側の呼び出し元が、その時点で改めてこの関数を呼び直す）
     if (hasEverReachedNormalEnd() && currentHour < dayEndHour && dayTransitionPhase === null &&
         !scheduledReport && !midBossEvent) {
+      earlyLeaveDisplayHour = currentHour;
       currentHour = dayEndHour;
       lastHourTime = gameClockMs;
       showMessage('本日のノルマ達成！ 早めに切り上げて退勤します', 3500, '#69f0ae', '22px sans-serif');
@@ -12935,7 +12940,7 @@ function draw() {
   const holidayFlag = isHoliday(currentDate) || yName === '土' || yName === '日';
   ctx.font = 'bold 22px sans-serif';
   ctx.fillStyle = holidayFlag ? '#ffeb3b' : 'white';
-  const hourStr = String(currentHour).padStart(2,'0') + ':00';
+  const hourStr = String(earlyLeaveDisplayHour != null ? earlyLeaveDisplayHour : currentHour).padStart(2,'0') + ':00';
   // ラスボス戦の間は、日時が分からないよう表示をすべて「?」にする
   const dateStr = bossEvent
     ? 'DAY?? ????/??/?? ??:?? (?)'
