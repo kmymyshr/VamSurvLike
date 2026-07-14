@@ -13048,7 +13048,7 @@ function draw() {
     ctx.fillStyle = '#ce93d8';
     ctx.font = 'bold 14px sans-serif';
     ctx.fillText('習得済み特殊スキル', colLeftX, skillSectionY);
-    ctx.fillText('習得済み役職スキル（開発手法）', colRightX, skillSectionY);
+    ctx.fillText('習得済み役職スキル', colRightX, skillSectionY);
 
     ctx.font = '12px sans-serif';
     ctx.fillStyle = '#e1bee7';
