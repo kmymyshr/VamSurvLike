@@ -3650,7 +3650,7 @@ function getDefaultSpecialSkillEffects() {
     deflectRangeMultiplier: 1,
     // ライトセーバー／闇を切り裂く剣：パリィの直接攻撃ダメージの倍率
     parryDirectDamageMultiplier: 1,
-    // 闇を切り裂く剣：ノーマルルート終了時の負けイベント戦闘でも、発射口をパリィ3回で破壊できるようにする
+    // 闇を切り裂く剣：ノーマルルート終了時の負けイベント戦闘でも、発射口をパリィ10回で破壊できるようにする
     darkSwordBreaksIndestructibleHoles: false,
     // ワーカーズハイ：脳疲労が常に0のまま、一切蓄積しなくなる
     fatigueLocked: false,
@@ -3710,7 +3710,7 @@ const specialSkills = [
     choiceDescription: '闇を切り裂けるかもしれない。',
     description: 'ライトセーバーの上位互換。自機のパリィの効果範囲が3倍になる。パリィの直接攻撃ダメージが10倍になる（ライトセーバーは3倍）。専用の明るい黄色の刃で演出される。' +
       'パリィの直接攻撃（ワイプ範囲）は、通常の敵だけでなく中ボス・ラスボスの発射口にも届き、直接ダメージを与えられる。' +
-      '例外として、ノーマルルート終了時の負けイベント戦闘では、発射口の本来の耐久力によらず、パリィで打ち返した弾を3回当てるか、パリィの直接攻撃を3回当てることで即座に破壊でき、撃破すれば目覚めエンドに至れる。「ライトセーバー」とは同時に習得できない',
+      '例外として、ノーマルルート終了時の負けイベント戦闘では、発射口の本来の耐久力によらず、パリィで打ち返した弾を10回当てるか、パリィの直接攻撃を10回当てることで即座に破壊でき、撃破すれば目覚めエンドに至れる。「ライトセーバー」とは同時に習得できない',
     maxLevel: 1
   },
   {
@@ -3831,7 +3831,7 @@ function applySkillEffectForLevel(skillId, level) {
       break;
     case 'dark-cleaving-sword':
       // 闇を切り裂く剣：ライトセーバーの上位互換。効果範囲が3倍、直接攻撃ダメージが10倍になる。
-      // さらに、ノーマルルート終了時の負けイベント戦闘で本来破壊できない発射口も、パリィ3回で破壊できるようにする
+      // さらに、ノーマルルート終了時の負けイベント戦闘で本来破壊できない発射口も、パリィ10回で破壊できるようにする
       specialSkillEffects.deflectRangeMultiplier = 3;
       specialSkillEffects.parryDirectDamageMultiplier = 10;
       specialSkillEffects.darkSwordBreaksIndestructibleHoles = true;
@@ -6255,7 +6255,7 @@ function finalizeBossHoleDestruction(hole) {
 
 // 闇を切り裂く剣：ノーマルルート終了時の負けイベント戦闘でも、パリィ（反射弾・直接攻撃どちらも）を
 // この回数当てれば例外的に発射口を破壊できる
-const darkCleavingSwordIndestructibleHoleParryHits = 3;
+const darkCleavingSwordIndestructibleHoleParryHits = 10;
 // 本来破壊できない発射口に、闇を切り裂く剣によるパリィ攻撃（反射弾・直接攻撃どちらも）が命中した時の共通処理
 function registerDarkSwordHitOnIndestructibleHole(hole, hitX, hitY) {
   hole.darkSwordParryHits = (hole.darkSwordParryHits || 0) + 1;
@@ -7368,7 +7368,7 @@ function attemptDeflectPartnerBullet() {
   const meleeTargets = enemies.filter(en => en !== partner && Math.hypot(en.x - player.x, en.y - getParryOriginY()) <= getDeflectRange() + en.radius);
   // ライトセーバー／闇を切り裂く剣：パリィの直接攻撃（ワイプ範囲）が、ラスボス・中ボスの発射口にも届くようにする。
   // ノーマルルート終了時の負けイベント戦闘の「本来破壊できない発射口」は、闇を切り裂く剣習得中のみ
-  // registerBossHoleHit内の例外処理で、これまで通りパリィ（反射弾・直接攻撃どちらも）3回で破壊できる
+  // registerBossHoleHit内の例外処理で、これまで通りパリィ（反射弾・直接攻撃どちらも）10回で破壊できる
   const hasParryBladeSkill = specialSkillEffects.deflectRangeMultiplier > 1;
   const meleeBossHoleTargets = (hasParryBladeSkill && bossEvent && bossEvent.phase === 'active')
     ? bossEvent.holes
