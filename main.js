@@ -11108,7 +11108,7 @@ function draw() {
       const cx = imgX + imgSize / 2;
       const cy = imgY + imgSize / 2;
       const glowRadius = imgSize * 0.75;
-      const glowAlpha = toneProgress * 0.9 * reunionSceneToneIntensity;
+      const glowAlpha = toneProgress * 0.6 * reunionSceneToneIntensity;
       const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowRadius);
       gradient.addColorStop(0, `rgba(255, 250, 210, ${glowAlpha})`);
       gradient.addColorStop(1, 'rgba(255, 250, 210, 0)');
